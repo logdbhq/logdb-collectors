@@ -14,6 +14,7 @@
         MinHeight="780"
         Icon="/Assets/Icons/logo-mark-c.ico"
         ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="NoChrome"
         x:Class="com.logdb.windows.collector.ui.MainWindow"
         Title="LogDB Collector Local Admin Console">
     <Window.DataTemplates>
