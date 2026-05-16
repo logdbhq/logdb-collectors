@@ -4,7 +4,6 @@
              x:Class="com.logdb.windows.collector.ui.Views.Pages.OverviewPageView">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="10">
         <StackPanel Orientation="Horizontal" Spacing="10">
-            <TextBlock Text="Overview Dashboard" FontSize="24" FontWeight="SemiBold" />
             <Border Classes="softPill">
                 <TextBlock Text="Last 30 days" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
             </Border>

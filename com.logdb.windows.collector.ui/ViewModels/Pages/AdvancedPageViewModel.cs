@@ -17,7 +17,6 @@ public sealed class AdvancedPageViewModel : PageViewModelBase
     private readonly LocalCollectorAdminClient _adminClient;
     private readonly Action<string, bool> _statusCallback;
 
-    private string _effectiveRedactedJson = string.Empty;
     private string _jsonEditorText = string.Empty;
     private string _jsonValidationMessage = "-";
 
@@ -27,15 +26,8 @@ public sealed class AdvancedPageViewModel : PageViewModelBase
         _adminClient = adminClient;
         _statusCallback = statusCallback;
 
-        RefreshEffectiveConfigCommand = new AsyncRelayCommand(RefreshEffectiveAsync);
-        LoadCurrentIntoEditorCommand = new RelayCommand(LoadCurrentIntoEditor);
+        ResetEditorCommand = new RelayCommand(LoadCurrentIntoEditor);
         ApplyJsonCommand = new AsyncRelayCommand(ApplyJsonAsync);
-    }
-
-    public string EffectiveRedactedJson
-    {
-        get => _effectiveRedactedJson;
-        set => SetProperty(ref _effectiveRedactedJson, value);
     }
 
     public string JsonEditorText
@@ -50,36 +42,31 @@ public sealed class AdvancedPageViewModel : PageViewModelBase
         set => SetProperty(ref _jsonValidationMessage, value);
     }
 
-    public AsyncRelayCommand RefreshEffectiveConfigCommand { get; }
-    public RelayCommand LoadCurrentIntoEditorCommand { get; }
+    public RelayCommand ResetEditorCommand { get; }
     public AsyncRelayCommand ApplyJsonCommand { get; }
 
-    public override async Task RefreshAsync()
+    public override Task RefreshAsync()
     {
-        await RefreshEffectiveAsync();
-    }
-
-    private async Task RefreshEffectiveAsync()
-    {
-        var redacted = await _adminClient.GetEffectiveRedactedConfigAsync()
-                       ?? _adminClient.SnapshotWorkingConfig();
-        EffectiveRedactedJson = JsonSerializer.Serialize(redacted, JsonOptions);
-        JsonValidationMessage = "Effective redacted configuration loaded.";
+        // Auto-populate on every page entry so the editor is never empty.
+        LoadCurrentIntoEditor();
+        return Task.CompletedTask;
     }
 
     private void LoadCurrentIntoEditor()
     {
         var config = _adminClient.SnapshotWorkingConfig();
+        // Blank the API key in the editor for safety. Apply preserves the live key
+        // when this field is empty, so users can't accidentally wipe it.
         config.LogDB.ApiKey = string.Empty;
         JsonEditorText = JsonSerializer.Serialize(config, JsonOptions);
-        JsonValidationMessage = "Editor loaded from current config. API key is intentionally blank.";
+        JsonValidationMessage = "Loaded from current config. Edit and click Apply Changes when ready.";
     }
 
     private async Task ApplyJsonAsync()
     {
         if (string.IsNullOrWhiteSpace(JsonEditorText))
         {
-            JsonValidationMessage = "JSON editor is empty.";
+            JsonValidationMessage = "Editor is empty. Click Reset to load the current config.";
             _statusCallback(JsonValidationMessage, false);
             return;
         }
@@ -103,12 +90,20 @@ public sealed class AdvancedPageViewModel : PageViewModelBase
             return;
         }
 
+        // Preserve the existing API key when the editor has it blank.
+        if (string.IsNullOrWhiteSpace(config.LogDB.ApiKey))
+        {
+            config.LogDB.ApiKey = _adminClient.SnapshotWorkingConfig().LogDB.ApiKey;
+        }
+
         var result = await _adminClient.ApplyConfigAsync(config);
         JsonValidationMessage = result.Message;
         _statusCallback(result.Message, result.Success);
         if (result.Success)
         {
-            await RefreshEffectiveAsync();
+            // Reload from the now-applied state so the editor reflects what's actually running.
+            LoadCurrentIntoEditor();
+            JsonValidationMessage = "Applied successfully. Editor reloaded from the new live config.";
         }
     }
 }

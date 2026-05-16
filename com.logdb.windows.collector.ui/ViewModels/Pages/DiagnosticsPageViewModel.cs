@@ -19,6 +19,10 @@ public sealed class OnlineDiagnosticRowViewModel
     public string Module { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public IBrush? RowForeground { get; set; }
+    public AsyncRelayCommand? CopyCommand { get; set; }
+
+    public string ToLogLine() =>
+        $"[{TimeLocal}] [{Level}] {Module}: {Message}";
 
     public static (string Module, IBrush? Brush) ResolveModule(string category)
     {
@@ -34,6 +38,32 @@ public sealed class OnlineDiagnosticRowViewModel
     }
 }
 
+public sealed class OnlineModuleFilterItemViewModel : ObservableObject
+{
+    private readonly Action _onChanged;
+    private bool _isSelected;
+
+    public OnlineModuleFilterItemViewModel(string name, Action onChanged)
+    {
+        Name = name;
+        _onChanged = onChanged;
+    }
+
+    public string Name { get; }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (SetProperty(ref _isSelected, value))
+            {
+                _onChanged();
+            }
+        }
+    }
+}
+
 public sealed class DiagnosticsPageViewModel : PageViewModelBase
 {
     private readonly LocalCollectorAdminClient _adminClient;
@@ -41,15 +71,17 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     private readonly Func<string, string, Task<bool>> _exportTextAsync;
     private readonly Func<string, Task> _copyToClipboardAsync;
 
-    private int _tailCount = 200;
-    private string _statusText = "-";
     private bool _onlineAutoRefresh = true;
     private int _onlineTailCount = 120;
     private string _onlineStatusText = "Waiting for refresh.";
-    private string _onlineModuleFilter = OnlineModuleFilterAll;
+    private string _onlineModuleFilterSummary = OnlineModuleFilterAll;
     private CancellationTokenSource? _onlineLoopCts;
     private readonly SemaphoreSlim _onlineRefreshLock = new(1, 1);
     private readonly List<OnlineDiagnosticRowViewModel> _allOnlineRows = new();
+    private static readonly HashSet<string> KnownModules = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "EventLog", "IIS", "Metrics"
+    };
 
     public const string OnlineModuleFilterAll = "(All)";
     public const string OnlineModuleFilterOther = "Other";
@@ -66,30 +98,22 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         _exportTextAsync = exportTextAsync;
         _copyToClipboardAsync = copyToClipboardAsync;
 
-        DiagnosticLines = new ObservableCollection<DiagnosticLineItemViewModel>();
         OnlineConsoleRows = new ObservableCollection<OnlineDiagnosticRowViewModel>();
+        OnlineModuleFilters = new ObservableCollection<OnlineModuleFilterItemViewModel>
+        {
+            new("EventLog", OnFilterSelectionChanged),
+            new("IIS", OnFilterSelectionChanged),
+            new("Metrics", OnFilterSelectionChanged),
+            new(OnlineModuleFilterOther, OnFilterSelectionChanged)
+        };
 
-        RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         ExportDiagnosticsCommand = new AsyncRelayCommand(ExportDiagnosticsAsync);
         CopySupportBundleCommand = new AsyncRelayCommand(CopySupportBundleAsync);
         RefreshOnlineConsoleCommand = new AsyncRelayCommand(RefreshOnlineConsoleAsync);
         ClearOnlineConsoleCommand = new RelayCommand(ClearOnlineConsole);
     }
 
-    public ObservableCollection<DiagnosticLineItemViewModel> DiagnosticLines { get; }
     public ObservableCollection<OnlineDiagnosticRowViewModel> OnlineConsoleRows { get; }
-
-    public int TailCount
-    {
-        get => _tailCount;
-        set => SetProperty(ref _tailCount, value);
-    }
-
-    public string StatusText
-    {
-        get => _statusText;
-        set => SetProperty(ref _statusText, value);
-    }
 
     public bool OnlineAutoRefresh
     {
@@ -124,28 +148,28 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         set => SetProperty(ref _onlineStatusText, value);
     }
 
-    public string OnlineModuleFilter
+    public ObservableCollection<OnlineModuleFilterItemViewModel> OnlineModuleFilters { get; }
+
+    public string OnlineModuleFilterSummary
     {
-        get => _onlineModuleFilter;
-        set
-        {
-            if (SetProperty(ref _onlineModuleFilter, value ?? OnlineModuleFilterAll))
-            {
-                ApplyOnlineFilter();
-            }
-        }
+        get => _onlineModuleFilterSummary;
+        private set => SetProperty(ref _onlineModuleFilterSummary, value);
     }
 
-    public IReadOnlyList<string> OnlineModuleFilterOptions { get; } = new[]
+    private void OnFilterSelectionChanged()
     {
-        OnlineModuleFilterAll,
-        "EventLog",
-        "IIS",
-        "Metrics",
-        OnlineModuleFilterOther
-    };
+        UpdateOnlineModuleFilterSummary();
+        ApplyOnlineFilter();
+    }
 
-    public AsyncRelayCommand RefreshCommand { get; }
+    private void UpdateOnlineModuleFilterSummary()
+    {
+        var selected = OnlineModuleFilters.Where(f => f.IsSelected).Select(f => f.Name).ToList();
+        OnlineModuleFilterSummary = selected.Count == 0 || selected.Count == OnlineModuleFilters.Count
+            ? OnlineModuleFilterAll
+            : string.Join(", ", selected);
+    }
+
     public AsyncRelayCommand ExportDiagnosticsCommand { get; }
     public AsyncRelayCommand CopySupportBundleCommand { get; }
     public AsyncRelayCommand RefreshOnlineConsoleCommand { get; }
@@ -153,34 +177,11 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
 
     public override async Task RefreshAsync()
     {
-        await RefreshRecentDiagnosticsAsync();
         await RefreshOnlineConsoleAsync();
         if (OnlineAutoRefresh)
         {
             EnsureOnlineLoopStarted();
         }
-    }
-
-    private async Task RefreshRecentDiagnosticsAsync()
-    {
-        var diagnostics = (await _adminClient.GetDiagnosticsAsync(Math.Clamp(TailCount, 1, 500)))
-            .OrderByDescending(line => line.TimestampUtc)
-            .ToList();
-
-        await RunOnUiThreadAsync(() =>
-        {
-            DiagnosticLines.Clear();
-            foreach (var line in diagnostics)
-            {
-                DiagnosticLines.Add(
-                    new DiagnosticLineItemViewModel(
-                        FormatDiagnosticLine(line),
-                        _copyToClipboardAsync,
-                        OnDiagnosticLineCopied));
-            }
-
-            StatusText = $"Loaded {DiagnosticLines.Count} diagnostic line(s).";
-        });
     }
 
     private async Task RefreshOnlineConsoleAsync()
@@ -213,14 +214,16 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
                 foreach (var line in diagnostics)
                 {
                     var (module, brush) = OnlineDiagnosticRowViewModel.ResolveModule(line.Category);
-                    _allOnlineRows.Add(new OnlineDiagnosticRowViewModel
+                    var row = new OnlineDiagnosticRowViewModel
                     {
                         TimeLocal = line.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
                         Level = line.Level,
                         Module = module,
                         Message = line.Message,
                         RowForeground = brush
-                    });
+                    };
+                    row.CopyCommand = new AsyncRelayCommand(() => CopyRowAsync(row));
+                    _allOnlineRows.Add(row);
                 }
 
                 ApplyOnlineFilter();
@@ -247,23 +250,17 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
             return;
         }
 
-        var filter = _onlineModuleFilter ?? OnlineModuleFilterAll;
-        IEnumerable<OnlineDiagnosticRowViewModel> visible = _allOnlineRows;
+        var selectedNames = OnlineModuleFilters
+            .Where(f => f.IsSelected)
+            .Select(f => f.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        if (!string.Equals(filter, OnlineModuleFilterAll, StringComparison.Ordinal))
-        {
-            if (string.Equals(filter, OnlineModuleFilterOther, StringComparison.Ordinal))
-            {
-                visible = _allOnlineRows.Where(r =>
-                    !string.Equals(r.Module, "EventLog", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(r.Module, "IIS", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(r.Module, "Metrics", StringComparison.OrdinalIgnoreCase));
-            }
-            else
-            {
-                visible = _allOnlineRows.Where(r => string.Equals(r.Module, filter, StringComparison.OrdinalIgnoreCase));
-            }
-        }
+        // Zero selected or every option selected = no filter (show all).
+        var filterAll = selectedNames.Count == 0 || selectedNames.Count == OnlineModuleFilters.Count;
+
+        IEnumerable<OnlineDiagnosticRowViewModel> visible = filterAll
+            ? _allOnlineRows
+            : _allOnlineRows.Where(r => MatchesSelectedFilters(r.Module, selectedNames));
 
         OnlineConsoleRows.Clear();
         foreach (var row in visible)
@@ -271,10 +268,20 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
             OnlineConsoleRows.Add(row);
         }
 
-        var suffix = string.Equals(filter, OnlineModuleFilterAll, StringComparison.Ordinal)
+        var suffix = filterAll
             ? string.Empty
-            : $"  (filtered by source: {filter}, {_allOnlineRows.Count - OnlineConsoleRows.Count} hidden)";
+            : $"  (filtered by source: {string.Join(", ", selectedNames)}, {_allOnlineRows.Count - OnlineConsoleRows.Count} hidden)";
         OnlineStatusText = $"Live tail loaded: {OnlineConsoleRows.Count} line(s).{suffix}";
+    }
+
+    private static bool MatchesSelectedFilters(string module, HashSet<string> selected)
+    {
+        if (selected.Contains(module))
+        {
+            return true;
+        }
+        // "Other" catches anything that isn't one of the known well-known module names.
+        return selected.Contains(OnlineModuleFilterOther) && !KnownModules.Contains(module);
     }
 
     private void ClearOnlineConsole()
@@ -340,35 +347,30 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
 
     private async Task ExportDiagnosticsAsync()
     {
-        var diagnostics = (await _adminClient.GetDiagnosticsAsync(Math.Clamp(TailCount, 1, 500)))
-            .OrderByDescending(line => line.TimestampUtc)
-            .ToList();
-        var text = string.Join(
-            Environment.NewLine,
-            diagnostics.Select(FormatDiagnosticLine));
+        // Export everything currently in the buffer — what you see is what you get.
+        var snapshot = _allOnlineRows.ToList();
+        var text = string.Join(Environment.NewLine, snapshot.Select(r => r.ToLogLine()));
 
         var exported = await _exportTextAsync("collector-diagnostics.txt", text);
-        StatusText = exported ? "Diagnostics exported." : "Diagnostics export was canceled.";
-        _statusCallback(StatusText, exported);
+        OnlineStatusText = exported
+            ? $"Exported {snapshot.Count} diagnostic line(s)."
+            : "Diagnostics export was canceled.";
+        _statusCallback(OnlineStatusText, exported);
     }
 
     private async Task CopySupportBundleAsync()
     {
         var bundle = await _adminClient.BuildSupportBundleAsync(200);
         await _copyToClipboardAsync(bundle);
-        StatusText = "Support bundle copied to clipboard.";
-        _statusCallback(StatusText, true);
+        OnlineStatusText = "Support bundle copied to clipboard.";
+        _statusCallback(OnlineStatusText, true);
     }
 
-    private void OnDiagnosticLineCopied()
+    private async Task CopyRowAsync(OnlineDiagnosticRowViewModel row)
     {
-        StatusText = "Diagnostic line copied to clipboard.";
-        _statusCallback(StatusText, true);
-    }
-
-    private static string FormatDiagnosticLine(DiagnosticEntryDto line)
-    {
-        return $"[{line.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}] [{line.Level}] {line.Category}: {line.Message}";
+        await _copyToClipboardAsync(row.ToLogLine());
+        OnlineStatusText = "Diagnostic line copied to clipboard.";
+        _statusCallback(OnlineStatusText, true);
     }
 
     private static Task RunOnUiThreadAsync(Action action)
@@ -380,31 +382,5 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         }
 
         return Dispatcher.UIThread.InvokeAsync(action).GetTask();
-    }
-
-    public sealed class DiagnosticLineItemViewModel
-    {
-        private readonly Func<string, Task> _copyToClipboardAsync;
-        private readonly Action _copiedCallback;
-
-        public DiagnosticLineItemViewModel(
-            string text,
-            Func<string, Task> copyToClipboardAsync,
-            Action copiedCallback)
-        {
-            Text = text;
-            _copyToClipboardAsync = copyToClipboardAsync;
-            _copiedCallback = copiedCallback;
-            CopyCommand = new AsyncRelayCommand(CopyAsync);
-        }
-
-        public string Text { get; }
-        public AsyncRelayCommand CopyCommand { get; }
-
-        private async Task CopyAsync()
-        {
-            await _copyToClipboardAsync(Text);
-            _copiedCallback();
-        }
     }
 }

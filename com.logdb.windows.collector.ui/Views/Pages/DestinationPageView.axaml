@@ -1,10 +1,8 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.DestinationPageView">
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="10">
-        <TextBlock Text="Destination (LogDB Platform)" FontSize="22" FontWeight="SemiBold" />
-
-        <Border Grid.Row="1" Classes="panel">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="10">
+        <Border Classes="panel">
             <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                 <TextBlock Text="API Key" VerticalAlignment="Center" />
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
@@ -38,7 +36,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="2" Classes="panel">
+        <Border Grid.Row="1" Classes="panel">
             <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                 <TextBlock Text="Endpoint" VerticalAlignment="Center" />
                 <TextBox Grid.Column="1" Text="{Binding Endpoint}" Watermark="https://..." />
@@ -58,7 +56,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="3" Classes="panel">
+        <Border Grid.Row="2" Classes="panel">
             <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                 <TextBlock Text="Default Application" VerticalAlignment="Center" />
                 <TextBox Grid.Column="1" Text="{Binding DefaultApplication}" />
@@ -71,13 +69,13 @@
             </Grid>
         </Border>
 
-        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
             <Button Content="Save Destination Settings"
                     Command="{Binding SaveCommand}"
                     IsEnabled="{Binding CanSaveDestinationSettings}" />
             <Button Content="Test Connection" Command="{Binding TestConnectionCommand}" />
         </StackPanel>
 
-        <TextBlock Grid.Row="5" Text="{Binding ValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+        <TextBlock Grid.Row="4" Text="{Binding ValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
     </Grid>
 </UserControl>

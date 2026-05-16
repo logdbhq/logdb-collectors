@@ -3,88 +3,95 @@
              xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              xmlns:svg="clr-namespace:Avalonia.Svg.Skia;assembly=Avalonia.Svg.Skia"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.DiagnosticsPageView">
-    <Grid RowDefinitions="*" RowSpacing="8">
-        <TabControl Grid.Row="0" Classes="standard-tabs">
-            <TabItem Header="Online Console">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <CheckBox Content="Auto refresh (3s)" IsChecked="{Binding OnlineAutoRefresh}" />
-                        <TextBlock VerticalAlignment="Center" Text="Tail lines" />
-                        <NumericUpDown Width="140" Minimum="20" Maximum="500" Value="{Binding OnlineTailCount}" />
-                        <TextBlock VerticalAlignment="Center" Text="Source" Margin="8,0,0,0" />
-                        <ComboBox Width="140"
-                                  ItemsSource="{Binding OnlineModuleFilterOptions}"
-                                  SelectedItem="{Binding OnlineModuleFilter}"
-                                  ToolTip.Tip="Show only events from this source. Switching is instant — does not re-fetch." />
-                        <Button Content="Refresh Now" Command="{Binding RefreshOnlineConsoleCommand}" />
-                        <Button Content="Clear" Command="{Binding ClearOnlineConsoleCommand}" />
-                    </StackPanel>
+    <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <CheckBox Content="Auto refresh (3s)" IsChecked="{Binding OnlineAutoRefresh}" />
+            <TextBlock VerticalAlignment="Center" Text="Tail lines" />
+            <NumericUpDown Width="140" Minimum="20" Maximum="500" Value="{Binding OnlineTailCount}" />
+            <TextBlock VerticalAlignment="Center" Text="Source" Margin="8,0,0,0" />
+            <Button Width="200"
+                    HorizontalContentAlignment="Left"
+                    Padding="10,6"
+                    ToolTip.Tip="Show only events from the selected sources. Multi-select; switching is instant — does not re-fetch.">
+                <Button.Content>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="{Binding OnlineModuleFilterSummary}"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="1"
+                                   Text="▾"
+                                   Margin="6,0,0,0"
+                                   VerticalAlignment="Center"
+                                   FontSize="10"
+                                   Opacity="0.7" />
+                    </Grid>
+                </Button.Content>
+                <Button.Flyout>
+                    <Flyout Placement="Bottom">
+                        <StackPanel Spacing="4" Margin="6">
+                            <ItemsControl ItemsSource="{Binding OnlineModuleFilters}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Content="{Binding Name}"
+                                                  IsChecked="{Binding IsSelected}"
+                                                  Margin="0,2" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
+            <Button Content="Refresh Now" Command="{Binding RefreshOnlineConsoleCommand}" />
+            <Border Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
+            <Button Content="Export"
+                    Command="{Binding ExportDiagnosticsCommand}"
+                    ToolTip.Tip="Save the current buffer (what you see now) to a .txt or .json file." />
+            <Button Content="Copy for Support"
+                    Command="{Binding CopySupportBundleCommand}"
+                    ToolTip.Tip="Copy a support bundle (config + status + recent diagnostics) to the clipboard." />
+            <Button Content="Clear"
+                    Command="{Binding ClearOnlineConsoleCommand}"
+                    ToolTip.Tip="Empty the buffer locally. Does not affect the running collector." />
+        </StackPanel>
 
-                    <TextBlock Grid.Row="1" Text="{Binding OnlineStatusText}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+        <TextBlock Grid.Row="1" Text="{Binding OnlineStatusText}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
 
-                    <Border Grid.Row="2" Classes="panel" MinHeight="520">
-                        <dgrid:DataGrid x:Name="OnlineConsoleDataGrid"
-                                        ItemsSource="{Binding OnlineConsoleRows}"
-                                        AutoGenerateColumns="False"
-                                        IsReadOnly="True"
-                                        CanUserSortColumns="False"
-                                        CanUserResizeColumns="True"
-                                        PointerReleased="OnlineConsoleDataGrid_OnPointerReleased">
-                            <dgrid:DataGrid.Columns>
-                                <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
-                                <dgrid:DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="90" />
-                                <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="90" />
-                                <dgrid:DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />
-                            </dgrid:DataGrid.Columns>
-                        </dgrid:DataGrid>
-                    </Border>
-                </Grid>
-            </TabItem>
-
-            <TabItem Header="Diagnostics">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock VerticalAlignment="Center" Text="Tail lines" />
-                        <NumericUpDown Width="140" Minimum="10" Maximum="500" Value="{Binding TailCount}" />
-                        <Button Content="Refresh" Command="{Binding RefreshCommand}" />
-                        <Button Content="Export Diagnostics" Command="{Binding ExportDiagnosticsCommand}" />
-                        <Button Content="Copy for Support" Command="{Binding CopySupportBundleCommand}" />
-                    </StackPanel>
-
-                    <TextBlock Grid.Row="1" Text="{Binding StatusText}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
-
-                    <Border Grid.Row="2" Classes="panel">
-                        <ListBox ItemsSource="{Binding DiagnosticLines}">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <Border BorderBrush="{DynamicResource BorderBrushTheme}"
-                                            BorderThickness="0,0,0,1"
-                                            Padding="6,4">
-                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-                                            <TextBlock Text="{Binding Text}"
-                                                       FontFamily="Consolas"
-                                                       FontSize="12"
-                                                       TextWrapping="Wrap" />
-                                            <Button Grid.Column="1"
-                                                    Command="{Binding CopyCommand}"
-                                                    Width="34"
-                                                    Height="28"
-                                                    Padding="0"
-                                                    VerticalAlignment="Top"
-                                                    ToolTip.Tip="Copy line">
-                                                <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/copy-icon.svg"
-                                                         Width="14"
-                                                         Height="14"
-                                                         Css="{DynamicResource DefaultIconCss}" />
-                                            </Button>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </Border>
-                </Grid>
-            </TabItem>
-        </TabControl>
+        <Border Grid.Row="2" Classes="panel" MinHeight="520">
+            <dgrid:DataGrid x:Name="OnlineConsoleDataGrid"
+                            ItemsSource="{Binding OnlineConsoleRows}"
+                            AutoGenerateColumns="False"
+                            IsReadOnly="True"
+                            CanUserSortColumns="False"
+                            CanUserResizeColumns="True"
+                            PointerReleased="OnlineConsoleDataGrid_OnPointerReleased">
+                <dgrid:DataGrid.Columns>
+                    <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
+                    <dgrid:DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="90" />
+                    <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="90" />
+                    <dgrid:DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />
+                    <dgrid:DataGridTemplateColumn Header="" Width="40" CanUserResize="False">
+                        <dgrid:DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Command="{Binding CopyCommand}"
+                                        Width="28"
+                                        Height="22"
+                                        Padding="0"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        ToolTip.Tip="Copy this line">
+                                    <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/copy-icon.svg"
+                                             Width="14"
+                                             Height="14"
+                                             Css="{DynamicResource DefaultIconCss}" />
+                                </Button>
+                            </DataTemplate>
+                        </dgrid:DataGridTemplateColumn.CellTemplate>
+                    </dgrid:DataGridTemplateColumn>
+                </dgrid:DataGrid.Columns>
+            </dgrid:DataGrid>
+        </Border>
     </Grid>
 </UserControl>

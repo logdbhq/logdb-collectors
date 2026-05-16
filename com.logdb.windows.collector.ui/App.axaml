@@ -45,6 +45,10 @@
                     <SolidColorBrush x:Key="StatusbarBackgroundBrush" Color="#1A1A1A" />
                     <SolidColorBrush x:Key="SurfaceBrush" Color="#1F1F1F" />
                     <SolidColorBrush x:Key="SurfaceMutedBrush" Color="#2B2B2B" />
+                    <!-- Translucent surface for modal panels / overlay cards.
+                         Alpha is encoded in the hex (Avalonia 11 Border.Background
+                         does not composite SolidColorBrush.Opacity reliably). -->
+                    <SolidColorBrush x:Key="DetailPanelBackgroundBrush" Color="#CC2A2A2A" />
                     <SolidColorBrush x:Key="BorderBrushTheme" Color="#333333" />
                     <SolidColorBrush x:Key="SidebarBorderBrushTheme" Color="#333333" />
                     <SolidColorBrush x:Key="AccentBrushTheme" Color="#3A8DDE" />
@@ -96,6 +100,7 @@
                     <SolidColorBrush x:Key="StatusbarBackgroundBrush" Color="#FFFFFF" />
                     <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
                     <SolidColorBrush x:Key="SurfaceMutedBrush" Color="#F4F8FE" />
+                    <SolidColorBrush x:Key="DetailPanelBackgroundBrush" Color="#CCE8E8E8" />
                     <SolidColorBrush x:Key="BorderBrushTheme" Color="#D5E0EF" />
                     <SolidColorBrush x:Key="SidebarBorderBrushTheme" Color="#C8D8EA" />
                     <SolidColorBrush x:Key="AccentBrushTheme" Color="#1E7FBE" />
@@ -120,6 +125,7 @@
     <Application.Styles>
         <FluentTheme />
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+        <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
 
         <Style Selector="Window">
             <Setter Property="Background" Value="{DynamicResource ShellBackgroundBrush}" />
@@ -178,6 +184,19 @@
             <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushTheme}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+        </Style>
+
+        <!-- Frosted-card style for modal panels (Control Center, future drawers).
+             Pattern mirrors com.logdb.app: translucent brush + 1px semi-white border
+             + soft drop shadow + 8px corner radius. Do NOT set Background on the
+             instance — that overrides the brush and you lose the translucency. -->
+        <Style Selector="Border.detail-panel">
+            <Setter Property="Background" Value="{DynamicResource DetailPanelBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="#66FFFFFF" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="BoxShadow" Value="0 6 24 0 #40000000" />
         </Style>
 
         <Style Selector="Border.card">
@@ -324,8 +343,10 @@
 
         <Style Selector="TabControl.standard-tabs">
             <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorderPrimary}" />
-            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <!-- No bottom border: the active TabItem's accent underline is the only
+                 selection indicator. A separate TabControl border below it just
+                 doubles up visually under the selected tab. -->
+            <Setter Property="BorderThickness" Value="0" />
         </Style>
 
         <Style Selector="TabControl.standard-tabs TabItem">

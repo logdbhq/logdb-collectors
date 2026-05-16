@@ -110,6 +110,14 @@ public partial class MainWindow : Window
         BeginMoveDrag(e);
     }
 
+    private void ControlCenterBackdrop_PointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel vm && vm.CloseControlCenterCommand.CanExecute(null))
+        {
+            vm.CloseControlCenterCommand.Execute(null);
+        }
+    }
+
     private void TitleBar_DoubleTapped(object? sender, RoutedEventArgs e)
     {
         ToggleWindowState();

@@ -244,15 +244,26 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="1"
-                Margin="78,10,0,0"
-                Width="430"
-                MaxHeight="780"
-                Classes="panel"
-                Background="{DynamicResource SurfaceBrush}"
-                IsVisible="{Binding IsControlCenterOpen}"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top">
+        <Grid Grid.RowSpan="3"
+              IsVisible="{Binding IsControlCenterOpen}"
+              ZIndex="50">
+            <!-- Translucent backdrop: clicking it closes the panel. Border (not
+                 Button) so the FluentTheme hover overlay doesn't darken on
+                 mouse-over. Same pattern com.logdb.app uses for SignIn/SignOut. -->
+            <Border Background="#99000000"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch"
+                    PointerPressed="ControlCenterBackdrop_PointerPressed" />
+
+            <!-- Frosted-card panel — Classes="detail-panel" supplies Background,
+                 Border, CornerRadius, Padding, and BoxShadow. Do NOT set Background
+                 here; that overrides the translucent brush. -->
+            <Border Margin="78,70,0,10"
+                    Width="430"
+                    MaxHeight="780"
+                    Classes="detail-panel"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Spacing="10">
                     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -346,6 +357,7 @@
                 </StackPanel>
             </ScrollViewer>
         </Border>
+        </Grid>
 
         <Border Grid.RowSpan="3"
                 Background="#CC000000"

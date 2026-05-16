@@ -3,10 +3,8 @@
              xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              xmlns:vmPages="using:com.logdb.windows.collector.ui.ViewModels.Pages"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.DataSourcesPageView">
-    <Grid RowDefinitions="Auto,*" RowSpacing="8">
-        <TextBlock Text="Data Sources" FontSize="22" FontWeight="SemiBold" />
-
-        <TabControl Grid.Row="1" Classes="standard-tabs">
+    <Grid>
+        <TabControl Classes="standard-tabs">
             <TabItem Header="{Binding EventLogTabHeader}">
                 <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
                     <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
