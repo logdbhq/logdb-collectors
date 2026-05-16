@@ -267,7 +267,10 @@ public partial class MainWindow : Window
         var screens = GetScreens();
         if (screens == null || screens.Count == 0)
         {
-            return Math.Abs(x) <= 10000 && Math.Abs(y) <= 10000;
+            // Without a screen list we can't verify visibility — refuse to trust
+            // a saved position so a previously-disconnected monitor can't strand
+            // the window off-screen. Caller will fall back to CenterOnPrimaryScreen.
+            return false;
         }
 
         var windowRect = new PixelRect(x, y, Math.Max(1, width), Math.Max(1, height));
