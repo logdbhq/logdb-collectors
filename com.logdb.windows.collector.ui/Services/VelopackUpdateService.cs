@@ -5,7 +5,7 @@ namespace com.logdb.windows.collector.ui.Services;
 
 public sealed class VelopackUpdateService
 {
-    public const string DefaultUpdateUrl = "https://github.com/vlapec/LogDB.Exporters";
+    public const string DefaultUpdateUrl = "https://github.com/logdbhq/logdb-collectors";
 
     private readonly string _updateUrl;
     private readonly string? _updateToken;
