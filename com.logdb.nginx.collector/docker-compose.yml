@@ -1,0 +1,42 @@
+# LogDB Nginx Collector compose file.
+#
+# Quick start:
+#   1. Set LOGDB_EXPORTER_ENDPOINT and LOGDB_EXPORTER_APIKEY below
+#   2. Adjust the Nginx log volume path to match your host
+#   3. Run: docker compose up -d
+#
+# Ports:
+#   8080  Collector API + health check
+#   8081  Operator dashboard
+#
+# Health check:
+#   curl http://localhost:8080/health/ready
+
+services:
+  logdb-nginx-collector:
+    image: logdb/nginx-collector:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # API + health
+      - "8081:8081"   # Operator UI
+    volumes:
+      # Mount your Nginx log directory (read-only)
+      - /var/log/nginx:/var/log/nginx:ro
+      # Persistent storage for checkpoints and spool
+      - collector-data:/var/lib/logdb-nginx-collector
+    environment:
+      # Required
+      - LOGDB_EXPORTER_ENABLED=true
+      - LOGDB_EXPORTER_ENDPOINT=https://your-logdb-instance.example.com
+      - LOGDB_EXPORTER_APIKEY=your-api-key-here
+
+      # Optional overrides
+      # - LOGDB_EXPORTER_PROTOCOL=Native          # Native (gRPC) or REST
+      # - LOGDB_EXPORTER_COMPRESSION=true
+      # - LOGDB_EXPORTER_MAX_RETRIES=3
+      # - LOGDB_EXPORTER_TIMEOUT=30
+      # - LOGDB_SPOOL_MAX_DISK_MB=100
+      # - LOGDB_CHECKPOINT_FLUSH_INTERVAL=15
+
+volumes:
+  collector-data:

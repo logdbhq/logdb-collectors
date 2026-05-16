@@ -1,0 +1,415 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:svg="clr-namespace:Avalonia.Svg.Skia;assembly=Avalonia.Svg.Skia"
+        xmlns:vmPages="using:com.logdb.windows.collector.ui.ViewModels.Pages"
+        xmlns:views="using:com.logdb.windows.collector.ui.Views.Pages"
+        mc:Ignorable="d"
+        d:DesignWidth="1540"
+        d:DesignHeight="980"
+        Width="1540"
+        Height="980"
+        MinWidth="1220"
+        MinHeight="780"
+        Icon="/Assets/Icons/logo-mark-c.ico"
+        ExtendClientAreaToDecorationsHint="True"
+        x:Class="com.logdb.windows.collector.ui.MainWindow"
+        Title="LogDB Collector Local Admin Console">
+    <Window.DataTemplates>
+        <DataTemplate DataType="vmPages:OverviewPageViewModel">
+            <views:OverviewPageView />
+        </DataTemplate>
+        <DataTemplate DataType="vmPages:DataSourcesPageViewModel">
+            <views:DataSourcesPageView />
+        </DataTemplate>
+        <DataTemplate DataType="vmPages:DestinationPageViewModel">
+            <views:DestinationPageView />
+        </DataTemplate>
+        <DataTemplate DataType="vmPages:DiagnosticsPageViewModel">
+            <views:DiagnosticsPageView />
+        </DataTemplate>
+        <DataTemplate DataType="vmPages:ServiceManagementPageViewModel">
+            <views:ServiceManagementPageView />
+        </DataTemplate>
+        <DataTemplate DataType="vmPages:AdvancedPageViewModel">
+            <views:AdvancedPageView />
+        </DataTemplate>
+    </Window.DataTemplates>
+
+    <Grid RowDefinitions="60,*,Auto">
+        <Border Grid.Row="0"
+                Background="{DynamicResource TopbarBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrushTheme}"
+                BorderThickness="0,0,0,1"
+                Padding="0,0,0,0"
+                PointerPressed="TitleBar_PointerPressed"
+                DoubleTapped="TitleBar_DoubleTapped">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Margin="16,0,0,0"
+                            Spacing="10">
+                    <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/logo-full.svg"
+                             Width="160"
+                             Height="32"
+                             Css="{DynamicResource DefaultIconCss}" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Spacing="10"
+                            Margin="0,0,10,0">
+                    <TextBlock Text="localhost@logdb.com"
+                               Classes="muted"
+                               VerticalAlignment="Center"
+                               FontSize="12" />
+                    <TextBlock Text="Expires: local runtime"
+                               Classes="muted"
+                               VerticalAlignment="Center"
+                               FontSize="12" />
+
+                    <Button Classes="WindowButton"
+                            Command="{Binding ToggleThemeCommand}"
+                            ToolTip.Tip="{Binding ThemeToggleToolTip}">
+                        <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/contrast-icon.svg"
+                                 Width="14"
+                                 Height="14"
+                                 Css="{DynamicResource IconButtonCss}" />
+                    </Button>
+
+                    <Button Classes="WindowButton">
+                        <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/bell-icon.svg"
+                                 Width="14"
+                                 Height="14"
+                                 Css="{DynamicResource IconButtonCss}" />
+                    </Button>
+                    <Button Classes="WindowButton"
+                            Click="Minimize_Click"
+                            ToolTip.Tip="Minimize">
+                        <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/minus-line-icon.svg"
+                                 Width="14"
+                                 Height="14"
+                                 Css="{DynamicResource IconButtonCss}" />
+                    </Button>
+                    <Button Classes="WindowButton"
+                            Click="MaximizeRestore_Click"
+                            ToolTip.Tip="Maximize / Restore">
+                        <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/expand-icon.svg"
+                                 Width="14"
+                                 Height="14"
+                                 Css="{DynamicResource IconButtonCss}" />
+                    </Button>
+                    <Button Classes="WindowButton CloseButton"
+                            Click="Close_Click"
+                            ToolTip.Tip="Close">
+                        <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/close-line-icon.svg"
+                                 Width="14"
+                                 Height="14"
+                                 Css="{DynamicResource IconButtonCss}" />
+                    </Button>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="68,*">
+            <Border Background="{DynamicResource ThemeBackgroundSecondary}"
+                    BorderBrush="{DynamicResource SidebarBorderBrushTheme}"
+                    BorderThickness="0,0,1,0">
+                <Grid RowDefinitions="Auto,*" Margin="10,12">
+                    <Button Width="46"
+                            Height="46"
+                            Padding="0"
+                            BorderThickness="0"
+                            CornerRadius="12"
+                            Background="Transparent"
+                            Command="{Binding ToggleControlCenterCommand}"
+                            ToolTip.Tip="Control Center"
+                            HorizontalAlignment="Center">
+                        <Border Width="46"
+                                Height="46"
+                                Padding="0"
+                                CornerRadius="12"
+                                BorderBrush="{DynamicResource BorderBrushTheme}"
+                                BorderThickness="1"
+                                Background="Transparent">
+                            <Grid>
+                                <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/logo-theme-aware.svg"
+                                         Width="20"
+                                         Height="20"
+                                         Css="{DynamicResource DefaultIconCss}"
+                                         HorizontalAlignment="Center"
+                                         VerticalAlignment="Center" />
+                                <Ellipse Width="8"
+                                         Height="8"
+                                         Fill="{Binding ControlCenterBadgeColor}"
+                                         IsVisible="{Binding ControlCenterBadgeVisible}"
+                                         HorizontalAlignment="Right"
+                                         VerticalAlignment="Top"
+                                         Margin="0,4,4,0" />
+                            </Grid>
+                        </Border>
+                    </Button>
+
+                    <ListBox Grid.Row="1"
+                             Margin="0,12,0,0"
+                             Classes="iconRailNav"
+                             ItemsSource="{Binding NavigationItems}"
+                             SelectedItem="{Binding SelectedNavigationItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Width="46" Height="46">
+                                    <svg:Svg Path="{Binding IconPath}"
+                                             Width="18"
+                                             Height="18"
+                                             Css="{Binding IsSelected, Converter={StaticResource IconCssBySelectedConverter}}"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1" RowDefinitions="Auto,*">
+                <Border Background="{DynamicResource TopbarBackgroundBrush}"
+                        BorderBrush="{DynamicResource BorderBrushTheme}"
+                        BorderThickness="0,0,0,1"
+                        Padding="14,12">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding SelectedNavigationItem.Label, FallbackValue=Overview}"
+                                       FontSize="20"
+                                       FontWeight="SemiBold"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding InstanceSummary}"
+                                       Classes="muted"
+                                       FontSize="11"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxWidth="520" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2"
+                                    Orientation="Horizontal"
+                                    Spacing="6"
+                                    VerticalAlignment="Center">
+                            <TextBlock Text="Target" VerticalAlignment="Center" Classes="muted" />
+                            <ComboBox Width="260"
+                                      ItemsSource="{Binding TargetOptions}"
+                                      SelectedItem="{Binding SelectedTarget}" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="3"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center">
+                            <Button Content="Refresh Discovery"
+                                    Command="{Binding RefreshDiscoveryCommand}" />
+                            <Button Content="Check Updates"
+                                    Command="{Binding CheckUpdatesCommand}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1" Background="{DynamicResource ThemeBackgroundPrimary}" Padding="16">
+                    <Border Classes="panel" Padding="14">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ContentControl Content="{Binding CurrentPage}" />
+                        </ScrollViewer>
+                    </Border>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Background="{DynamicResource StatusbarBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderBrushTheme}"
+                BorderThickness="0,1,0,0"
+                Padding="10">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+                <Ellipse Width="8" Height="8" Fill="{Binding StatusColor}" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Status" VerticalAlignment="Center" Classes="muted" />
+                <TextBlock Grid.Column="2"
+                           VerticalAlignment="Center"
+                           Text="{Binding StatusMessage}"
+                           Foreground="{Binding StatusColor}" />
+                <TextBlock Grid.Column="3"
+                           VerticalAlignment="Center"
+                           Text="{Binding AppVersion}"
+                           Classes="muted"
+                           FontSize="11" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1"
+                Margin="78,10,0,0"
+                Width="430"
+                MaxHeight="780"
+                Classes="panel"
+                Background="{DynamicResource SurfaceBrush}"
+                IsVisible="{Binding IsControlCenterOpen}"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Control Center" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Local collector operations and health overview."
+                                       Classes="muted"
+                                       FontSize="11" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Content="Close"
+                                Command="{Binding CloseControlCenterCommand}" />
+                    </Grid>
+
+                    <Border Classes="card" Padding="10">
+                        <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                            <TextBlock Text="Mode" Classes="muted" />
+                            <TextBlock Grid.Column="1" Text="{Binding ControlCenterModeText}" />
+                            <TextBlock Grid.Row="1" Text="Connection" Classes="muted" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ControlCenterConnectionText}" />
+                            <TextBlock Grid.Row="2" Text="Service State" Classes="muted" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ControlCenterServiceStateText}" />
+                            <TextBlock Grid.Row="3" Text="Health" Classes="muted" />
+                            <TextBlock Grid.Row="3" Grid.Column="1"
+                                       Text="{Binding ControlCenterHealthText}"
+                                       Foreground="{Binding ControlCenterHealthColor}" />
+                            <TextBlock Grid.Row="4" Text="Last Success" Classes="muted" />
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ControlCenterLastSuccessText}" />
+                            <TextBlock Grid.Row="5" Text="Counters" Classes="muted" />
+                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding ControlCenterCountersText}" />
+                        </Grid>
+                    </Border>
+
+                    <Border Classes="card" Padding="10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Quick Actions" FontWeight="SemiBold" />
+                            <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                                <Button Content="Refresh"
+                                        Command="{Binding RefreshControlCenterCommand}"
+                                        ToolTip.Tip="Re-fetch discovery, current page data, and control-center snapshot from the running collector service." />
+                                <Button Grid.Column="1"
+                                        Content="Test Connection"
+                                        Command="{Binding ControlCenterTestConnectionCommand}"
+                                        ToolTip.Tip="Send a diagnostic log to LogDB to verify the endpoint, API key, and discovery URL are working end-to-end." />
+                                <Button Grid.Row="1"
+                                        Content="Reload Config"
+                                        Command="{Binding ControlCenterReloadConfigCommand}"
+                                        ToolTip.Tip="Ask the running service to re-read its configuration file without restarting." />
+                                <Button Grid.Row="1"
+                                        Grid.Column="1"
+                                        Content="Copy Support"
+                                        Command="{Binding ControlCenterCopySupportBundleCommand}"
+                                        ToolTip.Tip="Copy a support bundle (redacted config, runtime status, recent diagnostics) to the clipboard for sharing with support." />
+                                <Button Grid.Row="2"
+                                        Content="Open Diagnostics"
+                                        Command="{Binding ControlCenterOpenDiagnosticsCommand}"
+                                        ToolTip.Tip="Open the Diagnostics page with detailed runtime information, logs, and health checks." />
+                                <Button Grid.Row="2"
+                                        Grid.Column="1"
+                                        Content="Service Mgmt"
+                                        Command="{Binding ControlCenterOpenServiceManagementCommand}"
+                                        ToolTip.Tip="Open the Service Management page to install, start, stop, or uninstall the Windows service." />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card" Padding="10">
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="Firewall (Optional)" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding ControlCenterFirewallSummary}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding ControlCenterFirewallRuntimeText}" Classes="muted" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding ControlCenterPrivilegeText}" Classes="muted" />
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                <Button Content="Apply Firewall"
+                                        Command="{Binding ControlCenterApplyFirewallCommand}" />
+                                <Button Grid.Column="1"
+                                        Content="Remove Rules"
+                                        Command="{Binding ControlCenterRemoveFirewallCommand}" />
+                            </Grid>
+                            <Button Content="Open Destination"
+                                    Command="{Binding ControlCenterOpenDestinationCommand}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card" Padding="10">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Attention" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding ControlCenterAttentionText}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.RowSpan="3"
+                Background="#CC000000"
+                IsVisible="{Binding ShowApiKeyModal}"
+                ZIndex="100">
+            <Border Classes="panel"
+                    Background="{DynamicResource SurfaceBrush}"
+                    Width="460"
+                    Padding="24"
+                    CornerRadius="12"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+                <StackPanel Spacing="16">
+                    <TextBlock Text="API Key Required"
+                               FontSize="20"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="Enter your LogDB API key to continue. You can find it in your LogDB dashboard."
+                               TextWrapping="Wrap"
+                               Classes="muted"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center" />
+                    <TextBox Watermark="Paste API key here..."
+                             Text="{Binding ModalApiKey}"
+                             PasswordChar="*"
+                             MaxHeight="38" />
+                    <TextBlock Text="{Binding ModalApiKeyError}"
+                               Foreground="#F1A18F"
+                               FontSize="12"
+                               IsVisible="{Binding ModalApiKeyError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                               TextWrapping="Wrap" />
+                    <Grid ColumnDefinitions="*,12,*">
+                        <Button Content="Save Key"
+                                Command="{Binding SaveModalApiKeyCommand}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center" />
+                        <Button Grid.Column="2"
+                                Content="Exit"
+                                Command="{Binding ExitFromApiKeyModalCommand}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Border>
+
+        <Border Grid.Row="1"
+                IsVisible="{Binding ToastVisible}"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,8,16,0"
+                Padding="14,10"
+                CornerRadius="8"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{Binding ToastColor}"
+                BorderThickness="1"
+                ZIndex="90">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Ellipse Width="8" Height="8" Fill="{Binding ToastColor}" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding ToastMessage}"
+                           FontSize="12"
+                           MaxWidth="400"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{Binding ToastColor}" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,160 @@
+@page "/exporter"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Exporter</h4>
+    <div class="d-flex align-items-center gap-3">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ManualRefresh" disabled="@_refreshing">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+        <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 10s</span>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_error</div>
+}
+else if (_status is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+            <span class="card-title-label"><i class="bi bi-power me-1"></i> Export to LogDB</span>
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox"
+                       checked="@_status.Enabled"
+                       disabled="@_toggling"
+                       @onchange="ToggleExporter" />
+                <label class="form-check-label" style="font-size: 0.85rem;">
+                    @(_status.Enabled ? "Enabled" : "Disabled")
+                </label>
+            </div>
+        </div>
+    </div>
+
+    @if (!_status.Enabled)
+    {
+        <div class="alert alert-info"><i class="bi bi-info-circle-fill me-2"></i>Exporter is disabled. Toggle the switch above to start sending logs to LogDB.</div>
+    }
+    else
+    {
+        @if (!_status.Healthy)
+        {
+            <div class="alert alert-danger"><i class="bi bi-x-circle-fill me-2"></i>Exporter is unhealthy - logs are not being delivered to LogDB</div>
+        }
+        @if (!string.IsNullOrEmpty(_status.LastError))
+        {
+            <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_status.LastError</div>
+        }
+
+        <div class="row g-3">
+            <div class="col-xl-6 col-md-6">
+                <div class="card stat-card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                        <span class="card-title-label"><i class="bi bi-cloud-upload me-1"></i> Delivery</span>
+                        <span class="badge @(_status.Healthy ? "bg-success" : "bg-danger")">@(_status.Healthy ? "Healthy" : "Unhealthy")</span>
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="text-center mb-3">
+                            <div class="stat-value text-success">@_status.RecordsSent.ToString("N0")</div>
+                            <div class="stat-label">Records delivered</div>
+                        </div>
+                        <div class="detail-row"><span class="detail-label">Batches sent</span><span class="detail-value">@_status.BatchesSent.ToString("N0")</span></div>
+                        <div class="detail-row"><span class="detail-label">Send errors</span><span class="detail-value @(_status.SendErrors > 0 ? "text-danger" : "")">@_status.SendErrors.ToString("N0")</span></div>
+                        <div class="detail-row"><span class="detail-label">Retries</span><span class="detail-value @(_status.RetryCount > 0 ? "text-warning" : "")">@_status.RetryCount.ToString("N0")</span></div>
+                        <div class="detail-row"><span class="detail-label">Last send</span><span class="detail-value">@(_status.LastSendUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-6 col-md-6">
+                <div class="card stat-card h-100">
+                    <div class="card-header py-2 px-3">
+                        <span class="card-title-label"><i class="bi bi-gear me-1"></i> Configuration</span>
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="detail-row"><span class="detail-label">Endpoint</span><span class="detail-value">@_status.Endpoint</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private ExporterStatusDto? _status;
+    private string? _error;
+    private Timer? _timer;
+    private bool _toggling;
+    private bool _refreshing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task ManualRefresh()
+    {
+        _refreshing = true;
+        await LoadAsync();
+        _refreshing = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            _status = await client.GetFromJsonAsync<ExporterStatusDto>("/api/exporter/status");
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ToggleExporter()
+    {
+        _toggling = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsync("/api/exporter/toggle", null);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _toggling = false;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class ExporterStatusDto
+    {
+        public bool Enabled { get; set; }
+        public string Endpoint { get; set; } = "";
+        public bool Healthy { get; set; }
+        public long BatchesSent { get; set; }
+        public long RecordsSent { get; set; }
+        public long SendErrors { get; set; }
+        public long RetryCount { get; set; }
+        public DateTime? LastSendUtc { get; set; }
+        public string? LastError { get; set; }
+    }
+}

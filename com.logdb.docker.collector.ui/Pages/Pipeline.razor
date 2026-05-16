@@ -1,0 +1,335 @@
+@page "/pipeline"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Pipeline</h4>
+    <div class="d-flex align-items-center gap-3">
+        <button class="btn btn-outline-danger btn-sm" @onclick="ShowClearPipelineConfirm" disabled="@_clearing">
+            @if (_clearing)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            else
+            {
+                <i class="bi bi-trash me-1"></i>
+            }
+            Clear Pipeline
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ManualRefresh" disabled="@_refreshing">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+        <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 10s</span>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_error</div>
+}
+else if (_status is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-xl-4 col-md-6">
+            <div class="card stat-card">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-diagram-3 me-1"></i> Collection</span>
+                    <span class="badge @(_status.ReadErrors > 0 ? "bg-warning" : "bg-success")">@(_status.ReadErrors > 0 ? "Errors" : "Healthy")</span>
+                </div>
+                <div class="card-body p-3">
+                    <div class="text-center mb-3">
+                        <div class="stat-value">@_status.RecordsRead.ToString("N0")</div>
+                        <div class="stat-label">Total records read</div>
+                    </div>
+                    <div class="detail-row"><span class="detail-label">Active targets</span><span class="detail-value">@_status.ActiveTargets</span></div>
+                    <div class="detail-row"><span class="detail-label">Parse errors</span><span class="detail-value @(_status.ParseErrors > 0 ? "text-warning" : "")">@_status.ParseErrors.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label">Read errors</span><span class="detail-value @(_status.ReadErrors > 0 ? "text-warning" : "")">@_status.ReadErrors.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label">Last record</span><span class="detail-value">@(_status.LastRecordTimestamp?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_targets is not null && _targets.Count > 0)
+    {
+        <div class="card">
+            <div class="card-header py-2 px-3">
+                <span class="card-title-label"><i class="bi bi-crosshair me-1"></i> Tail Targets (@_targets.Count)</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Container</th>
+                                <th>Image</th>
+                                <th>Compose</th>
+                                <th>Log Path</th>
+                                <th>Offset</th>
+                                <th>Last Read</th>
+                                <th style="width: 1%;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var t in _targets)
+                            {
+                                var offset = GetOffset(t.LogPath);
+                                var severity = OffsetSeverity(offset?.Offset ?? 0);
+                                var cid = t.ContainerId;
+                                <tr style="@(severity != "none" ? $"background-color: var(--row-{severity});" : "")">
+                                    <td><strong>@t.ContainerName</strong></td>
+                                    <td style="font-size: 0.85rem;">@t.Image:@t.ImageTag</td>
+                                    <td style="font-size: 0.85rem;">@(t.ComposeService ?? t.ComposeProject ?? "-")</td>
+                                    <td class="text-truncate-path">@t.LogPath</td>
+                                    <td>
+                                        @if (offset is not null)
+                                        {
+                                            <span class="@OffsetTextClass(offset.Offset)">@FormatBytes(offset.Offset)</span>
+                                        }
+                                        else
+                                        {
+                                            <span>-</span>
+                                        }
+                                    </td>
+                                    <td>@(offset?.LastReadUtc?.ToString("HH:mm:ss") ?? "-")</td>
+                                    <td>
+                                        <button class="btn btn-outline-danger btn-sm py-0 px-1" style="font-size: 0.75rem;"
+                                                title="Reset checkpoint for this container"
+                                                disabled="@(_clearingContainerId == cid)"
+                                                @onclick="() => ShowClearContainerConfirm(cid, t.ContainerName)">
+                                            @if (_clearingContainerId == cid)
+                                            {
+                                                <span class="spinner-border spinner-border-sm" role="status" style="width: 0.7rem; height: 0.7rem;"></span>
+                                            }
+                                            else
+                                            {
+                                                <i class="bi bi-x-circle"></i>
+                                            }
+                                        </button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <p class="text-muted">No active tail targets.</p>
+    }
+}
+
+@* Confirmation modal *@
+@if (_confirmVisible)
+{
+    <div class="modal-backdrop fade show"></div>
+    <div class="modal fade show d-block" tabindex="-1" role="dialog">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header border-danger">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle text-danger me-2"></i>@_confirmTitle</h5>
+                    <button type="button" class="btn-close" @onclick="DismissConfirm"></button>
+                </div>
+                <div class="modal-body">
+                    @((MarkupString)_confirmBody)
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" @onclick="DismissConfirm">Cancel</button>
+                    <button class="btn btn-danger btn-sm" @onclick="ConfirmAction">
+                        <i class="bi bi-trash me-1"></i>Yes, clear
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private PipelineStatusDto? _status;
+    private List<TailTargetDto>? _targets;
+    private string? _error;
+    private Timer? _timer;
+    private bool _clearing;
+    private bool _refreshing;
+    private string? _clearingContainerId;
+
+    // Confirm dialog state
+    private bool _confirmVisible;
+    private string _confirmTitle = "";
+    private string _confirmBody = "";
+    private Func<Task>? _confirmAction;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task ManualRefresh()
+    {
+        _refreshing = true;
+        await LoadAsync();
+        _refreshing = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            _status = await client.GetFromJsonAsync<PipelineStatusDto>("/api/pipeline/status");
+            var rawTargets = await client.GetFromJsonAsync<List<TailTargetDto>>("/api/pipeline/targets");
+            _targets = rawTargets?.OrderBy(t => t.ContainerName, StringComparer.OrdinalIgnoreCase).ToList();
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void ShowClearPipelineConfirm()
+    {
+        _confirmTitle = "Clear entire pipeline";
+        _confirmBody = @"This will:
+            <ul class=""mt-2 mb-0"">
+                <li><strong>Reset all file offsets to zero</strong> - every container's log file will be re-read from the beginning on the next tail cycle</li>
+                <li><strong>Delete all queued spool records</strong> - any buffered records not yet sent to LogDB will be permanently lost</li>
+                <li><strong>Clear all checkpoints</strong> - persisted read positions will be wiped</li>
+            </ul>
+            <div class=""mt-2 text-muted"" style=""font-size: 0.85rem;"">This effectively restarts log collection from scratch. All containers will be re-ingested, which may cause duplicate records in LogDB.</div>";
+        _confirmAction = ClearPipeline;
+        _confirmVisible = true;
+    }
+
+    private void ShowClearContainerConfirm(string containerId, string containerName)
+    {
+        _confirmTitle = $"Reset checkpoint for {containerName}";
+        _confirmBody = $@"This will:
+            <ul class=""mt-2 mb-0"">
+                <li><strong>Reset the file offset to zero</strong> for <code>{containerName}</code></li>
+                <li>On the next tail cycle, the log file for this container will be <strong>re-read from the beginning</strong></li>
+            </ul>
+            <div class=""mt-2 text-muted"" style=""font-size: 0.85rem;"">This may cause duplicate records for this container in LogDB.</div>";
+        _confirmAction = () => ClearContainer(containerId);
+        _confirmVisible = true;
+    }
+
+    private async Task ConfirmAction()
+    {
+        _confirmVisible = false;
+        if (_confirmAction is not null)
+            await _confirmAction();
+    }
+
+    private void DismissConfirm() => _confirmVisible = false;
+
+    private async Task ClearPipeline()
+    {
+        _clearing = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsync("/api/pipeline/clear", null);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _clearing = false;
+        }
+    }
+
+    private async Task ClearContainer(string containerId)
+    {
+        _clearingContainerId = containerId;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsync($"/api/pipeline/clear/{Uri.EscapeDataString(containerId)}", null);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _clearingContainerId = null;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private FileOffsetDto? GetOffset(string logPath)
+    {
+        if (_status?.FileOffsets is null) return null;
+        _status.FileOffsets.TryGetValue(logPath, out var offset);
+        return offset;
+    }
+
+    private static string OffsetSeverity(long bytes) => bytes switch
+    {
+        >= 1_073_741_824 => "danger",   // >= 1 GB
+        >= 104_857_600 => "warning",    // >= 100 MB
+        >= 10_485_760 => "caution",     // >= 10 MB
+        _ => "none"
+    };
+
+    private static string OffsetTextClass(long bytes) => bytes switch
+    {
+        >= 1_073_741_824 => "fw-bold text-danger",
+        >= 104_857_600 => "fw-bold text-warning",
+        >= 10_485_760 => "text-warning",
+        _ => ""
+    };
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1_048_576) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1_073_741_824) return $"{bytes / 1_048_576.0:F1} MB";
+        return $"{bytes / 1_073_741_824.0:F2} GB";
+    }
+
+    private class PipelineStatusDto
+    {
+        public int ActiveTargets { get; set; }
+        public long RecordsRead { get; set; }
+        public long ParseErrors { get; set; }
+        public long ReadErrors { get; set; }
+        public DateTime? LastRecordTimestamp { get; set; }
+        public Dictionary<string, FileOffsetDto>? FileOffsets { get; set; }
+    }
+
+    private class FileOffsetDto
+    {
+        public string ContainerName { get; set; } = "";
+        public long Offset { get; set; }
+        public DateTime? LastReadUtc { get; set; }
+    }
+
+    private class TailTargetDto
+    {
+        public string ContainerId { get; set; } = "";
+        public string ContainerName { get; set; } = "";
+        public string Image { get; set; } = "";
+        public string ImageTag { get; set; } = "";
+        public string LogPath { get; set; } = "";
+        public string? ComposeProject { get; set; }
+        public string? ComposeService { get; set; }
+    }
+}

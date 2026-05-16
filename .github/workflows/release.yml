@@ -1,0 +1,206 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'win-tra-v*'   # Windows Tracker:     win-tra-v1.0.0
+      - 'win-eve-v*'   # Windows EventViewer: win-eve-v1.0.0
+      - 'win-iis-v*'   # Windows IIS:         win-iis-v1.0.0
+      - 'win-fwl-v*'   # Windows Firewall:    win-fwl-v1.0.0
+      - 'win-frw-v*'   # Legacy Firewall tag compatibility
+      - 'win-col-v*'   # Windows Collector:   win-col-v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Determine which exporter to build
+      id: check
+      shell: pwsh
+      run: |
+        $tag = "${{ github.ref_name }}"
+        Write-Host "Tag: $tag"
+
+        $buildTracker = $false
+        $buildEventViewer = $false
+        $buildIIS = $false
+        $buildFirewall = $false
+        $buildCollector = $false
+        $version = $tag
+        $versionNumber = $tag
+        $product = ""
+
+        if ($tag -match '^win-tra-v(.+)$') {
+            $buildTracker = $true
+            $version = "v$($Matches[1])"
+            $versionNumber = $Matches[1]
+            $product = "LogDB.Windows.Tracker"
+            Write-Host "Building Tracker, version: $version"
+        }
+        elseif ($tag -match '^win-eve-v(.+)$') {
+            $buildEventViewer = $true
+            $version = "v$($Matches[1])"
+            $versionNumber = $Matches[1]
+            $product = "LogDB.Windows.EventViewer"
+            Write-Host "Building EventViewer, version: $version"
+        }
+        elseif ($tag -match '^win-iis-v(.+)$') {
+            $buildIIS = $true
+            $version = "v$($Matches[1])"
+            $versionNumber = $Matches[1]
+            $product = "LogDB.Windows.IIS"
+            Write-Host "Building IIS, version: $version"
+        }
+        elseif ($tag -match '^win-fwl-v(.+)$' -or $tag -match '^win-frw-v(.+)$') {
+            $buildFirewall = $true
+            $version = "v$($Matches[1])"
+            $versionNumber = $Matches[1]
+            $product = "LogDB.Windows.Firewall"
+            Write-Host "Building Firewall, version: $version"
+        }
+        elseif ($tag -match '^win-col-v(.+)$') {
+            $buildCollector = $true
+            $version = "v$($Matches[1])"
+            $versionNumber = $Matches[1]
+            $product = "LogDB.Windows.Collector"
+            Write-Host "Building Collector, version: $version"
+        }
+
+        echo "build_tracker=$buildTracker" >> $env:GITHUB_OUTPUT
+        echo "build_eventviewer=$buildEventViewer" >> $env:GITHUB_OUTPUT
+        echo "build_iis=$buildIIS" >> $env:GITHUB_OUTPUT
+        echo "build_firewall=$buildFirewall" >> $env:GITHUB_OUTPUT
+        echo "build_collector=$buildCollector" >> $env:GITHUB_OUTPUT
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        echo "version_number=$versionNumber" >> $env:GITHUB_OUTPUT
+        echo "product=$product" >> $env:GITHUB_OUTPUT
+
+    - name: Setup .NET 10 Preview
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+        dotnet-quality: 'preview'
+
+    - name: Install Velopack CLI
+      if: steps.check.outputs.build_collector == 'True'
+      shell: pwsh
+      run: |
+        dotnet tool install --global vpk
+        "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Build Windows Tracker
+      if: steps.check.outputs.build_tracker == 'True'
+      run: |
+        dotnet publish LogDB.Windows.Tracker/com.logdb.windows.tracker.csproj `
+          -c Release `
+          -r win-x64 `
+          --self-contained true `
+          -p:PublishSingleFile=true `
+          -o ./publish/LogDB.Windows.Tracker
+
+    - name: Build Windows EventViewer
+      if: steps.check.outputs.build_eventviewer == 'True'
+      run: |
+        dotnet publish LogDB.Windows.EventViewer/com.logdb.windows.eventviewer.csproj `
+          -c Release `
+          -r win-x64 `
+          --self-contained true `
+          -p:PublishSingleFile=true `
+          -o ./publish/LogDB.Windows.EventViewer
+
+    - name: Build Windows IIS
+      if: steps.check.outputs.build_iis == 'True'
+      run: |
+        dotnet publish LogDB.Windows.IIS/com.logdb.windows.iis.csproj `
+          -c Release `
+          -r win-x64 `
+          --self-contained true `
+          -p:PublishSingleFile=true `
+          -o ./publish/LogDB.Windows.IIS
+
+    - name: Build Windows Firewall
+      if: steps.check.outputs.build_firewall == 'True'
+      run: |
+        dotnet publish LogDB.Windows.Firewall/LogDB.Windows.Firewall.csproj `
+          -c Release `
+          -r win-x64 `
+          --self-contained true `
+          -p:PublishSingleFile=true `
+          -o ./publish/LogDB.Windows.Firewall
+
+    - name: Build Windows Collector Bundle
+      if: steps.check.outputs.build_collector == 'True'
+      shell: pwsh
+      run: |
+        ./scripts/publish-windows-collector.ps1 `
+          -Configuration Release `
+          -Runtime win-x64 `
+          -SelfContained:$true `
+          -CreateZip:$true
+
+        ./scripts/package-collector-ui-velopack.ps1 `
+          -Configuration Release `
+          -Runtime win-x64 `
+          -Version "${{ steps.check.outputs.version_number }}" `
+          -ReleaseDir "./releases/collector-ui-velopack" `
+          -SelfContained:$true
+
+        $collectorZip = Get-ChildItem -Path ./releases/windows-collector -Filter *.zip |
+          Sort-Object LastWriteTimeUtc -Descending |
+          Select-Object -First 1
+
+        if (-not $collectorZip) {
+          throw "Collector release zip was not produced."
+        }
+
+        Copy-Item $collectorZip.FullName "./LogDB.Windows.Collector-${{ steps.check.outputs.version }}-win-x64.zip"
+
+    - name: Package Windows Tracker
+      if: steps.check.outputs.build_tracker == 'True'
+      run: |
+        Copy-Item LogDB.Windows.Tracker/appsettings.Example.json ./publish/LogDB.Windows.Tracker/
+        Copy-Item LogDB.Windows.Tracker/LICENSE ./publish/LogDB.Windows.Tracker/
+        Compress-Archive -Path ./publish/LogDB.Windows.Tracker/* -DestinationPath ./LogDB.Windows.Tracker-${{ steps.check.outputs.version }}-win-x64.zip
+
+    - name: Package Windows EventViewer
+      if: steps.check.outputs.build_eventviewer == 'True'
+      run: |
+        Copy-Item LogDB.Windows.EventViewer/appsettings.Example.json ./publish/LogDB.Windows.EventViewer/
+        Copy-Item LogDB.Windows.EventViewer/LICENSE ./publish/LogDB.Windows.EventViewer/
+        Compress-Archive -Path ./publish/LogDB.Windows.EventViewer/* -DestinationPath ./LogDB.Windows.EventViewer-${{ steps.check.outputs.version }}-win-x64.zip
+
+    - name: Package Windows IIS
+      if: steps.check.outputs.build_iis == 'True'
+      run: |
+        Copy-Item LogDB.Windows.IIS/appsettings.Example.json ./publish/LogDB.Windows.IIS/
+        Copy-Item LogDB.Windows.IIS/LICENSE ./publish/LogDB.Windows.IIS/
+        Compress-Archive -Path ./publish/LogDB.Windows.IIS/* -DestinationPath ./LogDB.Windows.IIS-${{ steps.check.outputs.version }}-win-x64.zip
+
+    - name: Package Windows Firewall
+      if: steps.check.outputs.build_firewall == 'True'
+      run: |
+        Copy-Item LogDB.Windows.Firewall/appsettings.Example.json ./publish/LogDB.Windows.Firewall/
+        Copy-Item LogDB.Windows.Firewall/install-service.ps1 ./publish/LogDB.Windows.Firewall/
+        Compress-Archive -Path ./publish/LogDB.Windows.Firewall/* -DestinationPath ./LogDB.Windows.Firewall-${{ steps.check.outputs.version }}-win-x64.zip
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        name: "${{ steps.check.outputs.product }} ${{ steps.check.outputs.version }}"
+        files: |
+          ./LogDB.Windows.Tracker-${{ steps.check.outputs.version }}-win-x64.zip
+          ./LogDB.Windows.EventViewer-${{ steps.check.outputs.version }}-win-x64.zip
+          ./LogDB.Windows.IIS-${{ steps.check.outputs.version }}-win-x64.zip
+          ./LogDB.Windows.Firewall-${{ steps.check.outputs.version }}-win-x64.zip
+          ./LogDB.Windows.Collector-${{ steps.check.outputs.version }}-win-x64.zip
+          ./releases/collector-ui-velopack/*
+        generate_release_notes: true
+        fail_on_unmatched_files: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

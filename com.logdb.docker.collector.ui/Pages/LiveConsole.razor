@@ -1,0 +1,398 @@
+@page "/console"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0"><i class="bi bi-terminal me-2"></i>Live Console</h4>
+    <div class="d-flex align-items-center gap-2">
+        @if (_snapshot is not null)
+        {
+            <span class="badge bg-secondary" title="Total records ingested since start">@_snapshot.TotalIngested.ToString("N0") total</span>
+        }
+        <div class="input-group input-group-sm" style="width: 200px;">
+            <span class="input-group-text"><i class="bi bi-funnel"></i></span>
+            <input type="text" class="form-control" placeholder="Filter container..." @bind="_containerFilter" @bind:event="oninput" />
+        </div>
+        <select class="form-select form-select-sm" style="width: 90px;" @bind="_maxCount">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+        </select>
+        <div class="btn-group btn-group-sm">
+            <button class="btn @(_autoScroll ? "btn-primary" : "btn-outline-primary")" @onclick="() => _autoScroll = !_autoScroll" title="Auto-scroll">
+                <i class="bi bi-arrow-down-circle"></i>
+            </button>
+            <button class="btn @(_paused ? "btn-warning" : "btn-outline-secondary")" @onclick="TogglePause" title="@(_paused ? "Resume" : "Pause")">
+                <i class="bi @(_paused ? "bi-play-fill" : "bi-pause-fill")"></i>
+            </button>
+            <button class="btn btn-outline-secondary" @onclick="Clear" title="Clear">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : $"{_refreshInterval}s")</span>
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Unable to connect: @_connectError</div>
+}
+
+<div class="console-wrapper" @ref="_consoleRef">
+    <div class="console-output" id="consoleOutput">
+        @if (_records.Count == 0 && _connectError is null)
+        {
+            <div class="console-empty">
+                <i class="bi bi-terminal" style="font-size: 2rem; opacity: 0.3;"></i>
+                <div class="mt-2" style="opacity: 0.5;">Waiting for log records...</div>
+            </div>
+        }
+        else
+        {
+            @foreach (var entry in _records)
+            {
+                <div class="console-line @(entry.Stream == "stderr" ? "console-stderr" : "") @(!entry.Exported ? "console-filtered" : "")">
+                    <span class="console-export-indicator" title="@(entry.Exported ? "Exported to LogDB" : "Filtered - not exported")">@(entry.Exported ? "\u25cf" : "\u25cb")</span>
+                    <span class="console-time">@entry.Timestamp.ToString("HH:mm:ss.fff")</span>
+                    <span class="console-container" title="@entry.Image">@TruncateContainer(entry.ComposeService ?? entry.Container)</span>
+                    <span class="console-stream">@entry.Stream</span>
+                    <span class="console-msg">@entry.Message</span>
+                    <span class="console-filter-actions">
+                        <button class="console-filter-btn" title="Exclude messages containing this text"
+                                @onclick="() => ExcludeMessage(entry.Message)" @onclick:stopPropagation="true">
+                            <i class="bi bi-funnel"></i>
+                        </button>
+                        @if (!string.IsNullOrEmpty(entry.Category))
+                        {
+                            var cat = entry.Category;
+                            <button class="console-filter-btn console-filter-btn-cat" title="Exclude category: @cat"
+                                    @onclick="() => ExcludeCategory(cat)" @onclick:stopPropagation="true">
+                                <i class="bi bi-tag"></i>
+                            </button>
+                        }
+                    </span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@if (_filterToast is not null)
+{
+    <div class="filter-toast">
+        <i class="bi bi-funnel-fill me-1"></i>@_filterToast
+    </div>
+}
+
+<style>
+    .console-wrapper {
+        background: var(--console-bg, #0d1117);
+        border: 1px solid var(--console-border, #21262d);
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 160px);
+    }
+
+    .console-output {
+        overflow-y: auto;
+        padding: 8px 12px;
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        flex: 1;
+    }
+
+    .console-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-muted, #8b949e);
+    }
+
+    .console-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+        padding: 1px 0;
+        display: flex;
+        gap: 8px;
+    }
+
+    .console-line:hover {
+        background: rgba(255, 255, 255, 0.03);
+    }
+
+    .console-stderr {
+        color: var(--console-stderr, #f85149);
+    }
+
+    .console-time {
+        color: var(--console-time, #6e7681);
+        flex-shrink: 0;
+        user-select: none;
+    }
+
+    .console-container {
+        color: var(--console-container, #58a6ff);
+        min-width: 120px;
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    .console-stream {
+        color: var(--console-stream, #8b949e);
+        width: 48px;
+        flex-shrink: 0;
+        text-align: right;
+    }
+
+    .console-msg {
+        color: var(--console-msg, #c9d1d9);
+        flex: 1;
+        min-width: 0;
+    }
+
+    .console-stderr .console-msg {
+        color: var(--console-stderr, #f85149);
+    }
+
+    .console-export-indicator {
+        flex-shrink: 0;
+        width: 12px;
+        font-size: 0.6rem;
+        line-height: 1.5;
+        user-select: none;
+    }
+
+    .console-line:not(.console-filtered) .console-export-indicator {
+        color: var(--success-color, #2ecc71);
+    }
+
+    .console-filtered .console-export-indicator {
+        color: var(--text-muted, #6e7681);
+    }
+
+    .console-filtered {
+        opacity: 0.65;
+    }
+
+    .console-filtered:hover {
+        opacity: 0.85;
+    }
+
+    .console-filter-actions {
+        display: none;
+        flex-shrink: 0;
+        gap: 2px;
+        margin-left: 4px;
+    }
+
+    .console-line:hover .console-filter-actions {
+        display: flex;
+    }
+
+    .console-filter-btn {
+        background: none;
+        border: 1px solid transparent;
+        color: var(--text-muted, #6e7681);
+        cursor: pointer;
+        padding: 0 3px;
+        font-size: 0.72rem;
+        line-height: 1;
+        border-radius: 3px;
+        opacity: 0.7;
+    }
+
+    .console-filter-btn:hover {
+        opacity: 1;
+        color: var(--danger-color, #f85149);
+        border-color: var(--danger-color, #f85149);
+        background: rgba(248, 81, 73, 0.1);
+    }
+
+    .refresh-dot.paused {
+        background: #d29922 !important;
+        animation: none !important;
+    }
+
+    /* Light theme overrides */
+    .filter-toast {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: var(--danger-muted, rgba(248, 81, 73, 0.15));
+        border: 1px solid var(--danger-color, #f85149);
+        color: var(--danger-color, #f85149);
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 0.82rem;
+        z-index: 1050;
+        animation: toast-in 0.2s ease-out;
+    }
+
+    @@keyframes toast-in {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    [data-bs-theme="light"] .console-wrapper {
+        --console-bg: #f6f8fa;
+        --console-border: #d0d7de;
+    }
+    [data-bs-theme="light"] .console-time { --console-time: #8c959f; }
+    [data-bs-theme="light"] .console-container { --console-container: #0969da; }
+    [data-bs-theme="light"] .console-stream { --console-stream: #656d76; }
+    [data-bs-theme="light"] .console-msg { --console-msg: #1f2328; }
+    [data-bs-theme="light"] .console-stderr { --console-stderr: #cf222e; }
+    [data-bs-theme="light"] .console-stderr .console-msg { color: #cf222e; }
+    [data-bs-theme="light"] .console-line:hover { background: rgba(0, 0, 0, 0.03); }
+</style>
+
+@code {
+    private List<ConsoleEntryDto> _records = new();
+    private LiveConsoleSnapshotDto? _snapshot;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _paused;
+    private bool _autoScroll = true;
+    private string? _containerFilter;
+    private int _maxCount = 200;
+    private int _refreshInterval = 2;
+    private ElementReference _consoleRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        StartTimer();
+    }
+
+    private void StartTimer()
+    {
+        _timer?.Dispose();
+        _timer = new Timer(async _ =>
+        {
+            if (!_paused)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+                if (_autoScroll)
+                    await ScrollToBottom();
+            }
+        }, null, TimeSpan.FromSeconds(_refreshInterval), TimeSpan.FromSeconds(_refreshInterval));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var url = $"/api/console/recent?count={_maxCount}";
+            if (!string.IsNullOrWhiteSpace(_containerFilter))
+                url += $"&container={Uri.EscapeDataString(_containerFilter)}";
+
+            _snapshot = await client.GetFromJsonAsync<LiveConsoleSnapshotDto>(url);
+            if (_snapshot is not null)
+                _records = _snapshot.Records;
+            _connectError = null;
+        }
+        catch (Exception ex)
+        {
+            _connectError = ex.Message;
+        }
+    }
+
+    private async Task ScrollToBottom()
+    {
+        try
+        {
+            // Blazor Server doesn't have direct JS interop for auto-scroll without IJSRuntime,
+            // but the CSS overflow-anchor handles it for most browsers
+        }
+        catch { }
+    }
+
+    private string? _filterToast;
+    private Timer? _toastTimer;
+
+    private void TogglePause() => _paused = !_paused;
+
+    private void Clear() => _records.Clear();
+
+    private async Task ExcludeMessage(string message)
+    {
+        // Use first 80 chars as the exclusion pattern (enough to be specific)
+        var pattern = message.Length > 80 ? message[..80] : message;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsJsonAsync("/api/filters/exclude-message", new { value = pattern });
+            ShowToast($"Excluded message pattern: \"{Truncate(pattern, 50)}\"");
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private async Task ExcludeCategory(string category)
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsJsonAsync("/api/filters/exclude-category", new { value = category });
+            ShowToast($"Excluded category: {category}");
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private void ShowToast(string message)
+    {
+        _filterToast = message;
+        _toastTimer?.Dispose();
+        _toastTimer = new Timer(_ =>
+        {
+            _filterToast = null;
+            InvokeAsync(StateHasChanged);
+        }, null, 3000, Timeout.Infinite);
+    }
+
+    private static string Truncate(string s, int max) =>
+        s.Length <= max ? s : s[..(max - 1)] + "\u2026";
+
+    private static string TruncateContainer(string name)
+    {
+        if (name.Length <= 22) return name;
+        return name[..19] + "...";
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _toastTimer?.Dispose();
+    }
+
+    private class LiveConsoleSnapshotDto
+    {
+        public List<ConsoleEntryDto> Records { get; set; } = new();
+        public long TotalIngested { get; set; }
+        public int BufferSize { get; set; }
+        public int BufferUsed { get; set; }
+    }
+
+    private class ConsoleEntryDto
+    {
+        public DateTime Timestamp { get; set; }
+        public string ContainerId { get; set; } = "";
+        public string Container { get; set; } = "";
+        public string? Image { get; set; }
+        public string Stream { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string? Category { get; set; }
+        public string? ComposeService { get; set; }
+        public bool Exported { get; set; }
+    }
+}

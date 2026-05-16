@@ -1,0 +1,248 @@
+@page "/pipeline"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Pipeline</h4>
+    <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 5s</span>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_connectError</div>
+}
+else if (_status is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value">@_status.ActiveTargets</div>
+                    <div class="stat-label">Active targets</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value">@_status.ActiveFiles</div>
+                    <div class="stat-label">Active files</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value text-success">@_status.AccessRecordsRead.ToString("N0")</div>
+                    <div class="stat-label">Access records</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value text-warning">@_status.ErrorRecordsRead.ToString("N0")</div>
+                    <div class="stat-label">Error records</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value @(_status.ParseErrors > 0 ? "text-warning" : "")">@_status.ParseErrors.ToString("N0")</div>
+                    <div class="stat-label">Parse errors</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value @(_status.ReadErrors > 0 ? "text-danger" : "")">@_status.ReadErrors.ToString("N0")</div>
+                    <div class="stat-label">Read errors</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value">@_status.RotationsDetected.ToString("N0")</div>
+                    <div class="stat-label">Rotations detected</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value" style="font-size: 1.1rem;">@FormatTime(_status.LastRecordTimestamp)</div>
+                    <div class="stat-label">Last record</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_cpStatus is not null)
+    {
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <div class="card stat-card h-100">
+                    <div class="card-body p-3 text-center">
+                        <div class="stat-value">@_cpStatus.TrackedFiles</div>
+                        <div class="stat-label">Tracked files</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stat-card h-100">
+                    <div class="card-body p-3 text-center">
+                        <div class="stat-value" style="font-size: 1.1rem;">@FormatTime(_cpStatus.LastFlushUtc)</div>
+                        <div class="stat-label">Last checkpoint flush</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stat-card h-100">
+                    <div class="card-body p-3 text-center">
+                        <div class="stat-value"><span class="badge @(_cpStatus.Enabled ? "bg-success" : "bg-secondary")">@(_cpStatus.Enabled ? "Enabled" : "Disabled")</span></div>
+                        <div class="stat-label">Checkpoints</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_status.LastTailCycleUtc is not null)
+    {
+        <div class="mb-4" style="font-size: 0.82rem; color: var(--text-muted);">
+            <i class="bi bi-clock me-1"></i> Last tail cycle: @FormatTime(_status.LastTailCycleUtc)
+        </div>
+    }
+
+    @if (_tailTargets is not null && _tailTargets.Count > 0)
+    {
+        <div class="card">
+            <div class="card-header py-2 px-3">
+                <span class="card-title-label"><i class="bi bi-file-earmark-text me-1"></i> Tail Targets</span>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr><th>Target</th><th>File</th><th>Type</th><th>Offset</th><th>Last Write</th><th>Collect</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in _tailTargets)
+                        {
+                            var key = $"{t.TargetName}:{t.LogTypeName}";
+                            var cp = _checkpoints?.FirstOrDefault(c => c.FilePath == t.FilePath && c.TargetName == t.TargetName);
+                            <tr>
+                                <td>@t.TargetName</td>
+                                <td><code class="text-truncate-path">@t.FilePath</code></td>
+                                <td><span class="badge @(t.LogType == 0 ? "bg-info" : "bg-warning")">@t.LogTypeName</span></td>
+                                <td>@(cp is not null ? FormatBytes(cp.Offset) : "-")</td>
+                                <td>@FormatTime(cp?.LastWriteUtc)</td>
+                                <td>
+                                    <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox"
+                                               checked="@t.Enabled"
+                                               disabled="@_toggling.Contains(key)"
+                                               @onchange="() => ToggleLog(t.TargetName, t.LogType, !t.Enabled)" />
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private PipelineStatusDto? _status;
+    private List<TailTargetDto>? _tailTargets;
+    private List<CheckpointDto>? _checkpoints;
+    private CheckpointStatusDto? _cpStatus;
+    private string? _connectError;
+    private Timer? _timer;
+    private readonly HashSet<string> _toggling = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            _status = await client.GetFromJsonAsync<PipelineStatusDto>("/api/pipeline/status");
+            _tailTargets = await client.GetFromJsonAsync<List<TailTargetDto>>("/api/pipeline/targets");
+            _checkpoints = await client.GetFromJsonAsync<List<CheckpointDto>>("/api/checkpoints");
+            _cpStatus = await client.GetFromJsonAsync<CheckpointStatusDto>("/api/checkpoints/status");
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private async Task ToggleLog(string targetName, int logType, bool enabled)
+    {
+        var key = $"{targetName}:{(logType == 0 ? "Access" : "Error")}";
+        _toggling.Add(key);
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var endpoint = logType == 0 ? "access-log" : "error-log";
+            await client.PostAsJsonAsync($"/api/targets/{targetName}/{endpoint}", new { enabled });
+            await LoadAsync();
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally
+        {
+            _toggling.Remove(key);
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private static string FormatTime(DateTime? utc) => utc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
+    private static string FormatBytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1_048_576 ? $"{bytes / 1024.0:F1} KB" : $"{bytes / 1_048_576.0:F1} MB";
+
+    private class PipelineStatusDto
+    {
+        public int ActiveTargets { get; set; }
+        public int ActiveFiles { get; set; }
+        public long AccessRecordsRead { get; set; }
+        public long ErrorRecordsRead { get; set; }
+        public long ParseErrors { get; set; }
+        public long ReadErrors { get; set; }
+        public long RotationsDetected { get; set; }
+        public DateTime? LastRecordTimestamp { get; set; }
+        public DateTime? LastTailCycleUtc { get; set; }
+    }
+
+    private class TailTargetDto
+    {
+        public string TargetName { get; set; } = "";
+        public string FilePath { get; set; } = "";
+        public int LogType { get; set; }
+        public bool Enabled { get; set; }
+        public string LogTypeName => LogType == 0 ? "Access" : "Error";
+    }
+
+    private class CheckpointDto { public string FilePath { get; set; } = ""; public string TargetName { get; set; } = ""; public long Offset { get; set; } public DateTime? LastWriteUtc { get; set; } public DateTime? LastSeenUtc { get; set; } }
+    private class CheckpointStatusDto { public bool Enabled { get; set; } public int TrackedFiles { get; set; } public DateTime? LastFlushUtc { get; set; } }
+}

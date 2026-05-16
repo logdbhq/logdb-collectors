@@ -1,0 +1,43 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.AdvancedPageView">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="8">
+        <TextBlock Text="Advanced (Last Resort)" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock Grid.Row="1"
+                   TextWrapping="Wrap"
+                   Foreground="{DynamicResource WarningTextBrushTheme}"
+                   Text="Use this page only for advanced troubleshooting. Standard configuration should be done from Data Sources and Destination." />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+            <Button Content="Refresh Effective Config (Redacted)" Command="{Binding RefreshEffectiveConfigCommand}" />
+            <Button Content="Load Current Into JSON Editor" Command="{Binding LoadCurrentIntoEditorCommand}" />
+            <Button Content="Apply JSON" Command="{Binding ApplyJsonCommand}" />
+        </StackPanel>
+
+        <TextBlock Grid.Row="3" Text="{Binding JsonValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+
+        <Grid Grid.Row="4" ColumnDefinitions="*,*" ColumnSpacing="10">
+            <Border Classes="panel">
+                <Grid RowDefinitions="Auto,*" RowSpacing="6">
+                    <TextBlock Text="Effective Config (Redacted)" FontWeight="SemiBold" />
+                    <TextBox Grid.Row="1"
+                             IsReadOnly="True"
+                             FontFamily="Consolas"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             Text="{Binding EffectiveRedactedJson}" />
+                </Grid>
+            </Border>
+            <Border Grid.Column="1" Classes="panel">
+                <Grid RowDefinitions="Auto,*" RowSpacing="6">
+                    <TextBlock Text="JSON Editor" FontWeight="SemiBold" />
+                    <TextBox Grid.Row="1"
+                             FontFamily="Consolas"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             Text="{Binding JsonEditorText}" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -1,0 +1,45 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+releases/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# NuGet
+*.nupkg
+*.snupkg
+nuget.config
+.nuget/
+packages/
+
+# Build logs
+*.log
+build_output.txt
+msbuild.binlog
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.*
+*.local
+appsettings.*.json
+!appsettings.Example.json
+secrets.json
+
+# User-specific
+*.rsuser
+*.DotSettings.user

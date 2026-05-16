@@ -1,0 +1,734 @@
+@page "/traffic"
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0"><i class="bi bi-activity me-2"></i>Traffic</h4>
+    <div class="d-flex align-items-center gap-2">
+        <div class="input-group input-group-sm" style="width: 200px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" class="form-control" placeholder="Filter path/IP..." @bind="_filter" @bind:event="oninput" />
+        </div>
+        <select class="form-select form-select-sm" style="width: 80px;" @bind="_logTypeFilter">
+            <option value="">All</option>
+            <option value="access">Access</option>
+            <option value="error">Error</option>
+        </select>
+        <select class="form-select form-select-sm" style="width: 80px;" @bind="_maxLines">
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+        </select>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-primary" @onclick="LoadAsync" title="Refresh now">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+            <button class="btn @(_autoRefresh ? "btn-primary" : "btn-outline-secondary")" @onclick="ToggleAutoRefresh" title="@(_autoRefresh ? "Auto-refresh ON (5s)" : "Auto-refresh OFF")">
+                <i class="bi bi-arrow-repeat"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_autoRefresh ? "" : "paused")"></span> @(_autoRefresh ? "5s" : "Manual")</span>
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_connectError</div>
+}
+
+<div class="traffic-info mb-2">
+    <span class="text-muted" style="font-size: 0.8rem;">
+        <i class="bi bi-info-circle me-1"></i>Shows raw log file entries (unfiltered) - use this to identify paths/IPs to exclude from export.
+        <span class="blocked-indicator ms-2"><i class="bi bi-funnel-fill"></i> Blocked</span> = excluded from export pipeline.
+    </span>
+</div>
+
+@* Active Exclusions *@
+@if (_rules is not null && (_rules.ExcludePaths.Count > 0 || _rules.ExcludeRemoteAddresses.Count > 0))
+{
+    <div class="card mb-3">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="card-title-label"><i class="bi bi-funnel-fill me-1"></i> Active Exclusions</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showExclusions = !_showExclusions">
+                <i class="bi @(_showExclusions ? "bi-chevron-up" : "bi-chevron-down")"></i>
+            </button>
+        </div>
+        @if (_showExclusions)
+        {
+            <div class="card-body p-3">
+                @if (_rules.ExcludePaths.Count > 0)
+                {
+                    <div class="mb-2"><strong style="font-size: 0.82rem;">Paths:</strong></div>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        @foreach (var path in _rules.ExcludePaths)
+                        {
+                            var p = path;
+                            <span class="badge blocked-tag d-flex align-items-center gap-1">
+                                <i class="bi bi-funnel-fill"></i>
+                                <code>@p</code>
+                                <button class="btn-close btn-close-white exclusion-remove" @onclick="() => UnblockPath(p)" disabled="@_excludeSaving" title="Unblock"></button>
+                            </span>
+                        }
+                    </div>
+                }
+                @if (_rules.ExcludeRemoteAddresses.Count > 0)
+                {
+                    <div class="mb-2"><strong style="font-size: 0.82rem;">IPs:</strong></div>
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var ip in _rules.ExcludeRemoteAddresses)
+                        {
+                            var addr = ip;
+                            <span class="badge blocked-tag d-flex align-items-center gap-1">
+                                <i class="bi bi-funnel-fill"></i>
+                                <code>@addr</code>
+                                <button class="btn-close btn-close-white exclusion-remove" @onclick="() => UnblockIp(addr)" disabled="@_excludeSaving" title="Unblock"></button>
+                            </span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@* Path frequency summary *@
+@if (_records.Count > 0)
+{
+    <div class="card mb-3">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="card-title-label"><i class="bi bi-bar-chart me-1"></i> Top Paths</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showTopPaths = !_showTopPaths">
+                <i class="bi @(_showTopPaths ? "bi-chevron-up" : "bi-chevron-down")"></i>
+            </button>
+        </div>
+        @if (_showTopPaths)
+        {
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th>Path</th>
+                            <th class="text-end" style="width: 70px;">Count</th>
+                            <th class="text-end" style="width: 50px;">%</th>
+                            <th style="width: 90px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in GetTopPaths())
+                        {
+                            var pathPrefix = g.Path;
+                            var blocked = IsPathBlocked(g.Path);
+                            <tr class="@(blocked ? "row-blocked" : "")">
+                                <td class="text-center">
+                                    @if (blocked)
+                                    {
+                                        <i class="bi bi-funnel-fill blocked-icon" title="Excluded from export"></i>
+                                    }
+                                </td>
+                                <td><code style="font-size: 0.82rem;">@g.Path</code></td>
+                                <td class="text-end">@g.Count</td>
+                                <td class="text-end">@g.Percent.ToString("F0")%</td>
+                                <td class="text-end">
+                                    @if (!blocked)
+                                    {
+                                        <button class="btn btn-outline-warning btn-sm py-0 px-1" style="font-size: 0.75rem;"
+                                                @onclick="() => ConfirmExcludePath(pathPrefix)" disabled="@_excludeSaving"
+                                                title="Add to path exclusions">
+                                            <i class="bi bi-funnel"></i> Exclude
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-outline-success btn-sm py-0 px-1" style="font-size: 0.75rem;"
+                                                @onclick="() => UnblockPath(pathPrefix)" disabled="@_excludeSaving"
+                                                title="Remove from exclusions">
+                                            <i class="bi bi-check-lg"></i> Unblock
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="card-title-label"><i class="bi bi-geo-alt me-1"></i> Top IPs</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showTopIps = !_showTopIps">
+                <i class="bi @(_showTopIps ? "bi-chevron-up" : "bi-chevron-down")"></i>
+            </button>
+        </div>
+        @if (_showTopIps)
+        {
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th>Remote Address</th>
+                            <th class="text-end" style="width: 70px;">Count</th>
+                            <th class="text-end" style="width: 50px;">%</th>
+                            <th style="width: 90px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in GetTopIps())
+                        {
+                            var ip = g.Ip;
+                            var blocked = IsIpBlocked(g.Ip);
+                            <tr class="@(blocked ? "row-blocked" : "")">
+                                <td class="text-center">
+                                    @if (blocked)
+                                    {
+                                        <i class="bi bi-funnel-fill blocked-icon" title="Excluded from export"></i>
+                                    }
+                                </td>
+                                <td><code style="font-size: 0.82rem;">@g.Ip</code></td>
+                                <td class="text-end">@g.Count</td>
+                                <td class="text-end">@g.Percent.ToString("F0")%</td>
+                                <td class="text-end">
+                                    @if (!blocked)
+                                    {
+                                        <button class="btn btn-outline-warning btn-sm py-0 px-1" style="font-size: 0.75rem;"
+                                                @onclick="() => ConfirmExcludeIp(ip)" disabled="@_excludeSaving"
+                                                title="Add to IP exclusions">
+                                            <i class="bi bi-funnel"></i> Exclude
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-outline-success btn-sm py-0 px-1" style="font-size: 0.75rem;"
+                                                @onclick="() => UnblockIp(ip)" disabled="@_excludeSaving"
+                                                title="Remove from exclusions">
+                                            <i class="bi bi-check-lg"></i> Unblock
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+}
+
+@* Log entries *@
+<div class="card">
+    <div class="card-header py-2 px-3">
+        <span class="card-title-label"><i class="bi bi-list-ul me-1"></i> Recent Entries</span>
+        <span class="badge bg-secondary ms-2">@GroupedRecords.Count entries</span>
+        @if (GroupedRecords.Any(g => g.Count > 1))
+        {
+            <span class="badge bg-info ms-1" title="Records grouped by second + method + path + status + IP">grouped</span>
+        }
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 traffic-table">
+                <thead class="sticky-top">
+                    <tr>
+                        <th style="width: 25px;"></th>
+                        <th style="width: 80px;">Time</th>
+                        <th style="width: 55px;">Type</th>
+                        <th style="width: 40px;">Cnt</th>
+                        <th style="width: 50px;">Method</th>
+                        <th style="width: 45px;">Status</th>
+                        <th>Path / Message</th>
+                        <th style="width: 120px;">Remote IP</th>
+                        <th style="width: 65px;">Bytes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var rowIdx = 0; }
+                    @foreach (var g in GroupedRecords)
+                    {
+                        var r = g.Record;
+                        var idx = rowIdx++;
+                        var isError = r.LogType == 1 || r.StatusCode >= 500;
+                        var isWarn = r.StatusCode >= 400 && r.StatusCode < 500;
+                        var blocked = IsRecordBlocked(r);
+                        var expanded = _expandedRows.Contains(idx);
+                        <tr class="traffic-row @(blocked ? "row-blocked" : isError ? "table-danger" : isWarn ? "table-warning" : "")" @onclick="() => ToggleRow(idx)">
+                            <td class="text-center">
+                                @if (blocked)
+                                {
+                                    <i class="bi bi-funnel-fill blocked-icon" title="Excluded from export"></i>
+                                }
+                            </td>
+                            <td class="text-muted" style="font-size: 0.78rem;">@r.Timestamp.ToString("HH:mm:ss")</td>
+                            <td>
+                                @if (r.LogType == 0)
+                                {
+                                    <span class="badge bg-info" style="font-size: 0.7rem;">ACC</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-danger" style="font-size: 0.7rem;">ERR</span>
+                                }
+                            </td>
+                            <td class="text-center">
+                                @if (g.Count > 1)
+                                {
+                                    <span class="badge bg-secondary count-badge" title="@g.Count identical records">x@g.Count</span>
+                                }
+                            </td>
+                            <td style="font-size: 0.82rem; font-weight: 500;">@(r.Method ?? "")</td>
+                            <td>
+                                @if (r.StatusCode is not null)
+                                {
+                                    <span class="@StatusClass(r.StatusCode)" style="font-size: 0.82rem; font-weight: 500;">@r.StatusCode</span>
+                                }
+                            </td>
+                            <td style="font-size: 0.82rem; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="@(r.Path ?? r.Message)">
+                                <i class="bi @(expanded ? "bi-chevron-down" : "bi-chevron-right") payload-chevron"></i>
+                                @(r.Path ?? r.Message)
+                            </td>
+                            <td style="font-size: 0.78rem;" class="text-muted">@(r.RemoteAddress ?? "")</td>
+                            <td style="font-size: 0.78rem;" class="text-muted text-end">@FormatBytes(g.TotalBytes)</td>
+                        </tr>
+                        @if (expanded)
+                        {
+                            <tr class="payload-row @(blocked ? "row-blocked" : "")">
+                                <td colspan="9">
+                                    <div class="payload-content">
+                                        <pre class="payload-pre mb-0">@r.Message</pre>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    .traffic-table th {
+        font-size: 0.78rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .traffic-table td {
+        vertical-align: middle;
+        padding: 0.25rem 0.5rem;
+    }
+
+    .refresh-dot.paused {
+        background: #d29922 !important;
+        animation: none !important;
+    }
+
+    .row-blocked {
+        opacity: 0.45;
+        background: repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 8px,
+            rgba(255, 0, 0, 0.03) 8px,
+            rgba(255, 0, 0, 0.03) 16px
+        ) !important;
+    }
+
+    .count-badge {
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.15em 0.4em;
+    }
+
+    .blocked-icon {
+        color: #e5534b;
+        font-size: 0.75rem;
+    }
+
+    .blocked-indicator {
+        color: #e5534b;
+        font-size: 0.78rem;
+        font-weight: 500;
+    }
+
+    .blocked-tag {
+        background: var(--danger-muted) !important;
+        border: 1px solid var(--danger-color) !important;
+        color: var(--danger-color) !important;
+        font-size: 0.82rem;
+        padding: 0.35em 0.6em;
+        font-weight: normal;
+    }
+
+    .blocked-tag code {
+        color: inherit;
+        font-size: 0.82rem;
+    }
+
+    .exclusion-remove {
+        font-size: 0.5rem;
+        padding: 0.15em;
+        margin-left: 0.2em;
+        opacity: 0.7;
+        cursor: pointer;
+    }
+
+    .exclusion-remove:hover {
+        opacity: 1;
+    }
+
+    .traffic-row {
+        cursor: pointer;
+    }
+
+    .traffic-row:active {
+        opacity: 0.8;
+    }
+
+    .payload-chevron {
+        font-size: 0.65rem;
+        margin-right: 4px;
+        opacity: 0.5;
+        vertical-align: middle;
+    }
+
+    .payload-row td {
+        padding: 0 !important;
+        border-top: none !important;
+    }
+
+    .payload-content {
+        padding: 6px 12px 6px 40px;
+        background: var(--payload-bg, rgba(255, 255, 255, 0.02));
+        border-top: 1px dashed var(--payload-border, rgba(255, 255, 255, 0.06));
+    }
+
+    .payload-pre {
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.75rem;
+        color: var(--text-muted, #8b949e);
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin: 0;
+    }
+
+    /* Light theme */
+    [data-bs-theme="light"] .payload-content {
+        --payload-bg: rgba(0, 0, 0, 0.02);
+        --payload-border: rgba(0, 0, 0, 0.08);
+    }
+
+    [data-bs-theme="light"] .row-blocked {
+        background: repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 8px,
+            rgba(200, 0, 0, 0.04) 8px,
+            rgba(200, 0, 0, 0.04) 16px
+        ) !important;
+    }
+</style>
+
+@code {
+    private List<TailRecordDto> _records = new();
+    private FilterRulesDto? _rules;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _autoRefresh = true;
+    private string? _filter;
+    private string? _logTypeFilter;
+    private int _maxLines = 200;
+    private bool _showTopPaths = true;
+    private bool _showTopIps;
+    private bool _showExclusions = true;
+    private bool _excludeSaving;
+    private HashSet<int> _expandedRows = new();
+
+    private List<RecordGroup> GroupedRecords => AggregateRecords(FilteredRecords);
+
+    private List<TailRecordDto> FilteredRecords =>
+        _records.Where(r =>
+        {
+            if (!string.IsNullOrEmpty(_logTypeFilter))
+            {
+                var match = _logTypeFilter == "access" ? 0 : 1;
+                if (r.LogType != match) return false;
+            }
+            if (!string.IsNullOrEmpty(_filter))
+            {
+                return (r.Path?.Contains(_filter, StringComparison.OrdinalIgnoreCase) == true) ||
+                       (r.RemoteAddress?.Contains(_filter, StringComparison.OrdinalIgnoreCase) == true) ||
+                       (r.Message?.Contains(_filter, StringComparison.OrdinalIgnoreCase) == true);
+            }
+            return true;
+        }).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            if (_autoRefresh)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            _records = await client.GetFromJsonAsync<List<TailRecordDto>>($"/api/tail/recent?lines={_maxLines}") ?? new();
+            _rules = await client.GetFromJsonAsync<FilterRulesDto>("/api/filters");
+            _connectError = null;
+        }
+        catch (Exception ex)
+        {
+            _connectError = ex.Message;
+        }
+    }
+
+    private void ToggleAutoRefresh() => _autoRefresh = !_autoRefresh;
+
+    private void ToggleRow(int idx)
+    {
+        if (!_expandedRows.Remove(idx))
+            _expandedRows.Add(idx);
+    }
+
+    // --- Blocked detection ---
+
+    private bool IsPathBlocked(string path)
+    {
+        if (_rules is null) return false;
+        return _rules.ExcludePaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool IsIpBlocked(string ip)
+    {
+        if (_rules is null) return false;
+        return _rules.ExcludeRemoteAddresses.Any(a => a.Equals(ip, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool IsRecordBlocked(TailRecordDto r)
+    {
+        if (_rules is null || r.LogType != 0) return false; // error logs are never filtered
+        if (r.Path is not null && IsPathBlocked(r.Path)) return true;
+        if (r.RemoteAddress is not null && IsIpBlocked(r.RemoteAddress)) return true;
+        return false;
+    }
+
+    // --- Top groups ---
+
+    private List<PathGroup> GetTopPaths()
+    {
+        var accessRecords = _records.Where(r => r.LogType == 0 && r.Path is not null).ToList();
+        if (accessRecords.Count == 0) return new();
+
+        return accessRecords
+            .GroupBy(r => NormalizePath(r.Path!))
+            .Select(g => new PathGroup { Path = g.Key, Count = g.Count(), Percent = g.Count() * 100.0 / accessRecords.Count })
+            .OrderByDescending(g => g.Count)
+            .Take(15)
+            .ToList();
+    }
+
+    private List<IpGroup> GetTopIps()
+    {
+        var accessRecords = _records.Where(r => r.LogType == 0 && r.RemoteAddress is not null).ToList();
+        if (accessRecords.Count == 0) return new();
+
+        return accessRecords
+            .GroupBy(r => r.RemoteAddress!)
+            .Select(g => new IpGroup { Ip = g.Key, Count = g.Count(), Percent = g.Count() * 100.0 / accessRecords.Count })
+            .OrderByDescending(g => g.Count)
+            .Take(15)
+            .ToList();
+    }
+
+    private static string NormalizePath(string path)
+    {
+        var qIdx = path.IndexOf('?');
+        var clean = qIdx >= 0 ? path[..qIdx] : path;
+
+        var parts = clean.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length <= 2) return clean;
+        return "/" + string.Join("/", parts.Take(2));
+    }
+
+    // --- Exclude with confirm ---
+
+    private async Task ConfirmExcludePath(string path)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Exclude path \"{path}\" from export pipeline?");
+        if (!confirmed) return;
+        await ExcludePath(path);
+    }
+
+    private async Task ConfirmExcludeIp(string ip)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Exclude IP \"{ip}\" from export pipeline?");
+        if (!confirmed) return;
+        await ExcludeIp(ip);
+    }
+
+    private async Task ExcludePath(string path)
+    {
+        if (_excludeSaving) return;
+        _excludeSaving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            _rules = await (await client.PostAsJsonAsync("/api/filters/exclude-path", new { value = path }))
+                .Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _excludeSaving = false; }
+    }
+
+    private async Task ExcludeIp(string ip)
+    {
+        if (_excludeSaving) return;
+        _excludeSaving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            _rules = await (await client.PostAsJsonAsync("/api/filters/exclude-ip", new { value = ip }))
+                .Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _excludeSaving = false; }
+    }
+
+    // --- Unblock ---
+
+    private async Task UnblockPath(string path)
+    {
+        if (_excludeSaving) return;
+        _excludeSaving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var response = await client.DeleteAsync($"/api/filters/exclude-path?value={Uri.EscapeDataString(path)}");
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _excludeSaving = false; }
+    }
+
+    private async Task UnblockIp(string ip)
+    {
+        if (_excludeSaving) return;
+        _excludeSaving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var response = await client.DeleteAsync($"/api/filters/exclude-ip?value={Uri.EscapeDataString(ip)}");
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _excludeSaving = false; }
+    }
+
+    private static string StatusClass(int? code) => code switch
+    {
+        >= 500 => "text-danger",
+        >= 400 => "text-warning",
+        >= 300 => "text-info",
+        _ => "text-success"
+    };
+
+    private static string FormatBytes(long? bytes) => bytes switch
+    {
+        null => "",
+        < 1024 => $"{bytes}B",
+        < 1_048_576 => $"{bytes / 1024.0:F0}K",
+        _ => $"{bytes / 1_048_576.0:F1}M"
+    };
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class TailRecordDto
+    {
+        public DateTime Timestamp { get; set; }
+        public string Message { get; set; } = "";
+        public int LogType { get; set; }
+        public string TargetName { get; set; } = "";
+        public string? RemoteAddress { get; set; }
+        public string? Method { get; set; }
+        public string? Path { get; set; }
+        public int? StatusCode { get; set; }
+        public long? ResponseBytes { get; set; }
+        public string? Severity { get; set; }
+    }
+
+    private class FilterRulesDto
+    {
+        public bool ExcludeStaticFiles { get; set; }
+        public List<string> ExcludePaths { get; set; } = new();
+        public List<string> ExcludeRemoteAddresses { get; set; } = new();
+    }
+
+    private static List<RecordGroup> AggregateRecords(List<TailRecordDto> records)
+    {
+        var result = new List<RecordGroup>();
+
+        var groups = records.GroupBy(r => r.LogType == 0
+            ? (object)(
+                new DateTime(r.Timestamp.Year, r.Timestamp.Month, r.Timestamp.Day,
+                    r.Timestamp.Hour, r.Timestamp.Minute, r.Timestamp.Second, r.Timestamp.Kind),
+                r.Method ?? "",
+                r.Path ?? "",
+                r.StatusCode ?? 0,
+                r.RemoteAddress ?? "")
+            : (object)r // error logs: never aggregate, each is unique
+        );
+
+        foreach (var group in groups)
+        {
+            var items = group.ToList();
+            var representative = items[0];
+            var totalBytes = items.Where(r => r.ResponseBytes.HasValue).Sum(r => r.ResponseBytes!.Value);
+            result.Add(new RecordGroup
+            {
+                Record = representative,
+                Count = items.Count,
+                TotalBytes = totalBytes > 0 ? totalBytes : representative.ResponseBytes
+            });
+        }
+
+        return result;
+    }
+
+    private class RecordGroup
+    {
+        public TailRecordDto Record { get; set; } = null!;
+        public int Count { get; set; }
+        public long? TotalBytes { get; set; }
+    }
+
+    private class PathGroup
+    {
+        public string Path { get; set; } = "";
+        public int Count { get; set; }
+        public double Percent { get; set; }
+    }
+
+    private class IpGroup
+    {
+        public string Ip { get; set; } = "";
+        public int Count { get; set; }
+        public double Percent { get; set; }
+    }
+}

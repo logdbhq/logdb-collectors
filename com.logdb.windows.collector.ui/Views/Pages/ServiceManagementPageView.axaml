@@ -1,0 +1,181 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.ServiceManagementPageView">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="10">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBlock Text="Service Management" FontSize="22" FontWeight="SemiBold" />
+            <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" />
+        </Grid>
+
+        <Border Grid.Row="1" Classes="panel">
+            <Grid ColumnDefinitions="170,*,170,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="10">
+                <TextBlock Text="Service Name" />
+                <TextBlock Grid.Column="1" Text="{Binding ServiceName}" />
+                <TextBlock Grid.Column="2" Text="Privilege Mode" />
+                <TextBlock Grid.Column="3" Text="{Binding PrivilegeModeText}" />
+
+                <TextBlock Grid.Row="1" Text="Installed" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ServiceInstalled}" />
+                <TextBlock Grid.Row="1" Grid.Column="2" Text="Service State" />
+                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding ServiceState}" />
+
+                <TextBlock Grid.Row="2" Text="Startup Type" />
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding StartupType}" />
+                <TextBlock Grid.Row="2" Grid.Column="2" Text="Console Status" />
+                <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding ConsoleStatus}" />
+
+                <TextBlock Grid.Row="3" Text="Binary Path" />
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ServiceBinaryPath}" TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Row="3" Grid.Column="2" Text="Update Status" />
+                <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding ServiceUpdateMessage}" TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="10">
+            <Border Grid.Row="0" Grid.Column="0" Classes="card" Padding="10">
+                <StackPanel Spacing="10">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Windows Service (Production)" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Install and run as a Windows service. Administrator rights required."
+                                   Classes="muted"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <Button Content="Install"
+                                Command="{Binding InstallServiceCommand}"
+                                IsEnabled="{Binding CanInstallService}" />
+                        <Button Grid.Column="1"
+                                Content="Uninstall"
+                                Command="{Binding UninstallServiceCommand}"
+                                IsEnabled="{Binding CanUninstallService}" />
+
+                        <Button Grid.Row="1"
+                                Content="Start"
+                                Command="{Binding StartServiceCommand}"
+                                IsEnabled="{Binding CanStartService}" />
+                        <Button Grid.Row="1"
+                                Grid.Column="1"
+                                Content="Stop"
+                                Command="{Binding StopServiceCommand}"
+                                IsEnabled="{Binding CanStopService}" />
+
+                        <Button Grid.Row="2"
+                                Content="Restart"
+                                Command="{Binding RestartServiceCommand}"
+                                IsEnabled="{Binding CanRestartService}" />
+                    </Grid>
+
+                    <TextBlock Text="{Binding ServiceStateSummary}" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="0" Grid.Column="1" Classes="card" Padding="10">
+                <StackPanel Spacing="10">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Console Instance (Dev/Test)" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Run collector in foreground without service install."
+                                   Classes="muted"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                        <Button Content="Run Console"
+                                Command="{Binding RunConsoleCommand}"
+                                IsEnabled="{Binding CanRunConsole}" />
+                        <Button Grid.Column="1"
+                                Content="Stop Console"
+                                Command="{Binding StopConsoleCommand}"
+                                IsEnabled="{Binding CanStopConsole}" />
+                        <Button Grid.Column="2"
+                                Content="Restart Console"
+                                Command="{Binding RestartConsoleCommand}"
+                                IsEnabled="{Binding CanRestartConsole}" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <TextBox Text="{Binding CollectorExePath}"
+                                 Watermark="Collector exe path (leave empty for auto-detect)" />
+                        <Button Grid.Column="1"
+                                Content="Browse"
+                                Click="OnBrowseCollectorExeClick" />
+                        <Button Grid.Column="2"
+                                Content="Save Path"
+                                Command="{Binding SaveCollectorPathCommand}" />
+                    </Grid>
+
+                    <TextBlock Text="{Binding ConsoleHint}" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="1" Grid.Column="0" Classes="card" Padding="10">
+                <StackPanel Spacing="10">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Service Updates" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Check and apply service package updates."
+                                   Classes="muted"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <Grid ColumnDefinitions="170,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                        <TextBlock Text="Installed Version" Classes="muted" />
+                        <TextBlock Grid.Column="1" Text="{Binding ServiceCurrentVersion}" />
+                        <TextBlock Grid.Row="1" Text="Latest Version" Classes="muted" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ServiceLatestVersion}" />
+                        <TextBlock Grid.Row="2" Text="Update Available" Classes="muted" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ServiceUpdateAvailable}" />
+                    </Grid>
+
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                        <Button Content="Check Update"
+                                Command="{Binding CheckServiceUpdateCommand}"
+                                IsEnabled="{Binding CanCheckServiceUpdate}" />
+                        <Button Grid.Column="1"
+                                Content="Apply Update"
+                                Command="{Binding ApplyServiceUpdateCommand}"
+                                IsEnabled="{Binding CanApplyServiceUpdate}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="1" Grid.Column="1" Classes="card" Padding="10">
+                <StackPanel Spacing="10">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Firewall Sync" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Periodically fetches blocked IPs from LogDB Guard and applies inbound block rules to Windows Firewall."
+                                   Classes="muted"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <CheckBox Content="Enable firewall sync"
+                              IsChecked="{Binding FirewallEnabled}" />
+
+                    <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <TextBlock Text="Poll Interval (s)" VerticalAlignment="Center" />
+                        <NumericUpDown Grid.Column="1" Minimum="10" Maximum="3600" Value="{Binding FirewallPollIntervalSeconds}" />
+
+                        <TextBlock Grid.Row="1" Text="Rule Prefix" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FirewallRuleNamePrefix}" />
+                    </Grid>
+
+                    <TextBlock Text="{Binding FirewallRuntimeStatus}" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding FirewallHint}" Classes="muted" TextWrapping="Wrap" />
+
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                        <Button Content="Save Firewall Config"
+                                Command="{Binding SaveFirewallConfigCommand}"
+                                IsEnabled="{Binding CanSaveFirewallConfig}" />
+                        <Button Grid.Column="1"
+                                Content="Remove All Block Rules"
+                                Command="{Binding RemoveFirewallRulesCommand}"
+                                IsEnabled="{Binding CanRemoveFirewallRules}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="3" Classes="panel">
+            <TextBlock TextWrapping="Wrap" Text="{Binding ModeHint}" />
+        </Border>
+    </Grid>
+</UserControl>

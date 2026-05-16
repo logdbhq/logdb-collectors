@@ -1,0 +1,678 @@
+@page "/traffic"
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0"><i class="bi bi-activity me-2"></i>Traffic</h4>
+    <div class="d-flex align-items-center gap-2">
+        @if (_snapshot is not null)
+        {
+            <span class="badge bg-secondary" title="Total records ingested since start">@_snapshot.TotalIngested.ToString("N0") total</span>
+        }
+        <div class="input-group input-group-sm" style="width: 200px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" class="form-control" placeholder="Filter container/msg..." @bind="_filter" @bind:event="oninput" />
+        </div>
+        <select class="form-select form-select-sm" style="width: 90px;" @bind="_streamFilter">
+            <option value="">All</option>
+            <option value="stdout">stdout</option>
+            <option value="stderr">stderr</option>
+        </select>
+        <select class="form-select form-select-sm" style="width: 80px;" @bind="_maxCount">
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+        </select>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-primary" @onclick="LoadAsync" title="Refresh now">
+                <i class="bi bi-arrow-clockwise"></i>
+            </button>
+            <button class="btn @(_autoRefresh ? "btn-primary" : "btn-outline-secondary")" @onclick="ToggleAutoRefresh" title="@(_autoRefresh ? "Auto-refresh ON (5s)" : "Auto-refresh OFF")">
+                <i class="bi bi-arrow-repeat"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_autoRefresh ? "" : "paused")"></span> @(_autoRefresh ? "5s" : "Manual")</span>
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_connectError</div>
+}
+
+<div class="traffic-info mb-2">
+    <span class="text-muted" style="font-size: 0.8rem;">
+        <i class="bi bi-info-circle me-1"></i>Shows buffered log entries - use this to identify messages/categories to exclude from export.
+        <span class="blocked-indicator ms-2"><i class="bi bi-funnel-fill"></i> Filtered</span> = excluded from export pipeline.
+    </span>
+</div>
+
+@* Active Exclusions *@
+@if (_rules is not null && (_rules.ExcludeMessagePatterns.Count > 0 || _rules.ExcludeCategories.Count > 0))
+{
+    <div class="card mb-3">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="card-title-label"><i class="bi bi-funnel-fill me-1"></i> Active Exclusions</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showExclusions = !_showExclusions">
+                <i class="bi @(_showExclusions ? "bi-chevron-up" : "bi-chevron-down")"></i>
+            </button>
+        </div>
+        @if (_showExclusions)
+        {
+            <div class="card-body p-3">
+                @if (_rules.ExcludeMessagePatterns.Count > 0)
+                {
+                    <div class="mb-2"><strong style="font-size: 0.82rem;">Message Patterns:</strong></div>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        @foreach (var pattern in _rules.ExcludeMessagePatterns)
+                        {
+                            var p = pattern;
+                            <span class="badge blocked-tag d-flex align-items-center gap-1">
+                                <i class="bi bi-funnel-fill"></i>
+                                <code>@p</code>
+                                <button class="btn-close btn-close-white exclusion-remove" @onclick="() => UnblockMessage(p)" disabled="@_excludeSaving" title="Remove"></button>
+                            </span>
+                        }
+                    </div>
+                }
+                @if (_rules.ExcludeCategories.Count > 0)
+                {
+                    <div class="mb-2"><strong style="font-size: 0.82rem;">Categories:</strong></div>
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var cat in _rules.ExcludeCategories)
+                        {
+                            var c = cat;
+                            <span class="badge blocked-tag d-flex align-items-center gap-1">
+                                <i class="bi bi-funnel-fill"></i>
+                                <code>@c</code>
+                                <button class="btn-close btn-close-white exclusion-remove" @onclick="() => UnblockCategory(c)" disabled="@_excludeSaving" title="Remove"></button>
+                            </span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@* Top containers summary *@
+@if (_records.Count > 0)
+{
+    <div class="card mb-3">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="card-title-label"><i class="bi bi-bar-chart me-1"></i> Top Containers</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showTopContainers = !_showTopContainers">
+                <i class="bi @(_showTopContainers ? "bi-chevron-up" : "bi-chevron-down")"></i>
+            </button>
+        </div>
+        @if (_showTopContainers)
+        {
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th>Container</th>
+                            <th class="text-end" style="width: 70px;">Count</th>
+                            <th class="text-end" style="width: 50px;">%</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in GetTopContainers())
+                        {
+                            var isDisabled = !g.Exported;
+                            <tr class="@(isDisabled ? "row-blocked" : "")">
+                                <td class="text-center">
+                                    @if (isDisabled)
+                                    {
+                                        <i class="bi bi-funnel-fill blocked-icon" title="Container disabled or filtered"></i>
+                                    }
+                                </td>
+                                <td><code style="font-size: 0.82rem;">@g.Name</code></td>
+                                <td class="text-end">@g.Count</td>
+                                <td class="text-end">@g.Percent.ToString("F0")%</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="card-title-label"><i class="bi bi-tag me-1"></i> Top Categories</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _showTopCategories = !_showTopCategories">
+                <i class="bi @(_showTopCategories ? "bi-chevron-up" : "bi-chevron-down")"></i>
+            </button>
+        </div>
+        @if (_showTopCategories)
+        {
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th>Category</th>
+                            <th class="text-end" style="width: 70px;">Count</th>
+                            <th class="text-end" style="width: 50px;">%</th>
+                            <th style="width: 90px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in GetTopCategories())
+                        {
+                            var cat = g.Category;
+                            var blocked = IsCategoryBlocked(g.Category);
+                            <tr class="@(blocked ? "row-blocked" : "")">
+                                <td class="text-center">
+                                    @if (blocked)
+                                    {
+                                        <i class="bi bi-funnel-fill blocked-icon" title="Excluded from export"></i>
+                                    }
+                                </td>
+                                <td><code style="font-size: 0.82rem;">@g.Category</code></td>
+                                <td class="text-end">@g.Count</td>
+                                <td class="text-end">@g.Percent.ToString("F0")%</td>
+                                <td class="text-end">
+                                    @if (!blocked)
+                                    {
+                                        <button class="btn btn-outline-warning btn-sm py-0 px-1" style="font-size: 0.75rem;"
+                                                @onclick="() => ConfirmExcludeCategory(cat)" disabled="@_excludeSaving"
+                                                title="Add to category exclusions">
+                                            <i class="bi bi-funnel"></i> Exclude
+                                        </button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-outline-success btn-sm py-0 px-1" style="font-size: 0.75rem;"
+                                                @onclick="() => UnblockCategory(cat)" disabled="@_excludeSaving"
+                                                title="Remove from exclusions">
+                                            <i class="bi bi-check-lg"></i> Unblock
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+}
+
+@* Log entries *@
+<div class="card">
+    <div class="card-header py-2 px-3">
+        <span class="card-title-label"><i class="bi bi-list-ul me-1"></i> Recent Entries</span>
+        <span class="badge bg-secondary ms-2">@FilteredRecords.Count entries</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 traffic-table">
+                <thead class="sticky-top">
+                    <tr>
+                        <th style="width: 25px;"></th>
+                        <th style="width: 80px;">Time</th>
+                        <th style="width: 140px;">Container</th>
+                        <th style="width: 55px;">Stream</th>
+                        <th style="width: 55px;">Level</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{ var rowIdx = 0; }
+                    @foreach (var r in FilteredRecords)
+                    {
+                        var idx = rowIdx++;
+                        var isStderr = r.Stream == "stderr";
+                        var isError = isStderr || r.ParsedLevel is "Error" or "Critical";
+                        var isWarn = r.ParsedLevel is "Warning";
+                        var filtered = !r.Exported;
+                        var expanded = _expandedRows.Contains(idx);
+                        <tr class="traffic-row @(filtered ? "row-blocked" : isError ? "table-danger" : isWarn ? "table-warning" : "")" @onclick="() => ToggleRow(idx)">
+                            <td class="text-center">
+                                @if (filtered)
+                                {
+                                    <i class="bi bi-funnel-fill blocked-icon" title="Excluded from export"></i>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-circle-fill" style="color: var(--success-color, #2ecc71); font-size: 0.5rem;" title="Exported to LogDB"></i>
+                                }
+                            </td>
+                            <td class="text-muted" style="font-size: 0.78rem;">@r.Timestamp.ToString("HH:mm:ss.fff")</td>
+                            <td style="font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="@r.Container">
+                                <span style="color: var(--console-container, #58a6ff);">@TruncateContainer(r.ComposeService ?? r.Container)</span>
+                            </td>
+                            <td style="font-size: 0.78rem;">
+                                @if (isStderr)
+                                {
+                                    <span class="badge bg-danger" style="font-size: 0.7rem;">stderr</span>
+                                }
+                                else
+                                {
+                                    <span class="badge bg-secondary" style="font-size: 0.7rem;">stdout</span>
+                                }
+                            </td>
+                            <td style="font-size: 0.78rem;">
+                                @if (r.ParsedLevel is not null)
+                                {
+                                    <span class="badge @LevelBadgeClass(r.ParsedLevel)" style="font-size: 0.7rem;">@r.ParsedLevel</span>
+                                }
+                            </td>
+                            <td style="font-size: 0.82rem; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="@r.Message">
+                                <i class="bi @(expanded ? "bi-chevron-down" : "bi-chevron-right") payload-chevron"></i>
+                                @r.Message
+                            </td>
+                        </tr>
+                        @if (expanded)
+                        {
+                            <tr class="payload-row @(filtered ? "row-blocked" : "")">
+                                <td colspan="6">
+                                    <div class="payload-content">
+                                        @if (r.Category is not null)
+                                        {
+                                            <div class="payload-meta">
+                                                <span class="payload-label">Category:</span> <code>@r.Category</code>
+                                                @if (!IsCategoryBlocked(r.Category))
+                                                {
+                                                    <button class="btn btn-outline-warning btn-sm py-0 px-1 ms-2" style="font-size: 0.7rem;"
+                                                            @onclick:stopPropagation="true"
+                                                            @onclick="() => ConfirmExcludeCategory(r.Category)" disabled="@_excludeSaving">
+                                                        <i class="bi bi-funnel"></i> Exclude
+                                                    </button>
+                                                }
+                                            </div>
+                                        }
+                                        <div class="payload-meta">
+                                            <span class="payload-label">Container:</span> @r.Container
+                                            <span class="payload-label ms-3">Image:</span> @(r.Image ?? "-")
+                                        </div>
+                                        <pre class="payload-pre mb-0">@r.Message</pre>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    .traffic-table th {
+        font-size: 0.78rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .traffic-table td {
+        vertical-align: middle;
+        padding: 0.25rem 0.5rem;
+    }
+
+    .refresh-dot.paused {
+        background: #d29922 !important;
+        animation: none !important;
+    }
+
+    .row-blocked {
+        opacity: 0.45;
+        background: repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 8px,
+            rgba(255, 0, 0, 0.03) 8px,
+            rgba(255, 0, 0, 0.03) 16px
+        ) !important;
+    }
+
+    .blocked-icon {
+        color: #e5534b;
+        font-size: 0.75rem;
+    }
+
+    .blocked-indicator {
+        color: #e5534b;
+        font-size: 0.78rem;
+        font-weight: 500;
+    }
+
+    .blocked-tag {
+        background: var(--danger-muted) !important;
+        border: 1px solid var(--danger-color) !important;
+        color: var(--danger-color) !important;
+        font-size: 0.82rem;
+        padding: 0.35em 0.6em;
+        font-weight: normal;
+    }
+
+    .blocked-tag code {
+        color: inherit;
+        font-size: 0.82rem;
+    }
+
+    .exclusion-remove {
+        font-size: 0.5rem;
+        padding: 0.15em;
+        margin-left: 0.2em;
+        opacity: 0.7;
+        cursor: pointer;
+    }
+
+    .exclusion-remove:hover {
+        opacity: 1;
+    }
+
+    .traffic-row {
+        cursor: pointer;
+    }
+
+    .traffic-row:active {
+        opacity: 0.8;
+    }
+
+    .payload-chevron {
+        font-size: 0.65rem;
+        margin-right: 4px;
+        opacity: 0.5;
+        vertical-align: middle;
+    }
+
+    .payload-row td {
+        padding: 0 !important;
+        border-top: none !important;
+    }
+
+    .payload-content {
+        padding: 8px 12px 8px 40px;
+        background: var(--payload-bg, rgba(255, 255, 255, 0.02));
+        border-top: 1px dashed var(--payload-border, rgba(255, 255, 255, 0.06));
+    }
+
+    .payload-meta {
+        font-size: 0.78rem;
+        color: var(--text-muted, #8b949e);
+        margin-bottom: 4px;
+    }
+
+    .payload-label {
+        font-weight: 600;
+        opacity: 0.7;
+    }
+
+    .payload-pre {
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.75rem;
+        color: var(--text-muted, #8b949e);
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin: 0;
+        margin-top: 4px;
+    }
+
+    /* Light theme */
+    [data-bs-theme="light"] .payload-content {
+        --payload-bg: rgba(0, 0, 0, 0.02);
+        --payload-border: rgba(0, 0, 0, 0.08);
+    }
+
+    [data-bs-theme="light"] .row-blocked {
+        background: repeating-linear-gradient(
+            -45deg,
+            transparent,
+            transparent 8px,
+            rgba(200, 0, 0, 0.04) 8px,
+            rgba(200, 0, 0, 0.04) 16px
+        ) !important;
+    }
+</style>
+
+@code {
+    private List<ConsoleEntryDto> _records = new();
+    private LiveConsoleSnapshotDto? _snapshot;
+    private FilterRulesDto? _rules;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _autoRefresh = true;
+    private string? _filter;
+    private string? _streamFilter;
+    private int _maxCount = 200;
+    private bool _showTopContainers = true;
+    private bool _showTopCategories;
+    private bool _showExclusions = true;
+    private bool _excludeSaving;
+    private HashSet<int> _expandedRows = new();
+
+    private List<ConsoleEntryDto> FilteredRecords =>
+        _records.Where(r =>
+        {
+            if (!string.IsNullOrEmpty(_streamFilter))
+            {
+                if (!r.Stream.Equals(_streamFilter, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
+            if (!string.IsNullOrEmpty(_filter))
+            {
+                return r.Container.Contains(_filter, StringComparison.OrdinalIgnoreCase) ||
+                       (r.ComposeService?.Contains(_filter, StringComparison.OrdinalIgnoreCase) == true) ||
+                       r.Message.Contains(_filter, StringComparison.OrdinalIgnoreCase) ||
+                       (r.Category?.Contains(_filter, StringComparison.OrdinalIgnoreCase) == true);
+            }
+            return true;
+        }).ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            if (_autoRefresh)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var url = $"/api/console/recent?count={_maxCount}";
+            if (!string.IsNullOrWhiteSpace(_filter))
+                url += $"&container={Uri.EscapeDataString(_filter)}";
+
+            _snapshot = await client.GetFromJsonAsync<LiveConsoleSnapshotDto>(url);
+            if (_snapshot is not null)
+                _records = _snapshot.Records;
+            _rules = await client.GetFromJsonAsync<FilterRulesDto>("/api/filters");
+            _connectError = null;
+        }
+        catch (Exception ex)
+        {
+            _connectError = ex.Message;
+        }
+    }
+
+    private void ToggleAutoRefresh() => _autoRefresh = !_autoRefresh;
+
+    private void ToggleRow(int idx)
+    {
+        if (!_expandedRows.Remove(idx))
+            _expandedRows.Add(idx);
+    }
+
+    // --- Blocked detection ---
+
+    private bool IsCategoryBlocked(string category)
+    {
+        if (_rules is null) return false;
+        return _rules.ExcludeCategories.Any(c => c.Equals(category, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool IsMessageBlocked(string message)
+    {
+        if (_rules is null) return false;
+        return _rules.ExcludeMessagePatterns.Any(p => message.Contains(p, StringComparison.OrdinalIgnoreCase));
+    }
+
+    // --- Top groups ---
+
+    private List<ContainerGroup> GetTopContainers()
+    {
+        if (_records.Count == 0) return new();
+
+        return _records
+            .GroupBy(r => r.ComposeService ?? r.Container)
+            .Select(g => new ContainerGroup
+            {
+                Name = g.Key,
+                Count = g.Count(),
+                Percent = g.Count() * 100.0 / _records.Count,
+                Exported = g.Any(r => r.Exported)
+            })
+            .OrderByDescending(g => g.Count)
+            .Take(15)
+            .ToList();
+    }
+
+    private List<CategoryGroup> GetTopCategories()
+    {
+        var withCategory = _records.Where(r => r.Category is not null).ToList();
+        if (withCategory.Count == 0) return new();
+
+        return withCategory
+            .GroupBy(r => r.Category!)
+            .Select(g => new CategoryGroup
+            {
+                Category = g.Key,
+                Count = g.Count(),
+                Percent = g.Count() * 100.0 / withCategory.Count
+            })
+            .OrderByDescending(g => g.Count)
+            .Take(15)
+            .ToList();
+    }
+
+    // --- Exclude with confirm ---
+
+    private async Task ConfirmExcludeCategory(string category)
+    {
+        var confirmed = await JS.InvokeAsync<bool>("confirm", $"Exclude category \"{category}\" from export pipeline?");
+        if (!confirmed) return;
+        await ExcludeCategory(category);
+    }
+
+    private async Task ExcludeCategory(string category)
+    {
+        if (_excludeSaving) return;
+        _excludeSaving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            _rules = await (await client.PostAsJsonAsync("/api/filters/exclude-category", new { value = category }))
+                .Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _excludeSaving = false; }
+    }
+
+    private async Task UnblockCategory(string category)
+    {
+        if (_excludeSaving) return;
+        _excludeSaving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var response = await client.DeleteAsync($"/api/filters/exclude-category?value={Uri.EscapeDataString(category)}");
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _excludeSaving = false; }
+    }
+
+    private async Task UnblockMessage(string pattern)
+    {
+        if (_excludeSaving) return;
+        _excludeSaving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var response = await client.DeleteAsync($"/api/filters/exclude-message?value={Uri.EscapeDataString(pattern)}");
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _excludeSaving = false; }
+    }
+
+    private static string TruncateContainer(string name)
+    {
+        if (name.Length <= 22) return name;
+        return name[..19] + "...";
+    }
+
+    private static string LevelBadgeClass(string level) => level switch
+    {
+        "Critical" => "bg-danger",
+        "Error" => "bg-danger",
+        "Warning" => "bg-warning text-dark",
+        "Information" => "bg-info",
+        "Debug" => "bg-secondary",
+        "Trace" => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class LiveConsoleSnapshotDto
+    {
+        public List<ConsoleEntryDto> Records { get; set; } = new();
+        public long TotalIngested { get; set; }
+        public int BufferSize { get; set; }
+        public int BufferUsed { get; set; }
+    }
+
+    private class ConsoleEntryDto
+    {
+        public DateTime Timestamp { get; set; }
+        public string ContainerId { get; set; } = "";
+        public string Container { get; set; } = "";
+        public string? Image { get; set; }
+        public string Stream { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string? Category { get; set; }
+        public string? ParsedLevel { get; set; }
+        public string? ComposeService { get; set; }
+        public bool Exported { get; set; }
+    }
+
+    private class FilterRulesDto
+    {
+        public List<string> ExcludeMessagePatterns { get; set; } = new();
+        public List<string> ExcludeCategories { get; set; } = new();
+    }
+
+    private class ContainerGroup
+    {
+        public string Name { get; set; } = "";
+        public int Count { get; set; }
+        public double Percent { get; set; }
+        public bool Exported { get; set; }
+    }
+
+    private class CategoryGroup
+    {
+        public string Category { get; set; } = "";
+        public int Count { get; set; }
+        public double Percent { get; set; }
+    }
+}

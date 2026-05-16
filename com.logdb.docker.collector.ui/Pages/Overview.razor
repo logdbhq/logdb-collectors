@@ -1,0 +1,352 @@
+@page "/"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Dashboard</h4>
+    <div class="d-flex align-items-center gap-3">
+        @if (_data is not null)
+        {
+            <button class="btn btn-sm @(_data.Exporter.Enabled ? "btn-success" : "btn-outline-danger")"
+                    @onclick="ToggleExporter" disabled="@_toggling"
+                    title="@(_data.Exporter.Enabled ? "Exporter is ON - click to pause delivery" : "Exporter is OFF - click to resume delivery")">
+                @if (_toggling)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                }
+                else
+                {
+                    <i class="bi @(_data.Exporter.Enabled ? "bi-power" : "bi-power") me-1"></i>
+                }
+                @(_data.Exporter.Enabled ? "Exporter ON" : "Exporter OFF")
+            </button>
+        }
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ManualRefresh" disabled="@_refreshing">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+        <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 10s</span>
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Unable to connect to collector backend: @_connectError</div>
+}
+else if (_data is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div><p class="mt-2 text-muted">Loading...</p></div>
+}
+else
+{
+    @* Alert Banners *@
+    @if (!_data.Docker.Available)
+    {
+        <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Docker is unavailable - container discovery is not working</div>
+    }
+    @if (_data.Exporter.Enabled && !_data.Exporter.Healthy)
+    {
+        <div class="alert alert-danger"><i class="bi bi-x-circle-fill me-2"></i>Exporter is unhealthy - logs are not being delivered</div>
+    }
+    @if (!_data.Exporter.Enabled)
+    {
+        <div class="alert alert-warning"><i class="bi bi-pause-circle-fill me-2"></i>Exporter is disabled - logs are accumulating in the spool</div>
+    }
+    @if (_data.Spool.UtilizationPercent >= 80)
+    {
+        <div class="alert alert-warning"><i class="bi bi-hdd-fill me-2"></i>Spool is at @_data.Spool.UtilizationPercent% capacity (@FormatBytes(_data.Spool.DiskBytesUsed) / @FormatBytes(_data.Spool.MaxDiskBytes))</div>
+    }
+    @if (_data.Spool.DroppedRecords > 0)
+    {
+        <div class="alert alert-warning"><i class="bi bi-trash-fill me-2"></i>@_data.Spool.DroppedRecords.ToString("N0") records dropped due to spool overflow</div>
+    }
+    @foreach (var err in _data.Agent.Errors)
+    {
+        <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@err</div>
+    }
+    @foreach (var warn in _data.Agent.Warnings)
+    {
+        <div class="alert alert-warning"><i class="bi bi-exclamation-circle-fill me-2"></i>@warn</div>
+    }
+
+    @* Status Cards *@
+    <div class="row g-3 mb-4">
+        @* Collector *@
+        <div class="col-xl-4 col-md-6">
+            <div class="card stat-card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-box-seam me-1"></i> Collector</span>
+                    <span class="badge @(_data.Agent.AgentState == "running" ? "bg-success" : _data.Agent.AgentState == "degraded" ? "bg-warning" : "bg-danger")">@_data.Agent.AgentState</span>
+                </div>
+                <div class="card-body p-3">
+                    <div class="detail-row"><span class="detail-label">Version</span><span class="detail-value">@_data.Agent.Version</span></div>
+                    <div class="detail-row"><span class="detail-label">Build</span><span class="detail-value">@(_data.Agent.BuildDate ?? "-")</span></div>
+                    <div class="detail-row"><span class="detail-label">Commit</span><span class="detail-value">@(_data.Agent.CommitHash ?? "-")</span></div>
+                    <div class="detail-row"><span class="detail-label">Environment</span><span class="detail-value">@(_data.Agent.Environment ?? "-")</span></div>
+                    <div class="detail-row"><span class="detail-label">Uptime</span><span class="detail-value">@FormatUptime(_data.Agent.UptimeSeconds)</span></div>
+                </div>
+            </div>
+        </div>
+
+        @* Docker *@
+        <div class="col-xl-4 col-md-6">
+            <div class="card stat-card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-boxes me-1"></i> Docker</span>
+                    <span class="badge @(_data.Docker.Available ? "bg-success" : "bg-danger")">@(_data.Docker.Available ? "Connected" : "Unavailable")</span>
+                </div>
+                <div class="card-body p-3">
+                    <div class="text-center mb-3">
+                        <div class="stat-value @(_data.Docker.Available ? "text-success" : "text-danger")">@_data.Docker.IncludedCount / @_data.Docker.ContainerCount</div>
+                        <div class="stat-label">Included / Total containers</div>
+                    </div>
+                    <div class="detail-row"><span class="detail-label">Endpoint</span><span class="detail-value text-truncate-path">@_data.Docker.Endpoint</span></div>
+                    @if (!string.IsNullOrEmpty(_data.Docker.Error))
+                    {
+                        <div class="mt-2" style="font-size: 0.82rem; color: var(--danger-color);">@_data.Docker.Error</div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* Pipeline *@
+        <div class="col-xl-4 col-md-6">
+            <div class="card stat-card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-diagram-3 me-1"></i> Pipeline</span>
+                    <span class="badge @(_data.Pipeline.ReadErrors > 0 ? "bg-warning" : "bg-success")">@_data.Pipeline.ActiveTargets targets</span>
+                </div>
+                <div class="card-body p-3">
+                    <div class="text-center mb-3">
+                        <div class="stat-value">@_data.Pipeline.RecordsRead.ToString("N0")</div>
+                        <div class="stat-label">Records read</div>
+                    </div>
+                    <div class="detail-row"><span class="detail-label">Parse errors</span><span class="detail-value @(_data.Pipeline.ParseErrors > 0 ? "text-warning" : "")">@_data.Pipeline.ParseErrors.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label">Read errors</span><span class="detail-value @(_data.Pipeline.ReadErrors > 0 ? "text-warning" : "")">@_data.Pipeline.ReadErrors.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label">Last record</span><span class="detail-value">@FormatTime(_data.Pipeline.LastRecordTimestamp)</span></div>
+                </div>
+            </div>
+        </div>
+
+        @* Exporter *@
+        <div class="col-xl-6 col-md-6">
+            <div class="card stat-card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-cloud-upload me-1"></i> Exporter</span>
+                    @if (!_data.Exporter.Enabled)
+                    {
+                        <span class="badge bg-secondary">Disabled</span>
+                    }
+                    else
+                    {
+                        <span class="badge @(_data.Exporter.Healthy ? "bg-success" : "bg-danger")">@(_data.Exporter.Healthy ? "Healthy" : "Unhealthy")</span>
+                    }
+                </div>
+                <div class="card-body p-3">
+                    <div class="text-center mb-3">
+                        <div class="stat-value text-success">@_data.Exporter.RecordsSent.ToString("N0")</div>
+                        <div class="stat-label">Records sent</div>
+                    </div>
+                    <div class="detail-row"><span class="detail-label">Batches</span><span class="detail-value">@_data.Exporter.BatchesSent.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label">Send errors</span><span class="detail-value @(_data.Exporter.SendErrors > 0 ? "text-danger" : "")">@_data.Exporter.SendErrors.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label">Last send</span><span class="detail-value">@FormatTime(_data.Exporter.LastSendUtc)</span></div>
+                    @if (!string.IsNullOrEmpty(_data.Exporter.LastError))
+                    {
+                        <div class="mt-2" style="font-size: 0.82rem; color: var(--danger-color);">@_data.Exporter.LastError</div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        @* Spool *@
+        <div class="col-xl-6 col-md-6">
+            <div class="card stat-card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-hdd-stack me-1"></i> Spool</span>
+                    @if (!_data.Spool.Enabled)
+                    {
+                        <span class="badge bg-secondary">Disabled</span>
+                    }
+                    else if (_data.Spool.DroppedRecords > 0)
+                    {
+                        <span class="badge bg-danger">Dropping</span>
+                    }
+                    else if (_data.Spool.UtilizationPercent >= 80)
+                    {
+                        <span class="badge bg-warning">@(_data.Spool.UtilizationPercent)%</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-success">@(_data.Spool.UtilizationPercent)%</span>
+                    }
+                </div>
+                <div class="card-body p-3">
+                    <div class="text-center mb-3">
+                        <div class="stat-value">@_data.Spool.QueuedRecords.ToString("N0")</div>
+                        <div class="stat-label">Queued records</div>
+                    </div>
+                    <div class="progress mb-2">
+                        <div class="progress-bar @UtilBarClass(_data.Spool.UtilizationPercent)" style="width: @(Math.Min(_data.Spool.UtilizationPercent, 100))%"></div>
+                    </div>
+                    <div class="text-center mb-3" style="font-size: 0.78rem; color: var(--text-muted);">@FormatBytes(_data.Spool.DiskBytesUsed) / @FormatBytes(_data.Spool.MaxDiskBytes)</div>
+                    <div class="detail-row"><span class="detail-label">Replayed</span><span class="detail-value">@_data.Spool.ReplayedRecords.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label">Dropped</span><span class="detail-value @(_data.Spool.DroppedRecords > 0 ? "text-danger" : "")">@_data.Spool.DroppedRecords.ToString("N0")</span></div>
+                    @if (!string.IsNullOrEmpty(_data.Spool.LastError))
+                    {
+                        <div class="mt-2" style="font-size: 0.82rem; color: var(--danger-color);">@_data.Spool.LastError</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private DashboardDto? _data;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _refreshing;
+    private bool _toggling;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task ManualRefresh()
+    {
+        _refreshing = true;
+        await LoadAsync();
+        _refreshing = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            _data = await client.GetFromJsonAsync<DashboardDto>("/api/dashboard");
+            _connectError = null;
+        }
+        catch (Exception ex)
+        {
+            _connectError = ex.Message;
+        }
+    }
+
+    private async Task ToggleExporter()
+    {
+        _toggling = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsync("/api/exporter/toggle", null);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _connectError = ex.Message;
+        }
+        finally
+        {
+            _toggling = false;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private static string UtilBarClass(int pct) => pct switch
+    {
+        >= 90 => "bg-danger",
+        >= 80 => "bg-warning",
+        _ => "bg-success"
+    };
+
+    private static string FormatUptime(double seconds)
+    {
+        var ts = TimeSpan.FromSeconds(seconds);
+        if (ts.TotalDays >= 1) return $"{(int)ts.TotalDays}d {ts.Hours}h {ts.Minutes}m";
+        if (ts.TotalHours >= 1) return $"{(int)ts.TotalHours}h {ts.Minutes}m";
+        if (ts.TotalMinutes >= 1) return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+        return $"{(int)ts.TotalSeconds}s";
+    }
+
+    private static string FormatTime(DateTime? utc) =>
+        utc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1_048_576) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1_073_741_824) return $"{bytes / 1_048_576.0:F1} MB";
+        return $"{bytes / 1_073_741_824.0:F2} GB";
+    }
+
+    private class DashboardDto
+    {
+        public AgentDto Agent { get; set; } = new();
+        public DockerDto Docker { get; set; } = new();
+        public PipelineDto Pipeline { get; set; } = new();
+        public ExporterDto Exporter { get; set; } = new();
+        public SpoolDto Spool { get; set; } = new();
+    }
+
+    private class AgentDto
+    {
+        public string Service { get; set; } = "";
+        public string Version { get; set; } = "";
+        public string? BuildDate { get; set; }
+        public string? CommitHash { get; set; }
+        public string? Environment { get; set; }
+        public string? DockerEndpoint { get; set; }
+        public double UptimeSeconds { get; set; }
+        public string AgentState { get; set; } = "";
+        public List<string> Warnings { get; set; } = new();
+        public List<string> Errors { get; set; } = new();
+    }
+
+    private class DockerDto
+    {
+        public bool Available { get; set; }
+        public string Endpoint { get; set; } = "";
+        public int ContainerCount { get; set; }
+        public int IncludedCount { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private class PipelineDto
+    {
+        public int ActiveTargets { get; set; }
+        public long RecordsRead { get; set; }
+        public long ParseErrors { get; set; }
+        public long ReadErrors { get; set; }
+        public DateTime? LastRecordTimestamp { get; set; }
+    }
+
+    private class ExporterDto
+    {
+        public bool Enabled { get; set; }
+        public bool Healthy { get; set; }
+        public long BatchesSent { get; set; }
+        public long RecordsSent { get; set; }
+        public long SendErrors { get; set; }
+        public DateTime? LastSendUtc { get; set; }
+        public string? LastError { get; set; }
+    }
+
+    private class SpoolDto
+    {
+        public bool Enabled { get; set; }
+        public long QueuedRecords { get; set; }
+        public long DiskBytesUsed { get; set; }
+        public long MaxDiskBytes { get; set; }
+        public int UtilizationPercent { get; set; }
+        public long DroppedRecords { get; set; }
+        public long ReplayedRecords { get; set; }
+        public string? LastError { get; set; }
+    }
+}

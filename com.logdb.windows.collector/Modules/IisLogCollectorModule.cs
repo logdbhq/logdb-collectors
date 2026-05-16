@@ -1,0 +1,74 @@
+using com.logdb.windows.collector.Configuration;
+using com.logdb.windows.collector.Health;
+using com.logdb.windows.collector.Services;
+using com.logdb.windows.collector.shared.Contracts;
+using com.logdb.windows.iis.Services;
+using LogDB.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace com.logdb.windows.collector.Modules;
+
+public sealed class IisLogCollectorModule : ExporterModuleBase
+{
+    private readonly ModuleHostFactory _moduleHostFactory;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger<IisLogCollectorModule> _logger;
+
+    public IisLogCollectorModule(
+        IOptionsMonitor<CollectorConfigDto> configMonitor,
+        CollectorStatusRegistry statusRegistry,
+        ILogDbServiceUrlResolver serviceUrlResolver,
+        ModuleHostFactory moduleHostFactory,
+        ILoggerFactory loggerFactory,
+        ILogger<IisLogCollectorModule> logger)
+        : base("IIS", configMonitor, statusRegistry, serviceUrlResolver, logger)
+    {
+        _moduleHostFactory = moduleHostFactory;
+        _loggerFactory = loggerFactory;
+        _logger = logger;
+    }
+
+    protected override bool IsEnabled(CollectorConfigDto config)
+    {
+        return config.Modules.IIS.Enabled && config.Modules.IIS.LogDirectories.Count > 0;
+    }
+
+    protected override object GetFingerprintModel(CollectorConfigDto config)
+    {
+        return new
+        {
+            config.LogDB,
+            config.Server,
+            config.Modules.IIS
+        };
+    }
+
+    protected override void ApplyFlags(CollectorConfigDto config)
+    {
+        IISLogExportService.ResetState = config.Modules.IIS.ResetState;
+        IISLogExportService.InitialStartDate = config.Modules.IIS.InitialStartDateUtc;
+
+        if (!string.IsNullOrWhiteSpace(config.Modules.IIS.StateFilePath))
+        {
+            _logger.LogWarning(
+                "IIS state file path override is configured but the reused IIS exporter stores state in its executable directory.");
+        }
+    }
+
+    protected override IHost BuildHost(CollectorConfigDto config, string endpoint)
+    {
+        var values = LegacyExporterConfigMapper.BuildIisConfig(config);
+        var builder = _moduleHostFactory.CreateBuilder(values);
+
+        builder.Services.AddSingleton<ILogDBClient>(_ =>
+            LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory));
+
+        builder.Services.AddSingleton<IISLogReader>();
+        builder.Services.AddSingleton<AzureAppServiceJsonReader>();
+        builder.Services.AddSingleton<IISLogFilter>();
+        builder.Services.AddSingleton<FileStateTracker>();
+        builder.Services.AddHostedService<IISLogExportService>();
+
+        return builder.Build();
+    }
+}

@@ -1,0 +1,83 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.DestinationPageView">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="10">
+        <TextBlock Text="Destination (LogDB Platform)" FontSize="22" FontWeight="SemiBold" />
+
+        <Border Grid.Row="1" Classes="panel">
+            <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Text="API Key" VerticalAlignment="Center" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding ApiKeyStatusText}" />
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding CustomerName, StringFormat='(owner: {0})'}"
+                               Classes="muted"
+                               IsVisible="{Binding HasCustomerName}" />
+                    <Button Content="Replace Key"
+                            Command="{Binding ReplaceApiKeyCommand}"
+                            IsVisible="{Binding ShowReplaceApiKeyAction}" />
+                    <Button Content="Save Key"
+                            Command="{Binding SaveApiKeyCommand}"
+                            IsVisible="{Binding IsReplacingApiKey}" />
+                    <Button Content="Cancel Replace"
+                            Command="{Binding CancelReplaceApiKeyCommand}"
+                            IsVisible="{Binding IsReplacingApiKey}" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="1"
+                           Text="New Key"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding IsReplacingApiKey}" />
+                <TextBox Grid.Row="1"
+                         Grid.Column="1"
+                         PasswordChar="*"
+                         Watermark="Paste new API key"
+                         IsVisible="{Binding IsReplacingApiKey}"
+                         Text="{Binding NewApiKey}" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" Classes="panel">
+            <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Text="Endpoint" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding Endpoint}" Watermark="https://..." />
+
+                <TextBlock Grid.Row="1" Text="Discovery URL" VerticalAlignment="Center" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding DiscoveryUrl}" Watermark="https://discovery..." />
+
+                <TextBlock Grid.Row="2" Text="Protocol" VerticalAlignment="Top" Margin="0,6,0,0" />
+                <StackPanel Grid.Row="2" Grid.Column="1" Spacing="4">
+                    <ComboBox HorizontalAlignment="Stretch"
+                              ItemsSource="{Binding ProtocolOptions}"
+                              SelectedItem="{Binding Protocol}" />
+                    <TextBlock Classes="muted"
+                               TextWrapping="Wrap"
+                               Text="Transport used to send logs to LogDB. Native (gRPC) is the default and recommended option — fastest and most efficient. Use REST only when gRPC is blocked by a corporate firewall or proxy. OpenTelemetry is for forwarding to an OTLP-compatible collector instead of LogDB directly." />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="3" Classes="panel">
+            <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                <TextBlock Text="Default Application" VerticalAlignment="Center" />
+                <TextBox Grid.Column="1" Text="{Binding DefaultApplication}" />
+
+                <TextBlock Grid.Row="1" Text="Default Environment" VerticalAlignment="Center" />
+                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding DefaultEnvironment}" />
+
+                <TextBlock Grid.Row="2" Text="Default Collection" VerticalAlignment="Center" />
+                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding DefaultCollection}" />
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
+            <Button Content="Save Destination Settings"
+                    Command="{Binding SaveCommand}"
+                    IsEnabled="{Binding CanSaveDestinationSettings}" />
+            <Button Content="Test Connection" Command="{Binding TestConnectionCommand}" />
+        </StackPanel>
+
+        <TextBlock Grid.Row="5" Text="{Binding ValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+    </Grid>
+</UserControl>

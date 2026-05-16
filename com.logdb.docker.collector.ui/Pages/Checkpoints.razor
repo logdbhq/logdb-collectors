@@ -1,0 +1,159 @@
+@page "/checkpoints"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Checkpoints</h4>
+    <div class="d-flex align-items-center gap-3">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ManualRefresh" disabled="@_refreshing">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+        <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 10s</span>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_error</div>
+}
+else if (_status is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-xl-4 col-md-6">
+            <div class="card stat-card">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-bookmark-check me-1"></i> Checkpoint Store</span>
+                    @if (!_status.Enabled)
+                    {
+                        <span class="badge bg-secondary">Disabled</span>
+                    }
+                    else if (!string.IsNullOrEmpty(_status.Error))
+                    {
+                        <span class="badge bg-danger">Error</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-success">Healthy</span>
+                    }
+                </div>
+                <div class="card-body p-3">
+                    <div class="detail-row"><span class="detail-label">File</span><span class="detail-value text-truncate-path">@_status.CheckpointFilePath</span></div>
+                    <div class="detail-row"><span class="detail-label">Loaded</span><span class="detail-value">@_status.LoadedCount checkpoints</span></div>
+                    <div class="detail-row"><span class="detail-label">Last flush</span><span class="detail-value">@(_status.LastFlushUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</span></div>
+                    @if (!string.IsNullOrEmpty(_status.Error))
+                    {
+                        <div class="mt-2" style="font-size: 0.82rem; color: var(--danger-color);">@_status.Error</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_checkpoints is not null && _checkpoints.Count > 0)
+    {
+        <div class="card">
+            <div class="card-header py-2 px-3">
+                <span class="card-title-label"><i class="bi bi-list-check me-1"></i> Stored Checkpoints (@_checkpoints.Count)</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Container</th>
+                                <th>Container ID</th>
+                                <th>File Path</th>
+                                <th>Offset</th>
+                                <th>Last Write</th>
+                                <th>Last Seen</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var cp in _checkpoints)
+                            {
+                                <tr>
+                                    <td><strong>@cp.ContainerName</strong></td>
+                                    <td style="font-size: 0.82rem; color: var(--text-muted);">@cp.ContainerId</td>
+                                    <td class="text-truncate-path">@cp.FilePath</td>
+                                    <td>@cp.Offset.ToString("N0")</td>
+                                    <td>@cp.LastWriteUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                    <td>@cp.LastSeenUtc.ToString("yyyy-MM-dd HH:mm:ss")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <p class="text-muted">No checkpoints stored yet.</p>
+    }
+}
+
+@code {
+    private CheckpointStatusDto? _status;
+    private List<FileCheckpointDto>? _checkpoints;
+    private string? _error;
+    private Timer? _timer;
+    private bool _refreshing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task ManualRefresh()
+    {
+        _refreshing = true;
+        await LoadAsync();
+        _refreshing = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            _status = await client.GetFromJsonAsync<CheckpointStatusDto>("/api/checkpoints/status");
+            var rawCheckpoints = await client.GetFromJsonAsync<List<FileCheckpointDto>>("/api/checkpoints");
+            _checkpoints = rawCheckpoints?.OrderBy(cp => cp.ContainerName, StringComparer.OrdinalIgnoreCase).ToList();
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class CheckpointStatusDto
+    {
+        public bool Enabled { get; set; }
+        public string CheckpointFilePath { get; set; } = "";
+        public int LoadedCount { get; set; }
+        public DateTime? LastFlushUtc { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private class FileCheckpointDto
+    {
+        public string FilePath { get; set; } = "";
+        public string ContainerId { get; set; } = "";
+        public string ContainerName { get; set; } = "";
+        public long Offset { get; set; }
+        public DateTime LastWriteUtc { get; set; }
+        public DateTime LastSeenUtc { get; set; }
+    }
+}

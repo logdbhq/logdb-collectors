@@ -1,0 +1,583 @@
+@page "/containers"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Containers</h4>
+    <div class="d-flex align-items-center gap-3">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ManualRefresh" disabled="@_refreshing">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+        <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 10s</span>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_error</div>
+}
+else if (_dockerStatus is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-xl-4 col-md-6">
+            <div class="card stat-card">
+                <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                    <span class="card-title-label"><i class="bi bi-boxes me-1"></i> Docker Engine</span>
+                    <span class="badge @(_dockerStatus.Available ? "bg-success" : "bg-danger")">@(_dockerStatus.Available ? "Connected" : "Unavailable")</span>
+                </div>
+                <div class="card-body p-3">
+                    <div class="detail-row"><span class="detail-label">Endpoint</span><span class="detail-value text-truncate-path">@_dockerStatus.Endpoint</span></div>
+                    <div class="detail-row"><span class="detail-label">Last Refresh</span><span class="detail-value">@(_dockerStatus.LastRefreshUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</span></div>
+                    <div class="detail-row"><span class="detail-label">Total Containers</span><span class="detail-value">@_dockerStatus.ContainerCount</span></div>
+                    @if (!string.IsNullOrEmpty(_dockerStatus.Error))
+                    {
+                        <div class="mt-2" style="font-size: 0.82rem; color: var(--danger-color);">@_dockerStatus.Error</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (_dockerStatus.Available && _containers is not null)
+    {
+        @if (!_containers.Any(c => c.IsIncluded))
+        {
+            <div class="alert" style="background: var(--accent-blue-muted); border: 1px solid var(--accent-blue); color: var(--text-primary);">
+                <i class="bi bi-info-circle-fill me-2" style="color: var(--accent-blue);"></i>
+                <strong>Welcome!</strong> All containers are disabled by default. Enable the ones you want to monitor using the toggle switches below.
+            </div>
+        }
+
+        <div class="card mb-3">
+            <div class="card-header py-2 px-3">
+                <span class="card-title-label"><i class="bi bi-calendar-event me-1"></i> Global Start Date</span>
+            </div>
+            <div class="card-body p-3">
+                <div class="d-flex align-items-center gap-3">
+                    <input type="datetime-local" class="form-control" style="max-width: 260px; background: var(--input-bg); color: var(--text-primary); border-color: var(--glass-border);"
+                           value="@(_globalStartDate?.ToString("yyyy-MM-ddTHH:mm"))"
+                           @onchange="OnGlobalDateChanged" />
+                    @if (_globalStartDate is not null)
+                    {
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="ClearGlobalDate">
+                            <i class="bi bi-x-lg me-1"></i>Clear
+                        </button>
+                        <span style="font-size: 0.82rem; color: var(--text-muted);">
+                            Applies to all containers without a custom start date. Containers without any date start from current time.
+                        </span>
+                    }
+                    else
+                    {
+                        <span style="font-size: 0.82rem; color: var(--text-muted);">
+                            No global start date set - new containers will start from current time.
+                        </span>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+                <span class="card-title-label"><i class="bi bi-list-ul me-1"></i> Discovered Containers (@_containers.Count)</span>
+                <div class="d-flex align-items-center gap-2">
+                    <button class="btn btn-sm btn-outline-success" disabled="@_masterToggling" @onclick="() => MasterToggleAll(true)"
+                            title="Enable collection for all running containers">
+                        <i class="bi bi-toggle2-on me-1"></i>All ON
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" disabled="@_masterToggling" @onclick="() => MasterToggleAll(false)"
+                            title="Disable collection for all running containers">
+                        <i class="bi bi-toggle2-off me-1"></i>All OFF
+                    </button>
+                    <span style="border-left: 1px solid var(--glass-border); height: 20px;"></span>
+                    <button class="btn btn-sm btn-outline-success" disabled="@_masterToggling" @onclick="@(() => MasterSetLogMode("all"))"
+                            title="Set all running containers to log all output">
+                        <i class="bi bi-journal-text me-1"></i>All Logs
+                    </button>
+                    <button class="btn btn-sm btn-outline-warning" disabled="@_masterToggling" @onclick="@(() => MasterSetLogMode("errors"))"
+                            title="Set all running containers to log errors only (stderr)">
+                        <i class="bi bi-exclamation-triangle me-1"></i>Errors Only
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                @if (_containers.Count == 0)
+                {
+                    <p class="text-muted p-3 mb-0">No containers found.</p>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Image</th>
+                                    <th>State</th>
+                                    <th>Compose</th>
+                                    <th>Collection</th>
+                                    <th>Log Mode</th>
+                                    <th>Start From</th>
+                                    <th>Est. Size</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in _containers)
+                                {
+                                    var isRunning = c.State.Equals("running", StringComparison.OrdinalIgnoreCase);
+                                    <tr>
+                                        <td><strong>@c.Name</strong></td>
+                                        <td style="font-size: 0.85rem;">@c.Image:@c.ImageTag</td>
+                                        <td><span class="badge @StateBadge(c.State)">@c.State</span></td>
+                                        <td style="font-size: 0.85rem;">@(c.ComposeService ?? c.ComposeProject ?? "-")</td>
+                                        <td>
+                                            @if (isRunning)
+                                            {
+                                                <div class="form-check form-switch mb-0">
+                                                    <input class="form-check-input" type="checkbox"
+                                                           checked="@(IsContainerEnabled(c))"
+                                                           disabled="@_togglingIds.Contains(c.Id)"
+                                                           @onchange="() => ToggleContainer(c)" />
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-secondary">@c.State</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (isRunning)
+                                            {
+                                                var mode = GetLogMode(c.Id);
+                                                <button class="btn btn-sm @(mode == "all" ? "btn-outline-success" : "btn-outline-warning")"
+                                                        disabled="@_togglingLogMode.Contains(c.Id)"
+                                                        @onclick="() => ToggleLogMode(c)">
+                                                    <i class="bi @(mode == "all" ? "bi-journal-text" : "bi-exclamation-triangle") me-1"></i>@(mode == "all" ? "All" : "Errors only")
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <span style="color: var(--text-muted);">-</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (isRunning)
+                                            {
+                                                var cId = c.Id;
+                                                <div class="d-flex align-items-center gap-1">
+                                                    <input type="datetime-local" class="form-control form-control-sm"
+                                                           style="max-width: 190px; font-size: 0.78rem; background: var(--input-bg); color: var(--text-primary); border-color: var(--glass-border);"
+                                                           value="@(GetStartDate(cId)?.ToString("yyyy-MM-ddTHH:mm"))"
+                                                           @onchange="(e) => OnContainerDateChanged(cId, c.LogPath, e)" />
+                                                    @if (HasCustomStartDate(cId))
+                                                    {
+                                                        <button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size: 0.72rem;"
+                                                                @onclick="() => ClearContainerDate(cId)">
+                                                            <i class="bi bi-x"></i>
+                                                        </button>
+                                                    }
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <span style="color: var(--text-muted);">-</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (isRunning)
+                                            {
+                                                var estId = c.Id;
+                                                var estPath = c.LogPath;
+                                                @if (_sizeEstimates.TryGetValue(estId, out var est))
+                                                {
+                                                    <div class="d-flex align-items-center gap-1">
+                                                        <span style="font-size: 0.82rem;" title="@est.EstimatedLineCount.ToString("N0") lines, @est.EarliestTimestamp?.ToString("yyyy-MM-dd HH:mm") - @est.LatestTimestamp?.ToString("yyyy-MM-dd HH:mm")">
+                                                            @FormatBytes(est.EstimatedExportBytes)
+                                                        </span>
+                                                        <button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size: 0.68rem;"
+                                                                disabled="@_estimating.Contains(estId)"
+                                                                @onclick="() => ManualEstimate(estId, estPath)">
+                                                            <i class="bi bi-arrow-clockwise"></i>
+                                                        </button>
+                                                    </div>
+                                                }
+                                                else if (GetStartDate(estId) is not null)
+                                                {
+                                                    <button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size: 0.78rem;"
+                                                            disabled="@_estimating.Contains(estId)"
+                                                            @onclick="() => ManualEstimate(estId, estPath)">
+                                                        @if (_estimating.Contains(estId))
+                                                        {
+                                                            <span class="spinner-border spinner-border-sm" style="width: 0.7rem; height: 0.7rem;" role="status"></span>
+                                                        }
+                                                        else
+                                                        {
+                                                            <i class="bi bi-calculator me-1"></i><text>Estimate</text>
+                                                        }
+                                                    </button>
+                                                }
+                                                else
+                                                {
+                                                    <span style="color: var(--text-muted); font-size: 0.78rem;">Set date first</span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span style="color: var(--text-muted);">-</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private DockerStatusDto? _dockerStatus;
+    private List<ContainerDto>? _containers;
+    private string? _error;
+    private Timer? _timer;
+    private readonly HashSet<string> _togglingIds = new();
+    private readonly HashSet<string> _togglingLogMode = new();
+    private readonly Dictionary<string, string> _logModes = new();
+    private readonly Dictionary<string, DateTime> _startDates = new();
+    private readonly Dictionary<string, SizeEstimateDto> _sizeEstimates = new();
+    private readonly HashSet<string> _estimating = new();
+    private DateTime? _globalStartDate;
+    private bool _refreshing;
+    private bool _masterToggling;
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task ManualRefresh()
+    {
+        _refreshing = true;
+        await LoadAsync();
+        _refreshing = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            _dockerStatus = await client.GetFromJsonAsync<DockerStatusDto>("/api/docker/status");
+            if (_dockerStatus?.Available == true)
+            {
+                var raw = await client.GetFromJsonAsync<List<ContainerDto>>("/api/containers");
+                _containers = raw?.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+                // Fetch global start date
+                try
+                {
+                    var globalDate = await client.GetFromJsonAsync<StartDateDto>("/api/start-date/global", JsonOpts);
+                    _globalStartDate = globalDate?.StartDate;
+                }
+                catch { /* non-critical */ }
+
+                // Refresh log modes and start dates for running containers
+                if (_containers is not null)
+                {
+                    foreach (var c in _containers.Where(c => c.State.Equals("running", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        try
+                        {
+                            if (c.IsIncluded)
+                            {
+                                var toggle = await client.GetFromJsonAsync<ToggleStatusDto>($"/api/containers/{c.Id}/log-mode", JsonOpts);
+                                if (toggle is not null)
+                                    _logModes[c.Id] = toggle.LogMode;
+                            }
+
+                            var dateInfo = await client.GetFromJsonAsync<StartDateDto>($"/api/containers/{c.Id}/start-date", JsonOpts);
+                            if (dateInfo?.StartDate is not null)
+                                _startDates[c.Id] = dateInfo.StartDate.Value;
+                            else
+                                _startDates.Remove(c.Id);
+                        }
+                        catch { /* non-critical */ }
+                    }
+                }
+            }
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private async Task ToggleContainer(ContainerDto container)
+    {
+        _togglingIds.Add(container.Id);
+        StateHasChanged();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsync($"/api/containers/{container.Id}/toggle", null);
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _togglingIds.Remove(container.Id);
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleLogMode(ContainerDto container)
+    {
+        _togglingLogMode.Add(container.Id);
+        StateHasChanged();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var response = await client.PostAsync($"/api/containers/{container.Id}/log-mode", null);
+            var result = await response.Content.ReadFromJsonAsync<ToggleStatusDto>(JsonOpts);
+            if (result is not null)
+                _logModes[container.Id] = result.LogMode;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _togglingLogMode.Remove(container.Id);
+            StateHasChanged();
+        }
+    }
+
+    private async Task MasterToggleAll(bool enabled)
+    {
+        _masterToggling = true;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsJsonAsync("/api/containers/toggle-all", new { enabled });
+            await LoadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally
+        {
+            _masterToggling = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task MasterSetLogMode(string logMode)
+    {
+        _masterToggling = true;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsJsonAsync("/api/containers/log-mode-all", new { logMode });
+            await LoadAsync();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally
+        {
+            _masterToggling = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnGlobalDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var date))
+        {
+            _globalStartDate = date;
+            try
+            {
+                var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+                await client.PostAsJsonAsync("/api/start-date/global", new { startDate = date.ToUniversalTime() });
+
+                // Refresh size estimates for all containers
+                if (_containers is not null)
+                {
+                    foreach (var c in _containers.Where(c => c.State.Equals("running", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(c.LogPath)))
+                    {
+                        var effectiveDate = GetStartDate(c.Id) ?? date;
+                        await EstimateSizeAsync(c.Id, c.LogPath, effectiveDate);
+                    }
+                }
+            }
+            catch (Exception ex) { _error = ex.Message; }
+            StateHasChanged();
+        }
+    }
+
+    private async Task ClearGlobalDate()
+    {
+        _globalStartDate = null;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsJsonAsync("/api/start-date/global", new { startDate = (DateTime?)null });
+            _sizeEstimates.Clear();
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        StateHasChanged();
+    }
+
+    private async Task OnContainerDateChanged(string containerId, string logPath, ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var date))
+        {
+            _startDates[containerId] = date;
+            try
+            {
+                var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+                await client.PostAsJsonAsync($"/api/containers/{containerId}/start-date", new { startDate = date.ToUniversalTime() });
+                await EstimateSizeAsync(containerId, logPath, date);
+            }
+            catch (Exception ex) { _error = ex.Message; }
+            StateHasChanged();
+        }
+    }
+
+    private async Task ClearContainerDate(string containerId)
+    {
+        _startDates.Remove(containerId);
+        _sizeEstimates.Remove(containerId);
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsJsonAsync($"/api/containers/{containerId}/start-date", new { startDate = (DateTime?)null });
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        StateHasChanged();
+    }
+
+    private async Task EstimateSizeAsync(string containerId, string logPath, DateTime fromDate)
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var response = await client.PostAsJsonAsync("/api/pipeline/estimate-size",
+                new { logPath, fromUtc = fromDate.ToUniversalTime() });
+            var est = await response.Content.ReadFromJsonAsync<SizeEstimateDto>(JsonOpts);
+            if (est is not null)
+                _sizeEstimates[containerId] = est;
+        }
+        catch { /* non-critical */ }
+    }
+
+    private async Task ManualEstimate(string containerId, string logPath)
+    {
+        var date = GetStartDate(containerId);
+        if (date is null) return;
+
+        _estimating.Add(containerId);
+        StateHasChanged();
+
+        try
+        {
+            await EstimateSizeAsync(containerId, logPath, date.Value);
+        }
+        finally
+        {
+            _estimating.Remove(containerId);
+            StateHasChanged();
+        }
+    }
+
+    private DateTime? GetStartDate(string containerId) =>
+        _startDates.TryGetValue(containerId, out var date) ? date : _globalStartDate;
+
+    private bool HasCustomStartDate(string containerId) =>
+        _startDates.ContainsKey(containerId);
+
+    private bool IsContainerEnabled(ContainerDto c) => c.IsIncluded;
+
+    private string GetLogMode(string containerId) =>
+        _logModes.TryGetValue(containerId, out var mode) ? mode : "all";
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1_048_576) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1_073_741_824) return $"{bytes / 1_048_576.0:F1} MB";
+        return $"{bytes / 1_073_741_824.0:F2} GB";
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private static string StateBadge(string state) => state.ToLowerInvariant() switch
+    {
+        "running" => "bg-success",
+        "exited" => "bg-danger",
+        _ => "bg-warning"
+    };
+
+    private class DockerStatusDto
+    {
+        public bool Available { get; set; }
+        public string Endpoint { get; set; } = "";
+        public DateTime? LastRefreshUtc { get; set; }
+        public int ContainerCount { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private class ContainerDto
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Image { get; set; } = "";
+        public string ImageTag { get; set; } = "";
+        public string State { get; set; } = "";
+        public string Status { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
+        public string? ComposeProject { get; set; }
+        public string? ComposeService { get; set; }
+        public bool IsIncluded { get; set; }
+        public string? ExclusionReason { get; set; }
+        public string LogPath { get; set; } = "";
+    }
+
+    private class ToggleStatusDto
+    {
+        public string ContainerId { get; set; } = "";
+        public string LogMode { get; set; } = "all";
+        public bool Enabled { get; set; }
+    }
+
+    private class StartDateDto
+    {
+        public DateTime? StartDate { get; set; }
+    }
+
+    private class SizeEstimateDto
+    {
+        public string LogPath { get; set; } = "";
+        public long TotalFileBytes { get; set; }
+        public long EstimatedExportBytes { get; set; }
+        public long EstimatedLineCount { get; set; }
+        public DateTime? EarliestTimestamp { get; set; }
+        public DateTime? LatestTimestamp { get; set; }
+    }
+}

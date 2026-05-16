@@ -1,0 +1,415 @@
+@page "/console"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0"><i class="bi bi-terminal me-2"></i>Live Console</h4>
+    <div class="d-flex align-items-center gap-2">
+        @if (_snapshot is not null)
+        {
+            <span class="badge bg-secondary" title="Total records ingested since start">@_snapshot.TotalIngested.ToString("N0") total</span>
+        }
+        <div class="input-group input-group-sm" style="width: 200px;">
+            <span class="input-group-text"><i class="bi bi-funnel"></i></span>
+            <input type="text" class="form-control" placeholder="Filter path/target..." @bind="_filter" @bind:event="oninput" />
+        </div>
+        <select class="form-select form-select-sm" style="width: 90px;" @bind="_maxCount">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+        </select>
+        <div class="btn-group btn-group-sm">
+            <button class="btn @(_autoScroll ? "btn-primary" : "btn-outline-primary")" @onclick="() => _autoScroll = !_autoScroll" title="Auto-scroll">
+                <i class="bi bi-arrow-down-circle"></i>
+            </button>
+            <button class="btn @(_paused ? "btn-warning" : "btn-outline-secondary")" @onclick="TogglePause" title="@(_paused ? "Resume" : "Pause")">
+                <i class="bi @(_paused ? "bi-play-fill" : "bi-pause-fill")"></i>
+            </button>
+            <button class="btn btn-outline-secondary" @onclick="Clear" title="Clear">
+                <i class="bi bi-trash"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : "2s")</span>
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Unable to connect: @_connectError</div>
+}
+
+@if (_pendingBlockIp is not null)
+{
+    <div class="alert d-flex align-items-center gap-2 py-2 mb-2 @(_blockedIps.Contains(_pendingBlockIp) ? "alert-warning" : "alert-danger")">
+        <i class="bi @(_blockedIps.Contains(_pendingBlockIp) ? "bi-unlock" : "bi-shield-x") me-1"></i>
+        @if (_blockedIps.Contains(_pendingBlockIp))
+        {
+            <span>Unblock <strong>@_pendingBlockIp</strong> at nginx level?</span>
+        }
+        else
+        {
+            <span>Block <strong>@_pendingBlockIp</strong> at nginx level? Nginx will deny all requests from this IP.</span>
+        }
+        <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-sm @(_blockedIps.Contains(_pendingBlockIp) ? "btn-warning" : "btn-danger")" @onclick="ConfirmBlock" disabled="@_blocking">
+                @if (_blocking)
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                }
+                @(_blockedIps.Contains(_pendingBlockIp) ? "Unblock" : "Block")
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _pendingBlockIp = null" disabled="@_blocking">Cancel</button>
+        </div>
+    </div>
+}
+
+@if (_blockError is not null)
+{
+    <div class="alert alert-danger py-2 mb-2 d-flex align-items-center">
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>@_blockError
+        <button class="btn-close ms-auto" @onclick="() => _blockError = null"></button>
+    </div>
+}
+
+<div class="console-wrapper">
+    <div class="console-output">
+        @if (_records.Count == 0 && _connectError is null)
+        {
+            <div class="console-empty">
+                <i class="bi bi-terminal" style="font-size: 2rem; opacity: 0.3;"></i>
+                <div class="mt-2" style="opacity: 0.5;">Waiting for nginx log records...</div>
+            </div>
+        }
+        else
+        {
+            @foreach (var entry in _records)
+            {
+                var isError = entry.LogType == "error" || entry.StatusCode >= 500;
+                var isWarn = entry.StatusCode >= 400 && entry.StatusCode < 500;
+                <div class="console-line @(isError ? "console-error" : isWarn ? "console-warn" : "")">
+                    <span class="console-time">@entry.Timestamp.ToString("HH:mm:ss.fff")</span>
+                    @if (entry.LogType == "access")
+                    {
+                        <span class="console-method">@entry.Method</span>
+                        <span class="console-status @StatusClass(entry.StatusCode)">@entry.StatusCode</span>
+                        <span class="console-path">@entry.Path</span>
+                        <span class="console-ip clickable-ip @(_blockedIps.Contains(entry.RemoteAddress ?? "") ? "ip-blocked" : "")"
+                              @onclick="() => OnIpClick(entry.RemoteAddress)"
+                              title="@(entry.RemoteAddress is not null && _blockedIps.Contains(entry.RemoteAddress) ? "Blocked - click to unblock" : "Click to block this IP")">@entry.RemoteAddress</span>
+                        <span class="console-bytes">@FormatBytes(entry.ResponseBytes)</span>
+                    }
+                    else
+                    {
+                        <span class="console-severity">@(entry.Severity ?? "error")</span>
+                        <span class="console-msg">@entry.Message</span>
+                    }
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<style>
+    .console-wrapper {
+        background: var(--console-bg, #0d1117);
+        border: 1px solid var(--console-border, #21262d);
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 160px);
+    }
+
+    .console-output {
+        overflow-y: auto;
+        padding: 8px 12px;
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        flex: 1;
+    }
+
+    .console-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-muted, #8b949e);
+    }
+
+    .console-line {
+        white-space: pre-wrap;
+        word-break: break-all;
+        padding: 1px 0;
+        display: flex;
+        gap: 8px;
+    }
+
+    .console-line:hover {
+        background: rgba(255, 255, 255, 0.03);
+    }
+
+    .console-error { color: var(--console-err, #f85149); }
+    .console-warn { color: var(--console-wrn, #d29922); }
+
+    .console-time {
+        color: var(--console-time, #6e7681);
+        flex-shrink: 0;
+        user-select: none;
+    }
+
+    .console-method {
+        color: var(--console-method, #58a6ff);
+        width: 50px;
+        flex-shrink: 0;
+    }
+
+    .console-status {
+        width: 30px;
+        flex-shrink: 0;
+        text-align: right;
+    }
+
+    .console-status.status-2xx { color: #3fb950; }
+    .console-status.status-3xx { color: #58a6ff; }
+    .console-status.status-4xx { color: #d29922; }
+    .console-status.status-5xx { color: #f85149; }
+
+    .console-path {
+        color: var(--console-path, #c9d1d9);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .console-ip {
+        color: var(--console-ip, #8b949e);
+        width: 120px;
+        flex-shrink: 0;
+        text-align: right;
+    }
+
+    .clickable-ip {
+        cursor: pointer;
+        border-radius: 3px;
+        padding: 0 3px;
+        transition: background 0.15s, color 0.15s;
+    }
+
+    .clickable-ip:hover {
+        background: rgba(248, 81, 73, 0.15);
+        color: #f85149;
+    }
+
+    .ip-blocked {
+        text-decoration: line-through;
+        color: #f85149 !important;
+        opacity: 0.7;
+    }
+
+    .ip-blocked:hover {
+        background: rgba(210, 153, 34, 0.15);
+        color: #d29922 !important;
+        opacity: 1;
+    }
+
+    .console-bytes {
+        color: var(--console-bytes, #8b949e);
+        width: 70px;
+        flex-shrink: 0;
+        text-align: right;
+    }
+
+    .console-severity {
+        color: #f85149;
+        width: 50px;
+        flex-shrink: 0;
+    }
+
+    .console-msg {
+        color: var(--console-msg, #c9d1d9);
+        flex: 1;
+        min-width: 0;
+    }
+
+    .console-error .console-msg,
+    .console-error .console-path { color: var(--console-err, #f85149); }
+    .console-warn .console-path { color: var(--console-wrn, #d29922); }
+
+    .refresh-dot.paused {
+        background: #d29922 !important;
+        animation: none !important;
+    }
+
+    /* Light theme overrides */
+    [data-bs-theme="light"] .console-wrapper {
+        --console-bg: #f6f8fa;
+        --console-border: #d0d7de;
+    }
+    [data-bs-theme="light"] .console-time { --console-time: #8c959f; }
+    [data-bs-theme="light"] .console-method { --console-method: #0969da; }
+    [data-bs-theme="light"] .console-path { --console-path: #1f2328; }
+    [data-bs-theme="light"] .console-ip { --console-ip: #656d76; }
+    [data-bs-theme="light"] .console-bytes { --console-bytes: #656d76; }
+    [data-bs-theme="light"] .console-msg { --console-msg: #1f2328; }
+    [data-bs-theme="light"] .console-error { --console-err: #cf222e; }
+    [data-bs-theme="light"] .console-warn { --console-wrn: #9a6700; }
+    [data-bs-theme="light"] .console-line:hover { background: rgba(0, 0, 0, 0.03); }
+</style>
+
+@code {
+    private List<ConsoleEntryDto> _records = new();
+    private LiveConsoleSnapshotDto? _snapshot;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _paused;
+    private bool _autoScroll = true;
+    private string? _filter;
+    private int _maxCount = 200;
+    private HashSet<string> _blockedIps = new(StringComparer.OrdinalIgnoreCase);
+    private string? _pendingBlockIp;
+    private bool _blocking;
+    private string? _blockError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            if (!_paused)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var url = $"/api/console/recent?count={_maxCount}";
+            if (!string.IsNullOrWhiteSpace(_filter))
+                url += $"&filter={Uri.EscapeDataString(_filter)}";
+
+            _snapshot = await client.GetFromJsonAsync<LiveConsoleSnapshotDto>(url);
+            if (_snapshot is not null)
+                _records = _snapshot.Records;
+            _connectError = null;
+        }
+        catch (Exception ex)
+        {
+            _connectError = ex.Message;
+        }
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var blockStatus = await client.GetFromJsonAsync<BlockedIpsDto>("/api/nginx/blocked-ips");
+            if (blockStatus is not null)
+                _blockedIps = new HashSet<string>(blockStatus.BlockedIps, StringComparer.OrdinalIgnoreCase);
+        }
+        catch { /* non-critical */ }
+    }
+
+    private void TogglePause() => _paused = !_paused;
+    private void Clear() => _records.Clear();
+
+    private void OnIpClick(string? ip)
+    {
+        if (string.IsNullOrEmpty(ip)) return;
+        _pendingBlockIp = ip;
+        _blockError = null;
+    }
+
+    private async Task ConfirmBlock()
+    {
+        if (_pendingBlockIp is null) return;
+        _blocking = true;
+        _blockError = null;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var isBlocked = _blockedIps.Contains(_pendingBlockIp);
+
+            if (isBlocked)
+            {
+                var response = await client.DeleteAsync($"/api/nginx/block-ip?value={Uri.EscapeDataString(_pendingBlockIp)}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadAsStringAsync();
+                    _blockError = $"Unblock failed: {body}";
+                    return;
+                }
+                _blockedIps.Remove(_pendingBlockIp);
+            }
+            else
+            {
+                var response = await client.PostAsJsonAsync("/api/nginx/block-ip", new { value = _pendingBlockIp });
+                if (!response.IsSuccessStatusCode)
+                {
+                    var body = await response.Content.ReadAsStringAsync();
+                    _blockError = $"Block failed: {body}";
+                    return;
+                }
+                _blockedIps.Add(_pendingBlockIp);
+            }
+
+            _pendingBlockIp = null;
+        }
+        catch (Exception ex) { _blockError = ex.Message; }
+        finally { _blocking = false; }
+    }
+
+    private static string StatusClass(int? code) => code switch
+    {
+        >= 200 and < 300 => "status-2xx",
+        >= 300 and < 400 => "status-3xx",
+        >= 400 and < 500 => "status-4xx",
+        >= 500 => "status-5xx",
+        _ => ""
+    };
+
+    private static string FormatBytes(long? bytes) => bytes switch
+    {
+        null => "-",
+        < 1024 => $"{bytes}B",
+        < 1_048_576 => $"{bytes / 1024.0:F0}K",
+        _ => $"{bytes / 1_048_576.0:F1}M"
+    };
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class LiveConsoleSnapshotDto
+    {
+        public List<ConsoleEntryDto> Records { get; set; } = new();
+        public long TotalIngested { get; set; }
+        public int BufferSize { get; set; }
+        public int BufferUsed { get; set; }
+    }
+
+    private class ConsoleEntryDto
+    {
+        public DateTime Timestamp { get; set; }
+        public string LogType { get; set; } = "";
+        public string Target { get; set; } = "";
+        public string? Method { get; set; }
+        public string? Path { get; set; }
+        public int? StatusCode { get; set; }
+        public long? ResponseBytes { get; set; }
+        public string? RemoteAddress { get; set; }
+        public string? Message { get; set; }
+        public string? Severity { get; set; }
+    }
+
+    private class BlockedIpsDto
+    {
+        public bool Enabled { get; set; }
+        public List<string> BlockedIps { get; set; } = new();
+    }
+}

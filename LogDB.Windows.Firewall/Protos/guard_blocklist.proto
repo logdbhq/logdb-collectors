@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+option csharp_namespace = "LogDB.Windows.Firewall.Protos";
+
+package guard;
+
+service GuardService {
+  rpc GetBlockedIps(GetBlockedIpsRequest) returns (GetBlockedIpsResponse);
+}
+
+message GetBlockedIpsRequest {
+}
+
+message GetBlockedIpsResponse {
+  repeated BlockedIp blocked_ips = 1;
+}
+
+message BlockedIp {
+  string ip_address = 1;
+  string added_by = 2;
+  int64 added_at = 3;
+  string reason = 4;
+}

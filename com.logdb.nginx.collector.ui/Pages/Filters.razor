@@ -1,0 +1,335 @@
+@page "/filters"
+@inject IHttpClientFactory HttpClientFactory
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0"><i class="bi bi-funnel me-2"></i>Filters</h4>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_connectError</div>
+}
+else if (_rules is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    @* Nginx Blocked IPs *@
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+            <span class="card-title-label"><i class="bi bi-shield-x me-1"></i> Nginx Blocked IPs</span>
+            @if (_blockStatus is not null)
+            {
+                <div class="d-flex gap-2">
+                    <span class="badge bg-info">@_blockStatus.BlockedIps.Count blocked</span>
+                    <span class="badge @(_blockStatus.Enabled ? "bg-success" : "bg-secondary")">@(_blockStatus.Enabled ? "Active" : "Disabled")</span>
+                </div>
+            }
+        </div>
+        <div class="card-body p-3">
+            @if (_blockStatus is null)
+            {
+                <div class="text-muted text-center py-2" style="font-size: 0.85rem;">Loading...</div>
+            }
+            else if (!_blockStatus.Enabled)
+            {
+                <p class="text-muted mb-0" style="font-size: 0.85rem;">
+                    Nginx-level IP blocking is disabled. Set <code>LOGDB_NGINX_BLOCK_ENABLED=true</code> and ensure the container has write access to the nginx config directory.
+                </p>
+            }
+            else
+            {
+                <p class="text-muted mb-2" style="font-size: 0.85rem;">IPs blocked at nginx level. Nginx will return <code>403 Forbidden</code> for all requests from these addresses. You can also block IPs by clicking them in the <a href="console">Live Console</a>.</p>
+
+                <div class="d-flex gap-2 mb-3">
+                    <input type="text" class="form-control form-control-sm" placeholder="e.g. 192.168.1.100" @bind="_newBlockIp" @bind:event="oninput"
+                           @onkeydown="@(async e => { if (e.Key == "Enter") await BlockIp(); })" />
+                    <button class="btn btn-sm btn-danger flex-shrink-0" @onclick="BlockIp" disabled="@(string.IsNullOrWhiteSpace(_newBlockIp) || _saving)">
+                        <i class="bi bi-shield-x"></i> Block
+                    </button>
+                </div>
+
+                @if (_blockStatus.BlockedIps.Count == 0)
+                {
+                    <div class="text-muted text-center py-2" style="font-size: 0.85rem;">No IPs blocked at nginx level</div>
+                }
+                else
+                {
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var ip in _blockStatus.BlockedIps)
+                        {
+                            var addr = ip;
+                            <span class="badge d-flex align-items-center gap-1 filter-tag blocked-tag">
+                                <i class="bi bi-shield-x" style="font-size: 0.7rem;"></i>
+                                <code>@addr</code>
+                                <button class="btn-close btn-close-white filter-tag-remove" @onclick="() => UnblockIp(addr)" disabled="@_saving"></button>
+                            </span>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    @* Static Files *@
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+            <span class="card-title-label"><i class="bi bi-file-earmark-image me-1"></i> Static Files</span>
+            <span class="badge @(_rules.ExcludeStaticFiles ? "bg-success" : "bg-secondary")">@(_rules.ExcludeStaticFiles ? "Filtering" : "Disabled")</span>
+        </div>
+        <div class="card-body p-3">
+            <p class="text-muted mb-0" style="font-size: 0.85rem;">
+                @if (_rules.ExcludeStaticFiles)
+                {
+                    <text>Requests for static files (.css, .js, .png, .jpg, .woff2, etc.) are automatically excluded from export. Configured in <code>appsettings.json</code>.</text>
+                }
+                else
+                {
+                    <text>Static file filtering is disabled. Set <code>"ExcludeStaticFiles": true</code> in config to enable.</text>
+                }
+            </p>
+        </div>
+    </div>
+
+    @* Exclude Paths *@
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+            <span class="card-title-label"><i class="bi bi-signpost-split me-1"></i> Exclude Paths</span>
+            <span class="badge bg-info">@_rules.ExcludePaths.Count rules</span>
+        </div>
+        <div class="card-body p-3">
+            <p class="text-muted mb-2" style="font-size: 0.85rem;">Access log requests matching these path prefixes will be excluded. Prefix match, case-insensitive.</p>
+
+            <div class="d-flex gap-2 mb-3">
+                <input type="text" class="form-control form-control-sm" placeholder="e.g. /health, /api/status, /favicon" @bind="_newPath" @bind:event="oninput"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") await AddPath(); })" />
+                <button class="btn btn-sm btn-primary flex-shrink-0" @onclick="AddPath" disabled="@(string.IsNullOrWhiteSpace(_newPath) || _saving)">
+                    <i class="bi bi-plus-lg"></i> Add
+                </button>
+            </div>
+
+            @if (_rules.ExcludePaths.Count == 0)
+            {
+                <div class="text-muted text-center py-2" style="font-size: 0.85rem;">No path exclusions configured</div>
+            }
+            else
+            {
+                <div class="d-flex flex-wrap gap-2">
+                    @foreach (var path in _rules.ExcludePaths)
+                    {
+                        var p = path;
+                        <span class="badge bg-secondary d-flex align-items-center gap-1 filter-tag">
+                            <code>@p</code>
+                            <button class="btn-close btn-close-white filter-tag-remove" @onclick="() => RemovePath(p)" disabled="@_saving"></button>
+                        </span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    @* Exclude Remote Addresses *@
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+            <span class="card-title-label"><i class="bi bi-shield-x me-1"></i> Exclude IPs</span>
+            <span class="badge bg-info">@_rules.ExcludeRemoteAddresses.Count rules</span>
+        </div>
+        <div class="card-body p-3">
+            <p class="text-muted mb-2" style="font-size: 0.85rem;">Access log requests from these remote addresses will be excluded. Exact match.</p>
+
+            <div class="d-flex gap-2 mb-3">
+                <input type="text" class="form-control form-control-sm" placeholder="e.g. 127.0.0.1, 10.0.0.1" @bind="_newIp" @bind:event="oninput"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") await AddIp(); })" />
+                <button class="btn btn-sm btn-primary flex-shrink-0" @onclick="AddIp" disabled="@(string.IsNullOrWhiteSpace(_newIp) || _saving)">
+                    <i class="bi bi-plus-lg"></i> Add
+                </button>
+            </div>
+
+            @if (_rules.ExcludeRemoteAddresses.Count == 0)
+            {
+                <div class="text-muted text-center py-2" style="font-size: 0.85rem;">No IP exclusions configured</div>
+            }
+            else
+            {
+                <div class="d-flex flex-wrap gap-2">
+                    @foreach (var ip in _rules.ExcludeRemoteAddresses)
+                    {
+                        var addr = ip;
+                        <span class="badge bg-secondary d-flex align-items-center gap-1 filter-tag">
+                            <code>@addr</code>
+                            <button class="btn-close btn-close-white filter-tag-remove" @onclick="() => RemoveIp(addr)" disabled="@_saving"></button>
+                        </span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+<style>
+    .filter-tag {
+        font-size: 0.85rem;
+        padding: 0.35em 0.6em;
+        font-weight: normal;
+        background: var(--danger-muted) !important;
+        border-color: var(--danger-color) !important;
+        color: var(--danger-color) !important;
+    }
+
+    .filter-tag code {
+        color: inherit;
+        font-size: 0.85rem;
+    }
+
+    .filter-tag-remove {
+        font-size: 0.6rem;
+        padding: 0.25em;
+        margin-left: 0.3em;
+        opacity: 1;
+        cursor: pointer;
+        background-size: 0.6rem;
+        filter: brightness(2);
+    }
+
+    .filter-tag-remove:hover {
+        transform: scale(1.2);
+    }
+
+    .blocked-tag {
+        background: rgba(248, 81, 73, 0.25) !important;
+        border: 1px solid rgba(248, 81, 73, 0.5) !important;
+        color: #f85149 !important;
+    }
+</style>
+
+@code {
+    private FilterRulesDto? _rules;
+    private BlockedIpsDto? _blockStatus;
+    private string? _connectError;
+    private string? _newPath;
+    private string? _newIp;
+    private string? _newBlockIp;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            _rules = await client.GetFromJsonAsync<FilterRulesDto>("/api/filters");
+            _blockStatus = await client.GetFromJsonAsync<BlockedIpsDto>("/api/nginx/blocked-ips");
+            _connectError = null;
+        }
+        catch (Exception ex)
+        {
+            _connectError = ex.Message;
+        }
+    }
+
+    private async Task AddPath()
+    {
+        if (string.IsNullOrWhiteSpace(_newPath)) return;
+        _saving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var response = await client.PostAsJsonAsync("/api/filters/exclude-path", new { value = _newPath.Trim() });
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _newPath = "";
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task RemovePath(string path)
+    {
+        _saving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var response = await client.DeleteAsync($"/api/filters/exclude-path?value={Uri.EscapeDataString(path)}");
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task AddIp()
+    {
+        if (string.IsNullOrWhiteSpace(_newIp)) return;
+        _saving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var response = await client.PostAsJsonAsync("/api/filters/exclude-ip", new { value = _newIp.Trim() });
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _newIp = "";
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task RemoveIp(string ip)
+    {
+        _saving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var response = await client.DeleteAsync($"/api/filters/exclude-ip?value={Uri.EscapeDataString(ip)}");
+            _rules = await response.Content.ReadFromJsonAsync<FilterRulesDto>();
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task BlockIp()
+    {
+        if (string.IsNullOrWhiteSpace(_newBlockIp)) return;
+        _saving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            await client.PostAsJsonAsync("/api/nginx/block-ip", new { value = _newBlockIp.Trim() });
+            _newBlockIp = "";
+            await LoadAsync();
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private async Task UnblockIp(string ip)
+    {
+        _saving = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            await client.DeleteAsync($"/api/nginx/block-ip?value={Uri.EscapeDataString(ip)}");
+            await LoadAsync();
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _saving = false; }
+    }
+
+    private class FilterRulesDto
+    {
+        public bool ExcludeStaticFiles { get; set; }
+        public List<string> ExcludePaths { get; set; } = new();
+        public List<string> ExcludeRemoteAddresses { get; set; } = new();
+    }
+
+    private class BlockedIpsDto
+    {
+        public bool Enabled { get; set; }
+        public List<string> BlockedIps { get; set; } = new();
+    }
+}

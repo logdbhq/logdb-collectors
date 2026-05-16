@@ -1,0 +1,174 @@
+@inherits LayoutComponentBase
+@inject IHttpClientFactory HttpClientFactory
+
+<div class="page">
+    <div class="sidebar">
+        <div class="top-row">
+            <div class="logo-area">
+                <a href="" class="logo-link">
+                    <img src="assets/logo-full.svg" alt="LogDB Logo" class="logo-img" />
+                    <span class="logo-subtitle">DOCKER</span>
+                </a>
+            </div>
+            <div class="sidebar-controls">
+                <button class="sidebar-control-btn" type="button" onclick="toggleTheme(); return false;" title="Toggle theme">
+                    <i class="bi bi-sun-fill"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="nav-scrollable">
+            <nav class="nav flex-column">
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                        <i class="bi bi-speedometer2 me-2"></i> Dashboard
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="console">
+                        <i class="bi bi-terminal me-2"></i> Live Console
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="metrics">
+                        <i class="bi bi-activity me-2"></i> Live Metrics
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="traffic">
+                        <i class="bi bi-broadcast me-2"></i> Traffic
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3 pt-3">
+                    <h6 class="nav-section-title">Infrastructure</h6>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="containers">
+                        <i class="bi bi-boxes me-2"></i> Containers
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="pipeline">
+                        <i class="bi bi-diagram-3 me-2"></i> Pipeline
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="filters">
+                        <i class="bi bi-funnel me-2"></i> Filters
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3 pt-3">
+                    <h6 class="nav-section-title">Storage</h6>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="checkpoints">
+                        <i class="bi bi-bookmark-check me-2"></i> Checkpoints
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="spool">
+                        <i class="bi bi-hdd-stack me-2"></i> Spool
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3 pt-3">
+                    <h6 class="nav-section-title">Delivery</h6>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="exporter">
+                        <i class="bi bi-cloud-upload me-2"></i> Exporter
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="diagnostics">
+                        <i class="bi bi-heart-pulse me-2"></i> Diagnostics
+                    </NavLink>
+                </div>
+
+                @if (_portalUrl is not null)
+                {
+                <div class="nav-item px-3 pt-3">
+                    <h6 class="nav-section-title">Systems</h6>
+                </div>
+
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/account/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-people me-2"></i> Account
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/ai/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-cpu me-2"></i> AI
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/auth/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-shield-lock me-2"></i> Auth
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/backup/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-cloud-download me-2"></i> Backup
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/billing/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-credit-card me-2"></i> Billing
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/hash/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-shield-check me-2"></i> Hash
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/kafka/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-hdd-stack me-2"></i> Kafka
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/monitor/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-display me-2"></i> Monitor
+                    </a>
+                </div>
+                <div class="nav-item px-3">
+                    <a class="nav-link" href="@($"{_portalUrl}/nginx-collector/")" target="_blank" rel="noopener noreferrer">
+                        <i class="bi bi-cloud-arrow-up me-2"></i> Nginx Collector
+                    </a>
+                </div>
+                }
+            </nav>
+        </div>
+    </div>
+
+    <main>
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+@code {
+    private string? _portalUrl;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var response = await client.GetFromJsonAsync<PortalDiscoveryResult>("api/discovery/portal");
+            _portalUrl = response?.PortalUrl;
+        }
+        catch { /* Discovery unavailable - Systems section hidden */ }
+    }
+
+    private record PortalDiscoveryResult(string? PortalUrl);
+}

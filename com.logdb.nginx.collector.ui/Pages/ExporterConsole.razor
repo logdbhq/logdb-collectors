@@ -1,0 +1,256 @@
+@page "/exporter-console"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0"><i class="bi bi-cloud-upload me-2"></i>Exporter Console</h4>
+    <div class="d-flex align-items-center gap-2">
+        @if (_snapshot is not null)
+        {
+            <span class="badge bg-secondary" title="Total exporter calls since start">@_snapshot.TotalCalls.ToString("N0") total</span>
+        }
+        <select class="form-select form-select-sm" style="width: 130px;" @bind="_outcomeFilter">
+            <option value="">All outcomes</option>
+            <option value="success">Success only</option>
+            <option value="skipped">Skipped only</option>
+            <option value="failed">Failed only</option>
+        </select>
+        <select class="form-select form-select-sm" style="width: 90px;" @bind="_maxCount">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+        </select>
+        <div class="btn-group btn-group-sm">
+            <button class="btn @(_paused ? "btn-warning" : "btn-outline-secondary")" @onclick="TogglePause" title="@(_paused ? "Resume" : "Pause")">
+                <i class="bi @(_paused ? "bi-play-fill" : "bi-pause-fill")"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : "2s")</span>
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Unable to connect: @_connectError</div>
+}
+
+<div class="console-wrapper">
+    <div class="console-output">
+        @if (_calls.Count == 0 && _connectError is null)
+        {
+            <div class="console-empty">
+                <i class="bi bi-cloud-upload" style="font-size: 2rem; opacity: 0.3;"></i>
+                <div class="mt-2" style="opacity: 0.5;">No exporter calls yet. Calls appear here as the spool replay worker pushes batches to grpc-logger.</div>
+            </div>
+        }
+        else
+        {
+            @foreach (var call in _calls.AsEnumerable().Reverse())
+            {
+                var rowClass = call.Outcome switch
+                {
+                    "success" => "",
+                    "skipped" => "console-warn",
+                    "failed" => "console-error",
+                    _ => ""
+                };
+                <div class="console-line @rowClass">
+                    <span class="console-time">@call.Timestamp.ToString("HH:mm:ss.fff")</span>
+                    <span class="console-outcome outcome-@call.Outcome">@call.Outcome.ToUpperInvariant()</span>
+                    <span class="console-records" title="raw records / events sent">@call.RecordCount@if (call.Outcome == "success" && call.EventCount != call.RecordCount){<text>→@call.EventCount</text>}</span>
+                    <span class="console-duration">@call.DurationMs.ToString("F0")ms</span>
+                    <span class="console-key" title="API key prefix used for this call">@call.ApiKeyPrefix</span>
+                    <span class="console-status">@call.Status</span>
+                    @if (!string.IsNullOrEmpty(call.Error))
+                    {
+                        <span class="console-error-text" title="@call.Error">@call.Error</span>
+                    }
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<style>
+    .console-wrapper {
+        background: var(--console-bg, #0d1117);
+        border: 1px solid var(--console-border, #21262d);
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 160px);
+    }
+
+    .console-output {
+        overflow-y: auto;
+        padding: 8px 12px;
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        flex: 1;
+    }
+
+    .console-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-muted, #8b949e);
+        text-align: center;
+        padding: 0 20%;
+    }
+
+    .console-line {
+        white-space: pre-wrap;
+        padding: 1px 0;
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+    }
+
+    .console-line:hover { background: rgba(255, 255, 255, 0.03); }
+
+    .console-error { color: var(--console-err, #f85149); }
+    .console-warn { color: var(--console-wrn, #d29922); }
+
+    .console-time {
+        color: var(--console-time, #6e7681);
+        flex-shrink: 0;
+        user-select: none;
+    }
+
+    .console-outcome {
+        width: 70px;
+        flex-shrink: 0;
+        font-weight: 600;
+        text-align: center;
+        border-radius: 3px;
+        padding: 0 4px;
+    }
+
+    .outcome-success { color: #3fb950; }
+    .outcome-skipped { color: #d29922; }
+    .outcome-failed { color: #f85149; }
+
+    .console-records {
+        color: var(--console-method, #58a6ff);
+        width: 80px;
+        flex-shrink: 0;
+        text-align: right;
+    }
+
+    .console-duration {
+        color: var(--console-bytes, #8b949e);
+        width: 70px;
+        flex-shrink: 0;
+        text-align: right;
+    }
+
+    .console-key {
+        color: var(--console-ip, #8b949e);
+        width: 110px;
+        flex-shrink: 0;
+        font-style: italic;
+    }
+
+    .console-status {
+        color: var(--console-msg, #c9d1d9);
+        width: 200px;
+        flex-shrink: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .console-error-text {
+        color: var(--console-err, #f85149);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: help;
+    }
+
+    .refresh-dot.paused { background: #d29922 !important; animation: none !important; }
+
+    [data-bs-theme="light"] .console-wrapper { --console-bg: #f6f8fa; --console-border: #d0d7de; }
+    [data-bs-theme="light"] .console-time { --console-time: #8c959f; }
+    [data-bs-theme="light"] .console-method { --console-method: #0969da; }
+    [data-bs-theme="light"] .console-msg { --console-msg: #1f2328; }
+    [data-bs-theme="light"] .console-ip { --console-ip: #656d76; }
+    [data-bs-theme="light"] .console-bytes { --console-bytes: #656d76; }
+    [data-bs-theme="light"] .console-error { --console-err: #cf222e; }
+    [data-bs-theme="light"] .console-warn { --console-wrn: #9a6700; }
+    [data-bs-theme="light"] .console-line:hover { background: rgba(0, 0, 0, 0.03); }
+    [data-bs-theme="light"] .outcome-success { color: #1a7f37; }
+</style>
+
+@code {
+    private List<CallDto> _calls = new();
+    private SnapshotDto? _snapshot;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _paused;
+    private string _outcomeFilter = "";
+    private int _maxCount = 200;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            if (!_paused)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var url = $"/api/exporter/console/recent?count={_maxCount}";
+            if (!string.IsNullOrWhiteSpace(_outcomeFilter))
+                url += $"&outcome={Uri.EscapeDataString(_outcomeFilter)}";
+
+            _snapshot = await client.GetFromJsonAsync<SnapshotDto>(url);
+            if (_snapshot is not null)
+                _calls = _snapshot.Calls;
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private void TogglePause() => _paused = !_paused;
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class SnapshotDto
+    {
+        public List<CallDto> Calls { get; set; } = new();
+        public long TotalCalls { get; set; }
+        public int BufferSize { get; set; }
+        public int BufferUsed { get; set; }
+    }
+
+    private class CallDto
+    {
+        public long Id { get; set; }
+        public DateTime Timestamp { get; set; }
+        public string Outcome { get; set; } = "";
+        public int RecordCount { get; set; }
+        public int EventCount { get; set; }
+        public string Endpoint { get; set; } = "";
+        public string ApiKeyPrefix { get; set; } = "";
+        public double DurationMs { get; set; }
+        public string? Status { get; set; }
+        public string? Error { get; set; }
+    }
+}

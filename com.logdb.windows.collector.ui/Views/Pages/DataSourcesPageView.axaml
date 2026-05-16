@@ -1,0 +1,371 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+             xmlns:vmPages="using:com.logdb.windows.collector.ui.ViewModels.Pages"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.DataSourcesPageView">
+    <Grid RowDefinitions="Auto,*" RowSpacing="8">
+        <TextBlock Text="Data Sources" FontSize="22" FontWeight="SemiBold" />
+
+        <TabControl Grid.Row="1" Classes="standard-tabs">
+            <TabItem Header="{Binding EventLogTabHeader}">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                        <CheckBox Content="Enabled" IsChecked="{Binding EventLogEnabled}" IsEnabled="{Binding EventLogConfigEditable}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
+                        <NumericUpDown Grid.Column="2" Width="140" Minimum="5" Maximum="3600" Value="{Binding EventLogPollIntervalSeconds}" IsEnabled="{Binding EventLogConfigEditable}" />
+
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8">
+                            <Button Content="Validate Access" Command="{Binding ValidateEventLogsCommand}" />
+                            <Button Content="Preview" Command="{Binding PreviewEventLogsCommand}" />
+                            <TextBlock VerticalAlignment="Center" Text="N" />
+                            <NumericUpDown Width="130" Minimum="1" Maximum="50" Value="{Binding EventLogPreviewCount}" />
+                        </StackPanel>
+
+                        <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
+                        <Button Grid.Column="6" Content="Pause" Command="{Binding PauseEventLogCommand}" IsVisible="{Binding !EventLogPaused}" ToolTip.Tip="Disable module on running collector" />
+                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeEventLogCommand}" IsVisible="{Binding EventLogPaused}" ToolTip.Tip="Enable module on running collector" />
+                        <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding EventLogPaused}" />
+                        <Button Grid.Column="8" Content="Apply" Classes="accent-success" Command="{Binding ApplyEventLogsCommand}" ToolTip.Tip="Manually apply settings" />
+                    </Grid>
+
+                    <Grid Grid.Row="1" ColumnDefinitions="1.2*,1.4*,1.4*" ColumnSpacing="10" IsEnabled="{Binding EventLogConfigEditable}">
+                        <Border Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Preset Channels" />
+                                <CheckBox Content="Application" IsChecked="{Binding EventLogApplication}" />
+                                <CheckBox Content="System" IsChecked="{Binding EventLogSystem}" />
+                                <CheckBox Content="Security (admin may be required)" IsChecked="{Binding EventLogSecurity}" />
+                                <CheckBox Content="Setup" IsChecked="{Binding EventLogSetup}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Custom Channels" />
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBox Width="260" Watermark="Custom channel name" Text="{Binding NewCustomChannel}" />
+                                    <Button Content="Add" Command="{Binding AddCustomChannelCommand}" />
+                                    <Button Content="Remove Selected" Command="{Binding RemoveCustomChannelCommand}" />
+                                </StackPanel>
+                                <ListBox Height="120"
+                                         ItemsSource="{Binding CustomChannels}"
+                                         SelectedItem="{Binding SelectedCustomChannel}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Value}" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2" Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Level Filter" />
+                                <CheckBox Content="Critical" IsChecked="{Binding LevelCritical}" />
+                                <CheckBox Content="Error" IsChecked="{Binding LevelError}" />
+                                <CheckBox Content="Warning" IsChecked="{Binding LevelWarning}" />
+                                <CheckBox Content="Information" IsChecked="{Binding LevelInformation}" />
+                                <CheckBox Content="Verbose" IsChecked="{Binding LevelVerbose}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Row="2" Classes="panel" Padding="8" IsEnabled="{Binding EventLogConfigEditable}">
+                        <StackPanel Spacing="6">
+                            <CheckBox Content="Resume from last position" IsChecked="{Binding EventLogResumeFromLast}" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding !EventLogResumeFromLast}">
+                                <TextBlock VerticalAlignment="Center" Text="Start date (UTC)" />
+                                <CalendarDatePicker SelectedDate="{Binding EventLogInitialStartDate}" Width="220" Watermark="Pick a date..." />
+                                <TextBlock VerticalAlignment="Center" Classes="muted" Text="Clear date for full history." />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Grid.Row="3" Text="{Binding EventLogValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+
+                    <TextBlock Grid.Row="4" Text="Preview" FontWeight="SemiBold" />
+                    <Border Grid.Row="5" Classes="panel">
+                        <dgrid:DataGrid ItemsSource="{Binding EventLogPreviewRows}"
+                                        AutoGenerateColumns="False"
+                                        IsReadOnly="True"
+                                        Height="220">
+                            <dgrid:DataGrid.Columns>
+                                <dgrid:DataGridTextColumn Header="Time (UTC)" Binding="{Binding TimeUtc}" Width="170" />
+                                <dgrid:DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="100" />
+                                <dgrid:DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="170" />
+                                <dgrid:DataGridTextColumn Header="Event ID" Binding="{Binding EventId}" Width="90" />
+                                <dgrid:DataGridTextColumn Header="Message" Binding="{Binding MessageSnippet}" Width="*" />
+                            </dgrid:DataGrid.Columns>
+                        </dgrid:DataGrid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="{Binding IisTabHeader}">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                        <CheckBox Content="Enabled" IsChecked="{Binding IisEnabled}" IsEnabled="{Binding IisConfigEditable}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
+                        <NumericUpDown Grid.Column="2" Width="140" Minimum="5" Maximum="3600" Value="{Binding IisPollIntervalSeconds}" IsEnabled="{Binding IisConfigEditable}" />
+
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8">
+                            <Button Content="Validate Directories" Command="{Binding ValidateIisCommand}" />
+                            <Button Content="Preview" Command="{Binding PreviewIisCommand}" />
+                            <TextBlock VerticalAlignment="Center" Text="N" />
+                            <NumericUpDown Width="130" Minimum="1" Maximum="50" Value="{Binding IisPreviewCount}" />
+                        </StackPanel>
+
+                        <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
+                        <Button Grid.Column="6" Content="Pause" Command="{Binding PauseIisCommand}" IsVisible="{Binding !IisPaused}" ToolTip.Tip="Disable module on running collector" />
+                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeIisCommand}" IsVisible="{Binding IisPaused}" ToolTip.Tip="Enable module on running collector" />
+                        <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding IisPaused}" />
+                        <Button Grid.Column="8" Content="Apply" Classes="accent-success" Command="{Binding ApplyIisCommand}" ToolTip.Tip="Manually apply settings" />
+                    </Grid>
+
+                    <Grid Grid.Row="1" ColumnDefinitions="2*,1*" ColumnSpacing="10" IsEnabled="{Binding IisConfigEditable}">
+                        <Border Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Log Directories" />
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBox Width="430" Watermark="C:\inetpub\logs\LogFiles" Text="{Binding NewIisDirectory}" />
+                                    <Button Content="Add" Command="{Binding AddIisDirectoryCommand}" />
+                                    <Button Content="Pick Folder" Click="OnPickFolderClick" />
+                                    <Button Content="Remove Selected" Command="{Binding RemoveIisDirectoryCommand}" />
+                                </StackPanel>
+                                <ListBox Height="140"
+                                         ItemsSource="{Binding IisDirectories}"
+                                         SelectedItem="{Binding SelectedIisDirectory}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Value}" />
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Quick Filters" />
+                                <TextBlock Text="Site Name" />
+                                <TextBox Text="{Binding IisSiteName}" />
+                                <CheckBox Content="Include 4xx" IsChecked="{Binding IisInclude4xx}" />
+                                <CheckBox Content="Include 5xx" IsChecked="{Binding IisInclude5xx}" />
+                                <CheckBox Content="Exclude Static Files (.css, .js, .png, ...)" IsChecked="{Binding IisExcludeStaticFiles}" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Row="2" Classes="panel" Padding="8" IsEnabled="{Binding IisConfigEditable}">
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" Text="Skip Rules" />
+                                    <TextBlock Classes="muted" VerticalAlignment="Center"
+                                               Text="(any matching rule drops the entry before it leaves the collector)" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Content="Clear All"
+                                        Command="{Binding ClearIisFilterRulesCommand}"
+                                        ToolTip.Tip="Remove every rule below. Quick Filters above are not affected." />
+                            </Grid>
+
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="muted" VerticalAlignment="Center" Text="Presets:" />
+                                <Button Content="Health/Probe Endpoints"
+                                        Command="{Binding ApplyPresetHealthCommand}"
+                                        ToolTip.Tip="Add path prefixes /health, /healthz, /ready, /live, /ping, /metrics" />
+                                <Button Content="OPTIONS Preflight"
+                                        Command="{Binding ApplyPresetOptionsPreflightCommand}"
+                                        ToolTip.Tip="Skip CORS preflight requests (HTTP method = OPTIONS)" />
+                                <Button Content="Common Bots"
+                                        Command="{Binding ApplyPresetBotsCommand}"
+                                        ToolTip.Tip="Skip Googlebot, bingbot, and User-Agents containing 'bot', 'crawl', 'spider'" />
+                                <Button Content="OAuth Callbacks"
+                                        Command="{Binding ApplyPresetOAuthCallbacksCommand}"
+                                        ToolTip.Tip="Add common OAuth/OIDC callback paths" />
+                                <Button Content="Drop &gt; 30s (Likely Hung)"
+                                        Command="{Binding ApplyPresetVerySlowCommand}"
+                                        ToolTip.Tip="Skip requests that took longer than 30000 ms — almost always timeouts" />
+                            </StackPanel>
+
+                            <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="6">
+                                <ComboBox HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding IisFilterFieldOptions}"
+                                          SelectedItem="{Binding NewIisFilterField}" />
+                                <TextBox Grid.Column="1"
+                                         Watermark="Value (e.g. /api/internal, .map, 304, OPTIONS, *bot*, 10.0.)"
+                                         Text="{Binding NewIisFilterValue}" />
+                                <Button Grid.Column="2"
+                                        Content="Add Rule"
+                                        Command="{Binding AddIisFilterRuleCommand}" />
+                            </Grid>
+
+                            <Border Classes="panel" Padding="4">
+                                <ItemsControl ItemsSource="{Binding IisFilterRules}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="Auto,220,*,Auto" ColumnSpacing="8" Margin="4">
+                                                <CheckBox IsChecked="{Binding Enabled}"
+                                                          VerticalAlignment="Center"
+                                                          ToolTip.Tip="Disable this rule without deleting it" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding FieldDisplay}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding Value}"
+                                                           FontFamily="Consolas"
+                                                           VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <Button Grid.Column="3"
+                                                        Content="Remove"
+                                                        Command="{Binding $parent[ItemsControl].((vmPages:DataSourcesPageViewModel)DataContext).RemoveIisFilterRuleCommand}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="3" Classes="panel" Padding="8" IsEnabled="{Binding IisConfigEditable}">
+                        <StackPanel Spacing="6">
+                            <CheckBox Content="Resume from last position" IsChecked="{Binding IisResumeFromLast}" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding !IisResumeFromLast}">
+                                <TextBlock VerticalAlignment="Center" Text="Start date (UTC)" />
+                                <CalendarDatePicker SelectedDate="{Binding IisInitialStartDate}" Width="220" Watermark="Pick a date..." />
+                                <TextBlock VerticalAlignment="Center" Classes="muted" Text="Clear date for full history." />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Grid.Row="4" Text="{Binding IisValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+
+                    <TextBlock Grid.Row="5" Text="Preview" FontWeight="SemiBold" />
+                    <Border Grid.Row="6" Classes="panel">
+                        <dgrid:DataGrid ItemsSource="{Binding IisPreviewRows}"
+                                        AutoGenerateColumns="False"
+                                        IsReadOnly="True"
+                                        Height="220">
+                            <dgrid:DataGrid.Columns>
+                                <dgrid:DataGridTextColumn Header="Time (UTC)" Binding="{Binding TimeUtc}" Width="170" />
+                                <dgrid:DataGridTextColumn Header="Method" Binding="{Binding Method}" Width="80" />
+                                <dgrid:DataGridTextColumn Header="URI" Binding="{Binding Uri}" Width="*" />
+                                <dgrid:DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="80" />
+                                <dgrid:DataGridTextColumn Header="Time Taken" Binding="{Binding TimeTakenMs}" Width="100" />
+                                <dgrid:DataGridTextColumn Header="Client IP" Binding="{Binding ClientIp}" Width="140" />
+                            </dgrid:DataGrid.Columns>
+                        </dgrid:DataGrid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="{Binding MetricsTabHeader}">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                        <CheckBox Content="Enabled" IsChecked="{Binding MetricsEnabled}" IsEnabled="{Binding MetricsConfigEditable}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
+                        <NumericUpDown Grid.Column="2" Width="140" Minimum="5" Maximum="3600" Value="{Binding MetricsPollIntervalSeconds}" IsEnabled="{Binding MetricsConfigEditable}" />
+
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8">
+                            <Button Content="Preview Snapshot" Command="{Binding PreviewMetricsCommand}" />
+                        </StackPanel>
+
+                        <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
+                        <Button Grid.Column="6" Content="Pause" Command="{Binding PauseMetricsCommand}" IsVisible="{Binding !MetricsPaused}" ToolTip.Tip="Disable module on running collector" />
+                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeMetricsCommand}" IsVisible="{Binding MetricsPaused}" ToolTip.Tip="Enable module on running collector" />
+                        <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding MetricsPaused}" />
+                        <Button Grid.Column="8" Content="Apply" Classes="accent-success" Command="{Binding ApplyMetricsCommand}" ToolTip.Tip="Manually apply settings" />
+                    </Grid>
+
+                    <Grid Grid.Row="1" ColumnDefinitions="1.2*,2*" ColumnSpacing="10" IsEnabled="{Binding MetricsConfigEditable}">
+                        <Border Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Categories" />
+                                <CheckBox Content="CPU" IsChecked="{Binding MetricsCpu}" />
+                                <CheckBox Content="Memory" IsChecked="{Binding MetricsMemory}" />
+                                <CheckBox Content="Disk" IsChecked="{Binding MetricsDisk}" />
+                                <CheckBox Content="Network" IsChecked="{Binding MetricsNetwork}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Tags" />
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBox Width="180" Watermark="Key" Text="{Binding NewTagKey}" />
+                                    <TextBox Width="220" Watermark="Value" Text="{Binding NewTagValue}" />
+                                    <Button Content="Add/Update" Command="{Binding AddTagCommand}" />
+                                    <Button Content="Remove Selected" Command="{Binding RemoveTagCommand}" />
+                                </StackPanel>
+                                <ListBox Height="120" ItemsSource="{Binding MetricTags}" SelectedItem="{Binding SelectedTag}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="180,*">
+                                                <TextBlock Text="{Binding Key}" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Value}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <TextBlock Grid.Row="2" Text="{Binding MetricsPreviewMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+
+                    <Border Grid.Row="3" Classes="panel">
+                        <dgrid:DataGrid ItemsSource="{Binding MetricsPreviewRows}"
+                                        AutoGenerateColumns="False"
+                                        IsReadOnly="True"
+                                        Height="220">
+                            <dgrid:DataGrid.Columns>
+                                <dgrid:DataGridTextColumn Header="Metric" Binding="{Binding Metric}" Width="250" />
+                                <dgrid:DataGridTextColumn Header="Value" Binding="{Binding Value}" Width="120" />
+                                <dgrid:DataGridTextColumn Header="Unit" Binding="{Binding Unit}" Width="120" />
+                                <dgrid:DataGridTextColumn Header="Tags" Binding="{Binding TagsText}" Width="*" />
+                            </dgrid:DataGrid.Columns>
+                        </dgrid:DataGrid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Firewall">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
+                    <Border Classes="panel">
+                        <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                            <TextBlock Text="Configuration" Classes="muted" />
+                            <TextBlock Grid.Column="1" Text="{Binding FirewallTabSummary}" />
+                            <TextBlock Grid.Row="1" Text="Runtime" Classes="muted" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding FirewallTabRuntime}" />
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                        <Button Content="Refresh Firewall History" Command="{Binding RefreshFirewallHistoryCommand}" />
+                        <TextBlock VerticalAlignment="Center"
+                                   Classes="muted"
+                                   Text="History is derived from local collector diagnostics." />
+                    </StackPanel>
+
+                    <Border Grid.Row="2" Classes="panel">
+                        <dgrid:DataGrid ItemsSource="{Binding FirewallHistoryRows}"
+                                        AutoGenerateColumns="False"
+                                        IsReadOnly="True"
+                                        CanUserSortColumns="False"
+                                        Height="320">
+                            <dgrid:DataGrid.Columns>
+                                <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
+                                <dgrid:DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="100" />
+                                <dgrid:DataGridTextColumn Header="Result" Binding="{Binding Result}" Width="100" />
+                                <dgrid:DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*" />
+                            </dgrid:DataGrid.Columns>
+                        </dgrid:DataGrid>
+                    </Border>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>

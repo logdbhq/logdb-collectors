@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+**/spool/
+**/checkpoints.json
+**/*.user
+**/.vs/

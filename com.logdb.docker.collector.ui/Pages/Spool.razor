@@ -1,0 +1,236 @@
+@page "/spool"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Spool</h4>
+    <div class="d-flex align-items-center gap-3">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ManualRefresh" disabled="@_refreshing">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </button>
+        <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 10s</span>
+    </div>
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_error</div>
+}
+else if (_status is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    @if (!_status.Enabled)
+    {
+        <div class="alert alert-info"><i class="bi bi-info-circle-fill me-2"></i>Spool is disabled. Configure the Spool section in appsettings.json to enable.</div>
+    }
+    else
+    {
+        @if (_status.DroppedRecords > 0)
+        {
+            <div class="alert alert-danger"><i class="bi bi-trash-fill me-2"></i>@_status.DroppedRecords.ToString("N0") records dropped due to spool overflow.</div>
+        }
+        @if (_status.UtilizationPercent >= 80)
+        {
+            <div class="alert alert-warning"><i class="bi bi-hdd-fill me-2"></i>Disk usage is at @_status.UtilizationPercent% of configured limit.</div>
+        }
+        @if (!string.IsNullOrEmpty(_status.LastError))
+        {
+            <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_status.LastError</div>
+        }
+
+        <div class="row g-3">
+            <div class="col-xl-4 col-md-6">
+                <div class="card stat-card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                        <span class="card-title-label"><i class="bi bi-inbox me-1"></i> Backlog</span>
+                        @if (_status.DroppedRecords > 0)
+                        {
+                            <span class="badge bg-danger">Dropping</span>
+                        }
+                        else if (_status.UtilizationPercent >= 80)
+                        {
+                            <span class="badge bg-warning">@(_status.UtilizationPercent)%</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-success">Healthy</span>
+                        }
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="text-center mb-3">
+                            <div class="stat-value">@_status.QueuedRecords.ToString("N0")</div>
+                            <div class="stat-label">Queued records</div>
+                        </div>
+                        <div class="progress mb-2">
+                            <div class="progress-bar @UtilBarClass(_status.UtilizationPercent)" style="width: @(Math.Min(_status.UtilizationPercent, 100))%"></div>
+                        </div>
+                        <div class="text-center" style="font-size: 0.78rem; color: var(--text-muted);">@FormatBytes(_status.DiskBytesUsed) / @FormatBytes(_status.MaxDiskBytes)</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-4 col-md-6">
+                <div class="card stat-card h-100">
+                    <div class="card-header py-2 px-3">
+                        <span class="card-title-label"><i class="bi bi-arrow-repeat me-1"></i> Throughput</span>
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="detail-row"><span class="detail-label">Replayed</span><span class="detail-value">@_status.ReplayedRecords.ToString("N0") records</span></div>
+                        <div class="detail-row"><span class="detail-label">Dropped</span><span class="detail-value @(_status.DroppedRecords > 0 ? "text-danger" : "")">@_status.DroppedRecords.ToString("N0") records</span></div>
+                        <div class="detail-row"><span class="detail-label">Oldest record</span><span class="detail-value">@(_status.OldestRecordUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</span></div>
+                        <div class="detail-row"><span class="detail-label">Last write</span><span class="detail-value">@(_status.LastWriteUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</span></div>
+                        <div class="detail-row"><span class="detail-label">Last replay</span><span class="detail-value">@(_status.LastReplayUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-4 col-md-6">
+                <div class="card stat-card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+                        <span class="card-title-label"><i class="bi bi-gear me-1"></i> Configuration</span>
+                        @if (_savingSize)
+                        {
+                            <span class="spinner-border spinner-border-sm" role="status"></span>
+                        }
+                    </div>
+                    <div class="card-body p-3">
+                        <div class="detail-row"><span class="detail-label">Directory</span><span class="detail-value text-truncate-path">@_status.DirectoryPath</span></div>
+                        <div class="detail-row mb-3"><span class="detail-label">Current max</span><span class="detail-value">@FormatBytes(_status.MaxDiskBytes)</span></div>
+
+                        <label class="detail-label d-block mb-1">Max Spool Size: <strong>@_sliderValueMb MB</strong></label>
+                        <input type="range" class="form-range" min="10" max="2000" step="10"
+                               value="@_sliderValueMb"
+                               @onchange="OnSliderChanged" />
+                        <div class="d-flex justify-content-between" style="font-size: 0.72rem; color: var(--text-muted);">
+                            <span>10 MB</span>
+                            <span>2 GB</span>
+                        </div>
+                        @if (_sliderValueMb != (int)(_status.MaxDiskBytes / 1_048_576))
+                        {
+                            <button class="btn btn-sm btn-primary mt-2 w-100" @onclick="ApplyMaxSize" disabled="@_savingSize">
+                                <i class="bi bi-check-lg me-1"></i>Apply @_sliderValueMb MB
+                            </button>
+                        }
+                        @if (_sizeApplied)
+                        {
+                            <div class="text-success mt-1" style="font-size: 0.82rem;"><i class="bi bi-check-circle me-1"></i>Applied</div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private SpoolStatusDto? _status;
+    private string? _error;
+    private Timer? _timer;
+    private int _sliderValueMb = 100;
+    private bool _savingSize;
+    private bool _sizeApplied;
+    private bool _refreshing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task ManualRefresh()
+    {
+        _refreshing = true;
+        await LoadAsync();
+        _refreshing = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            _status = await client.GetFromJsonAsync<SpoolStatusDto>("/api/spool/status");
+            if (_status is not null && !_savingSize)
+                _sliderValueMb = (int)(_status.MaxDiskBytes / 1_048_576);
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+    }
+
+    private void OnSliderChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var val))
+        {
+            _sliderValueMb = val;
+            _sizeApplied = false;
+        }
+    }
+
+    private async Task ApplyMaxSize()
+    {
+        _savingSize = true;
+        _sizeApplied = false;
+        StateHasChanged();
+
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var response = await client.PostAsJsonAsync("/api/spool/max-size", new { maxSizeMb = _sliderValueMb });
+            response.EnsureSuccessStatusCode();
+            _sizeApplied = true;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _savingSize = false;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private static string UtilBarClass(int pct) => pct switch
+    {
+        >= 90 => "bg-danger",
+        >= 80 => "bg-warning",
+        _ => "bg-success"
+    };
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1_048_576) return $"{bytes / 1024.0:F1} KB";
+        if (bytes < 1_073_741_824) return $"{bytes / 1_048_576.0:F1} MB";
+        return $"{bytes / 1_073_741_824.0:F2} GB";
+    }
+
+    private class SpoolStatusDto
+    {
+        public bool Enabled { get; set; }
+        public string DirectoryPath { get; set; } = "";
+        public long QueuedRecords { get; set; }
+        public long DiskBytesUsed { get; set; }
+        public long MaxDiskBytes { get; set; }
+        public int UtilizationPercent { get; set; }
+        public long ReplayedRecords { get; set; }
+        public long DroppedRecords { get; set; }
+        public DateTime? OldestRecordUtc { get; set; }
+        public DateTime? LastWriteUtc { get; set; }
+        public DateTime? LastReplayUtc { get; set; }
+        public string? LastError { get; set; }
+    }
+}

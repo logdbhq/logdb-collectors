@@ -1,0 +1,115 @@
+@page "/spool"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0">Spool</h4>
+    <div class="d-flex align-items-center gap-3">
+        <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 5s</span>
+        @if (_status is not null && _status.QueuedRecords > 0)
+        {
+            <button class="btn btn-outline-danger btn-sm" @onclick="ClearSpoolAsync" disabled="@_clearing">
+                @if (_clearing)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                }
+                <i class="bi bi-trash me-1"></i> Clear Spool
+            </button>
+        }
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_connectError</div>
+}
+else if (_status is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value">@_status.QueuedRecords.ToString("N0")</div>
+                    <div class="stat-label">Queued records</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value text-success">@_status.ReplayedRecords.ToString("N0")</div>
+                    <div class="stat-label">Replayed</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card stat-card h-100">
+                <div class="card-body p-3 text-center">
+                    <div class="stat-value @(_status.DroppedRecords > 0 ? "text-danger" : "")">@_status.DroppedRecords.ToString("N0")</div>
+                    <div class="stat-label">Dropped</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header py-2 px-3"><span class="card-title-label"><i class="bi bi-hdd-stack me-1"></i> Disk Usage</span></div>
+        <div class="card-body p-3">
+            <div class="progress mb-2" style="height: 20px;">
+                <div class="progress-bar @UtilBarClass(_status.UtilizationPercent)" style="width: @(Math.Min(_status.UtilizationPercent, 100))%">@(_status.UtilizationPercent)%</div>
+            </div>
+            <div class="text-center" style="font-size: 0.85rem; color: var(--text-muted);">@FormatBytes(_status.DiskBytesUsed) / @FormatBytes(_status.MaxDiskBytes)</div>
+        </div>
+    </div>
+}
+
+@code {
+    private SpoolStatusDto? _status;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _clearing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ => { await LoadAsync(); await InvokeAsync(StateHasChanged); }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            _status = await client.GetFromJsonAsync<SpoolStatusDto>("/api/spool/status");
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private async Task ClearSpoolAsync()
+    {
+        _clearing = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var response = await client.DeleteAsync("/api/spool/clear");
+            if (response.IsSuccessStatusCode)
+            {
+                _status = await response.Content.ReadFromJsonAsync<SpoolStatusDto>();
+                _connectError = null;
+            }
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _clearing = false; }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+    private static string UtilBarClass(double pct) => pct >= 90 ? "bg-danger" : pct >= 80 ? "bg-warning" : "bg-success";
+    private static string FormatBytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1_048_576 ? $"{bytes / 1024.0:F1} KB" : bytes < 1_073_741_824 ? $"{bytes / 1_048_576.0:F1} MB" : $"{bytes / 1_073_741_824.0:F2} GB";
+
+    private class SpoolStatusDto { public bool Enabled { get; set; } public long QueuedRecords { get; set; } public long DiskBytesUsed { get; set; } public long MaxDiskBytes { get; set; } public double UtilizationPercent { get; set; } public long DroppedRecords { get; set; } public long ReplayedRecords { get; set; } public string? LastError { get; set; } }
+}

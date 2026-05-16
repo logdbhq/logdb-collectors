@@ -1,0 +1,152 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.OverviewPageView">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="10">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="Overview Dashboard" FontSize="24" FontWeight="SemiBold" />
+            <Border Classes="softPill">
+                <TextBlock Text="Last 30 days" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+            </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" ColumnSpacing="10">
+            <Border Classes="card">
+                <StackPanel Spacing="4">
+                    <TextBlock Classes="cardLabel" Text="Collector Engine" />
+                    <TextBlock Classes="cardValue" Text="{Binding EngineVersion}" />
+                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding EngineSubtitle}" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Classes="card">
+                <StackPanel Spacing="4">
+                    <TextBlock Classes="cardLabel" Text="Modules" />
+                    <TextBlock Classes="cardValue" Text="{Binding ContainersSummary}" />
+                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding ContainersDetails}" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Classes="card">
+                <StackPanel Spacing="4">
+                    <TextBlock Classes="cardLabel" Text="Resources" />
+                    <TextBlock Classes="cardValue" Text="{Binding ResourcesSummary}" />
+                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}">
+                        <Run Text="Connection: " />
+                        <Run Text="{Binding ConnectionStatus}" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="3" Classes="card">
+                <StackPanel Spacing="4">
+                    <TextBlock Classes="cardLabel" Text="Storage" />
+                    <TextBlock Classes="cardValue" Text="{Binding StorageSummary}" />
+                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding StorageReclaimable}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" Classes="panel">
+            <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                    <TextBlock Text="Collector disk space" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="2" Text="{Binding StorageUsageText}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+                </Grid>
+                <ProgressBar Grid.Row="1"
+                             Height="14"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="{Binding StorageUsagePercent}" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="3" ColumnDefinitions="*,*,*,*" ColumnSpacing="10">
+            <Border Classes="card">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Classes="cardLabel" Text="Total Sent" />
+                    <TextBlock Classes="megaNumber" Text="{Binding TotalSent}" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Classes="card">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Classes="cardLabel" Text="Last Success" />
+                    <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding LastSuccessfulSend}" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Classes="card">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Classes="cardLabel" Text="Critical Issues" />
+                    <TextBlock Classes="megaNumberDanger" Text="{Binding TotalFailed}" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="3" Classes="card">
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Classes="cardLabel" Text="Active Modules" />
+                    <TextBlock Classes="megaNumberAccent" Text="{Binding ActiveModules}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="4" Classes="panel">
+            <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="10">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBlock Text="Live Resource Usage" FontSize="28" FontWeight="SemiBold" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                        <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding UpdatedAgo}" />
+                        <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+                        <Button Content="Test Connection" Command="{Binding TestConnectionCommand}" />
+                        <Button Content="Reload Config" Command="{Binding ReloadConfigCommand}" />
+                        <Button Content="Open Diagnostics" Command="{Binding OpenDiagnosticsCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" ColumnSpacing="10">
+                    <Border Classes="card">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Classes="cardLabel" Text="Total CPU" />
+                            <TextBlock Classes="cardValue" Text="{Binding LiveCpu}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Classes="card">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Classes="cardLabel" Text="Total Memory" />
+                            <TextBlock Classes="cardValue" Text="{Binding LiveMemory}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Classes="card">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Classes="cardLabel" Text="Network I/O" />
+                            <TextBlock Classes="cardValue" Text="{Binding LiveNetwork}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="3" Classes="card">
+                        <StackPanel HorizontalAlignment="Center">
+                            <TextBlock Classes="cardLabel" Text="Collector Mode" />
+                            <TextBlock Classes="cardValue" Text="{Binding CollectorMode}" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <TextBlock Grid.Row="2"
+                           Text="Modules"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+
+                <Border Grid.Row="3" Classes="card">
+                    <dgrid:DataGrid ItemsSource="{Binding Modules}"
+                                    AutoGenerateColumns="False"
+                                    IsReadOnly="True"
+                                    CanUserResizeColumns="True"
+                                    Height="280">
+                        <dgrid:DataGrid.Columns>
+                            <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Name}" Width="150" />
+                            <dgrid:DataGridTextColumn Header="State" Binding="{Binding State}" Width="90" />
+                            <dgrid:DataGridTextColumn Header="Last Poll" Binding="{Binding LastPoll}" Width="170" />
+                            <dgrid:DataGridTextColumn Header="Last Error" Binding="{Binding LastError}" Width="*" />
+                            <dgrid:DataGridTextColumn Header="Sent" Binding="{Binding SentCount}" Width="85" />
+                            <dgrid:DataGridTextColumn Header="Failed" Binding="{Binding FailedCount}" Width="85" />
+                        </dgrid:DataGrid.Columns>
+                    </dgrid:DataGrid>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
