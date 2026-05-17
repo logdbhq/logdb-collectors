@@ -2,7 +2,7 @@ using System.Windows.Input;
 
 namespace com.logdb.windows.collector.ui.ViewModels.Infrastructure;
 
-public sealed class AsyncRelayCommand : ICommand
+public sealed class AsyncRelayCommand : ObservableObject, ICommand
 {
     private readonly Func<Task> _executeAsync;
     private readonly Func<bool>? _canExecute;
@@ -16,6 +16,14 @@ public sealed class AsyncRelayCommand : ICommand
 
     public event EventHandler? CanExecuteChanged;
 
+    /// <summary>True while the command's task is in flight. Bindable — UI can show a
+    /// spinner / disabled style by binding to <c>Command.IsRunning</c>.</summary>
+    public bool IsRunning
+    {
+        get => _isRunning;
+        private set => SetProperty(ref _isRunning, value);
+    }
+
     public bool CanExecute(object? parameter)
     {
         return !_isRunning && (_canExecute?.Invoke() ?? true);
@@ -28,7 +36,7 @@ public sealed class AsyncRelayCommand : ICommand
             return;
         }
 
-        _isRunning = true;
+        IsRunning = true;
         RaiseCanExecuteChanged();
         try
         {
@@ -36,7 +44,7 @@ public sealed class AsyncRelayCommand : ICommand
         }
         finally
         {
-            _isRunning = false;
+            IsRunning = false;
             RaiseCanExecuteChanged();
         }
     }

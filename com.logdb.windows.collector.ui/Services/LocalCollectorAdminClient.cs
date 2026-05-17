@@ -149,15 +149,11 @@ public sealed class LocalCollectorAdminClient
         string? replacementApiKey = null,
         CancellationToken cancellationToken = default)
     {
-        if (SelectedTarget == null)
-        {
-            return (false, "No local collector instance is selected. Start service or console mode first.");
-        }
-
         var fullConfig = CloneConfig(candidate);
         if (!string.IsNullOrWhiteSpace(replacementApiKey))
         {
             _apiKeySecret = replacementApiKey.Trim();
+            DebugLog($"ApplyConfigAsync: API key replacement requested (apiKey={Mask(_apiKeySecret)})");
         }
 
         if (string.IsNullOrWhiteSpace(_apiKeySecret))
@@ -167,6 +163,33 @@ public sealed class LocalCollectorAdminClient
 
         fullConfig.LogDB.ApiKey = _apiKeySecret;
 
+        // Always persist to disk first — the file is the source of truth and the
+        // collector service reads it via IOptionsMonitor whether it's running now
+        // or starts up later.
+        try
+        {
+            await CollectorConfigPersistence.SaveAsync(fullConfig, _configPath, cancellationToken);
+            _workingConfig = fullConfig;
+            DebugLog($"ApplyConfigAsync: saved config to disk ({_configPath})");
+        }
+        catch (Exception ex)
+        {
+            DebugLog($"ApplyConfigAsync: disk save FAILED — {ex.GetType().Name}: {ex.Message}");
+            return (false, $"Failed to save configuration to disk: {ex.Message}");
+        }
+
+        // If no collector instance is running, that's all we can do — the service
+        // will pick this up on next start. This is normal for first-time setup or
+        // any "service is stopped" state.
+        if (SelectedTarget == null)
+        {
+            DebugLog("ApplyConfigAsync: no SelectedTarget — disk-only save (service will pick up on next start)");
+            return (true, "Saved to disk. Collector service is not running — it will pick up the new config when started.");
+        }
+
+        DebugLog($"ApplyConfigAsync: pushing live UpdateConfig + ReloadConfig to {SelectedTarget.Value}");
+
+        // A collector instance is running — push the live update + reload command.
         var response = await _controlClient.SendAsync(
             SelectedTarget.Value,
             ControlCommands.UpdateConfig,
@@ -175,7 +198,7 @@ public sealed class LocalCollectorAdminClient
 
         if (!response.Success)
         {
-            return (false, response.Message ?? "Failed to update collector configuration.");
+            return (false, response.Message ?? "Config saved to disk, but live update to the running collector failed.");
         }
 
         var reloadResponse = await _controlClient.SendAsync(
@@ -188,7 +211,6 @@ public sealed class LocalCollectorAdminClient
             return (false, reloadResponse.Message ?? "Configuration updated, but reload failed.");
         }
 
-        _workingConfig = fullConfig;
         return (true, "Configuration applied.");
     }
 
@@ -247,20 +269,170 @@ public sealed class LocalCollectorAdminClient
         return (validation.Success, validation.Message);
     }
 
+    public enum EndpointResolutionSource { Discovery, ServiceCache, None }
+
+    /// <summary>
+    /// Resolves the gRPC-logger URL for the current API key. Tries discovery first; if
+    /// that fails, falls back to the endpoint-cache.json file the collector service
+    /// writes after successful resolutions. Source enum tells the caller which path won
+    /// so the UI can label the value (live vs cached).
+    /// </summary>
+    public async Task<EndpointResolution> ResolveGrpcLoggerEndpointAsync(CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(_apiKeySecret))
+        {
+            DebugLog("ResolveGrpcLoggerEndpointAsync: no API key, skipping");
+            return EndpointResolution.None;
+        }
+
+        var discoveryUrl = _workingConfig.LogDB.DiscoveryUrl;
+        string? lastError = null;
+        int? lastStatusCode = null;
+
+        if (!string.IsNullOrWhiteSpace(discoveryUrl))
+        {
+            DebugLog($"ResolveGrpcLoggerEndpointAsync: calling {discoveryUrl} (apiKey={Mask(_apiKeySecret)})");
+            try
+            {
+                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, discoveryUrl);
+                request.Headers.TryAddWithoutValidation("X-API-Key", _apiKeySecret);
+
+                using var response = await http.SendAsync(request, cancellationToken);
+                lastStatusCode = (int)response.StatusCode;
+                DebugLog($"ResolveGrpcLoggerEndpointAsync: discovery responded {lastStatusCode} {response.ReasonPhrase}");
+                if (response.IsSuccessStatusCode)
+                {
+                    var text = await response.Content.ReadAsStringAsync(cancellationToken);
+                    var parsed = ParseDiscoveryBody(text);
+                    if (!string.IsNullOrWhiteSpace(parsed))
+                    {
+                        DebugLog($"ResolveGrpcLoggerEndpointAsync: live OK → {parsed}");
+                        return new EndpointResolution(parsed, EndpointResolutionSource.Discovery, DateTime.UtcNow, lastStatusCode, null);
+                    }
+                    DebugLog("ResolveGrpcLoggerEndpointAsync: discovery returned 2xx but body did not yield a URL");
+                    lastError = "2xx with empty body";
+                }
+                else
+                {
+                    lastError = $"HTTP {lastStatusCode} {response.ReasonPhrase}";
+                }
+            }
+            catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (TaskCanceledException ex)
+            {
+                lastError = "timeout after 15s";
+                DebugLog($"ResolveGrpcLoggerEndpointAsync: timeout — {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                lastError = $"{ex.GetType().Name}: {ex.Message}";
+                DebugLog($"ResolveGrpcLoggerEndpointAsync: discovery call threw — {lastError}");
+            }
+        }
+        else
+        {
+            DebugLog("ResolveGrpcLoggerEndpointAsync: DiscoveryUrl is empty, skipping discovery call");
+            lastError = "DiscoveryUrl is empty";
+        }
+
+        var cached = TryReadServiceEndpointCache();
+        if (cached is { Endpoint: { Length: > 0 } } && CacheMatchesCurrentKey(cached))
+        {
+            DebugLog($"ResolveGrpcLoggerEndpointAsync: serving cached endpoint {cached.Endpoint} (resolved {cached.ResolvedAtUtc:O})");
+            return new EndpointResolution(cached.Endpoint, EndpointResolutionSource.ServiceCache, cached.ResolvedAtUtc, lastStatusCode, lastError);
+        }
+
+        DebugLog($"ResolveGrpcLoggerEndpointAsync: no live result, no cached fallback — returning None (lastError={lastError})");
+        return new EndpointResolution(null, EndpointResolutionSource.None, null, lastStatusCode, lastError);
+    }
+
+    public readonly record struct EndpointResolution(
+        string? Endpoint,
+        EndpointResolutionSource Source,
+        DateTime? ResolvedAtUtc,
+        int? LastDiscoveryStatusCode,
+        string? LastError)
+    {
+        public static readonly EndpointResolution None = new(null, EndpointResolutionSource.None, null, null, null);
+    }
+
+    private static string? ParseDiscoveryBody(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.TryGetProperty("serviceUrl", out var prop) && prop.ValueKind == JsonValueKind.String)
+            {
+                var url = prop.GetString();
+                if (!string.IsNullOrWhiteSpace(url)) return url.Trim();
+            }
+        }
+        catch { /* not a JSON object */ }
+
+        try
+        {
+            var fromJson = JsonSerializer.Deserialize<string>(text);
+            if (!string.IsNullOrWhiteSpace(fromJson)) return fromJson.Trim();
+        }
+        catch { /* not a JSON string */ }
+
+        return text.Trim().Trim('"');
+    }
+
+    private sealed class ServiceEndpointCache
+    {
+        public string ApiKeyFingerprint { get; set; } = string.Empty;
+        public string DiscoveryUrl { get; set; } = string.Empty;
+        public string Endpoint { get; set; } = string.Empty;
+        public DateTime ResolvedAtUtc { get; set; }
+    }
+
+    private static ServiceEndpointCache? TryReadServiceEndpointCache()
+    {
+        try
+        {
+            var path = CollectorPathDefaults.EndpointCachePath;
+            if (!File.Exists(path)) return null;
+            return JsonSerializer.Deserialize<ServiceEndpointCache>(File.ReadAllText(path));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private bool CacheMatchesCurrentKey(ServiceEndpointCache cache)
+    {
+        // The service stores a SHA256 fingerprint of the key — recompute and compare so
+        // we never honor a cache entry written for a different API key.
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(_apiKeySecret ?? string.Empty));
+        var fingerprint = Convert.ToHexString(bytes);
+        return string.Equals(cache.ApiKeyFingerprint, fingerprint, StringComparison.Ordinal);
+    }
+
     public async Task<(int? AccountId, string? AccountName)> ResolveOwnerAsync(CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(_apiKeySecret))
         {
+            DebugLog("ResolveOwnerAsync: no API key, skipping");
             return (null, null);
         }
 
         var discoveryUrl = _workingConfig.LogDB.DiscoveryUrl;
         if (string.IsNullOrWhiteSpace(discoveryUrl) || !Uri.TryCreate(discoveryUrl, UriKind.Absolute, out var configuredUri))
         {
+            DebugLog($"ResolveOwnerAsync: DiscoveryUrl invalid or empty ({discoveryUrl ?? "<null>"})");
             return (null, null);
         }
 
         var ownerUrl = new Uri(new Uri($"{configuredUri.Scheme}://{configuredUri.Authority}"), "/resolve/owner");
+        DebugLog($"ResolveOwnerAsync: GET {ownerUrl}");
 
         try
         {
@@ -269,6 +441,7 @@ public sealed class LocalCollectorAdminClient
             request.Headers.TryAddWithoutValidation("X-API-Key", _apiKeySecret);
 
             using var response = await http.SendAsync(request, cancellationToken);
+            DebugLog($"ResolveOwnerAsync: HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
             if (!response.IsSuccessStatusCode)
             {
                 return (null, null);
@@ -284,12 +457,28 @@ public sealed class LocalCollectorAdminClient
                 ? nameProp.GetString()
                 : null;
 
+            DebugLog($"ResolveOwnerAsync: accountId={accountId}, accountName={accountName ?? "<null>"}");
             return (accountId, accountName);
         }
-        catch
+        catch (Exception ex)
         {
+            DebugLog($"ResolveOwnerAsync: threw — {ex.GetType().Name}: {ex.Message}");
             return (null, null);
         }
+    }
+
+    private static string Mask(string? apiKey)
+    {
+        if (string.IsNullOrEmpty(apiKey)) return "(none)";
+        if (apiKey.Length <= 10) return $"{apiKey[..Math.Min(3, apiKey.Length)]}***";
+        return $"{apiKey[..8]}***({apiKey.Length} chars)";
+    }
+
+    private static void DebugLog(string message)
+    {
+        var line = $"[LogDBUI {DateTime.Now:HH:mm:ss.fff}] {message}";
+        System.Diagnostics.Debug.WriteLine(line);
+        Console.WriteLine(line);
     }
 
     public async Task<(bool Success, string Message)> InstallServiceAsync(CancellationToken cancellationToken = default)

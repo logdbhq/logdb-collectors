@@ -15,9 +15,19 @@
                     <Button Content="Replace Key"
                             Command="{Binding ReplaceApiKeyCommand}"
                             IsVisible="{Binding ShowReplaceApiKeyAction}" />
-                    <Button Content="Save Key"
-                            Command="{Binding SaveApiKeyCommand}"
-                            IsVisible="{Binding IsReplacingApiKey}" />
+                    <Button Command="{Binding SaveApiKeyCommand}"
+                            IsVisible="{Binding IsReplacingApiKey}"
+                            MinWidth="110">
+                        <Panel>
+                            <TextBlock Text="Save Key" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                       IsVisible="{Binding !SaveApiKeyCommand.IsRunning}" />
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        IsVisible="{Binding SaveApiKeyCommand.IsRunning}">
+                                <ProgressBar IsIndeterminate="True" Width="40" Height="3" VerticalAlignment="Center" />
+                                <TextBlock Text="Saving…" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Panel>
+                    </Button>
                     <Button Content="Cancel Replace"
                             Command="{Binding CancelReplaceApiKeyCommand}"
                             IsVisible="{Binding IsReplacingApiKey}" />
@@ -37,15 +47,20 @@
         </Border>
 
         <Border Grid.Row="1" Classes="panel">
-            <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Text="Endpoint" VerticalAlignment="Center" />
-                <TextBox Grid.Column="1" Text="{Binding Endpoint}" Watermark="https://..." />
+            <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto" RowSpacing="10" ColumnSpacing="8">
+                <TextBlock Text="Resolved Endpoint" VerticalAlignment="Top" Margin="0,4,0,0" />
+                <StackPanel Grid.Column="1" Spacing="4">
+                    <TextBlock Text="{Binding ResolvedEndpointDisplay}"
+                               FontFamily="Consolas"
+                               TextWrapping="Wrap"
+                               IsEnabled="False" />
+                    <TextBlock Classes="muted"
+                               TextWrapping="Wrap"
+                               Text="Auto-resolved from the LogDB discovery service using your API key. Read-only. To override (self-hosted deployments, networks where discovery is unreachable), edit the raw config on the Advanced page." />
+                </StackPanel>
 
-                <TextBlock Grid.Row="1" Text="Discovery URL" VerticalAlignment="Center" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding DiscoveryUrl}" Watermark="https://discovery..." />
-
-                <TextBlock Grid.Row="2" Text="Protocol" VerticalAlignment="Top" Margin="0,6,0,0" />
-                <StackPanel Grid.Row="2" Grid.Column="1" Spacing="4">
+                <TextBlock Grid.Row="1" Text="Protocol" VerticalAlignment="Top" Margin="0,6,0,0" />
+                <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
                     <ComboBox HorizontalAlignment="Stretch"
                               ItemsSource="{Binding ProtocolOptions}"
                               SelectedItem="{Binding Protocol}" />
@@ -70,10 +85,38 @@
         </Border>
 
         <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
-            <Button Content="Save Destination Settings"
-                    Command="{Binding SaveCommand}"
-                    IsEnabled="{Binding CanSaveDestinationSettings}" />
-            <Button Content="Test Connection" Command="{Binding TestConnectionCommand}" />
+            <Button Command="{Binding SaveCommand}"
+                    IsEnabled="{Binding CanSaveDestinationSettings}"
+                    MinWidth="200">
+                <Panel>
+                    <TextBlock Text="Save Destination Settings" VerticalAlignment="Center" HorizontalAlignment="Center"
+                               IsVisible="{Binding !SaveCommand.IsRunning}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                IsVisible="{Binding SaveCommand.IsRunning}">
+                        <ProgressBar IsIndeterminate="True" Width="40" Height="3" VerticalAlignment="Center" />
+                        <TextBlock Text="Saving…" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Panel>
+            </Button>
+            <Button Command="{Binding TestConnectionCommand}" MinWidth="160">
+                <Panel>
+                    <TextBlock Text="Test Connection"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Center"
+                               IsVisible="{Binding !TestConnectionCommand.IsRunning}" />
+                    <StackPanel Orientation="Horizontal"
+                                Spacing="8"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center"
+                                IsVisible="{Binding TestConnectionCommand.IsRunning}">
+                        <ProgressBar IsIndeterminate="True"
+                                     Width="50"
+                                     Height="3"
+                                     VerticalAlignment="Center" />
+                        <TextBlock Text="Testing…" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Panel>
+            </Button>
         </StackPanel>
 
         <TextBlock Grid.Row="4" Text="{Binding ValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />

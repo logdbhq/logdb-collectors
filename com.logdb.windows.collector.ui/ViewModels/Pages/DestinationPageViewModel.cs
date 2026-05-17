@@ -19,6 +19,7 @@ public sealed class DestinationPageViewModel : PageViewModelBase
     private string _defaultCollection = "windows";
     private string _validationMessage = "-";
     private string _customerName = string.Empty;
+    private string _resolvedEndpointDisplay = "Not resolved yet.";
 
     public DestinationPageViewModel(LocalCollectorAdminClient adminClient, Action<string, bool> statusCallback)
         : base("Destination")
@@ -159,6 +160,16 @@ public sealed class DestinationPageViewModel : PageViewModelBase
 
     public bool HasCustomerName => !string.IsNullOrWhiteSpace(_customerName);
 
+    /// <summary>
+    /// Read-only display of where logs are actually being sent.
+    /// Resolved from discovery on page entry / after key replace.
+    /// </summary>
+    public string ResolvedEndpointDisplay
+    {
+        get => _resolvedEndpointDisplay;
+        private set => SetProperty(ref _resolvedEndpointDisplay, value);
+    }
+
     public AsyncRelayCommand SaveCommand { get; }
     public AsyncRelayCommand SaveApiKeyCommand { get; }
     public AsyncRelayCommand TestConnectionCommand { get; }
@@ -190,6 +201,7 @@ public sealed class DestinationPageViewModel : PageViewModelBase
         NotifyPropertyChanged(nameof(ApiKeyStatusText));
 
         await RefreshCustomerNameAsync();
+        await RefreshResolvedEndpointAsync();
     }
 
     private async Task RefreshCustomerNameAsync()
@@ -202,6 +214,63 @@ public sealed class DestinationPageViewModel : PageViewModelBase
 
         var (_, accountName) = await _adminClient.ResolveOwnerAsync();
         CustomerName = accountName ?? string.Empty;
+    }
+
+    private async Task RefreshResolvedEndpointAsync()
+    {
+        var config = _adminClient.SnapshotWorkingConfig();
+        var explicitOverride = config.LogDB.Endpoint;
+        if (!string.IsNullOrWhiteSpace(explicitOverride))
+        {
+            ResolvedEndpointDisplay = $"{explicitOverride}  (manual override — set in raw config on Advanced page)";
+            return;
+        }
+
+        if (!_adminClient.HasApiKey)
+        {
+            ResolvedEndpointDisplay = "Set an API key — endpoint is resolved automatically from discovery.";
+            return;
+        }
+
+        ResolvedEndpointDisplay = "Resolving from discovery service…";
+        var result = await _adminClient.ResolveGrpcLoggerEndpointAsync();
+
+        ResolvedEndpointDisplay = result.Source switch
+        {
+            LocalCollectorAdminClient.EndpointResolutionSource.Discovery =>
+                result.Endpoint!,
+            LocalCollectorAdminClient.EndpointResolutionSource.ServiceCache =>
+                $"{result.Endpoint}  (cached by collector service{FormatCacheAge(result.ResolvedAtUtc)} — " +
+                $"discovery currently {FormatDiscoveryProblem(result)})",
+            _ =>
+                $"Discovery unreachable — {FormatDiscoveryProblem(result)}. " +
+                "Set LogDB.Endpoint manually on the Advanced page to bypass discovery.",
+        };
+    }
+
+    private static string FormatDiscoveryProblem(LocalCollectorAdminClient.EndpointResolution r)
+    {
+        if (r.LastDiscoveryStatusCode.HasValue)
+        {
+            return r.LastDiscoveryStatusCode.Value switch
+            {
+                404 => "returned 404 (API key not recognized by discovery)",
+                504 => "returned 504 (Postgres slow on the discovery server)",
+                502 => "returned 502 (discovery upstream down)",
+                _   => $"returned HTTP {r.LastDiscoveryStatusCode.Value}",
+            };
+        }
+        return r.LastError ?? "unreachable";
+    }
+
+    private static string FormatCacheAge(DateTime? resolvedAtUtc)
+    {
+        if (!resolvedAtUtc.HasValue) return string.Empty;
+        var age = DateTime.UtcNow - resolvedAtUtc.Value;
+        if (age.TotalSeconds < 60) return ", just now";
+        if (age.TotalMinutes < 60) return $", {(int)age.TotalMinutes} min ago";
+        if (age.TotalHours < 24) return $", {(int)age.TotalHours} h ago";
+        return $", {(int)age.TotalDays} d ago";
     }
 
     private async Task SaveAsync()
@@ -254,6 +323,7 @@ public sealed class DestinationPageViewModel : PageViewModelBase
             NewApiKey = string.Empty;
             ValidationMessage = "API key saved.";
             await RefreshCustomerNameAsync();
+            await RefreshResolvedEndpointAsync();
         }
     }
 

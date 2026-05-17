@@ -23,7 +23,17 @@
                         <Button Grid.Column="6" Content="Pause" Command="{Binding PauseEventLogCommand}" IsVisible="{Binding !EventLogPaused}" ToolTip.Tip="Disable module on running collector" />
                         <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeEventLogCommand}" IsVisible="{Binding EventLogPaused}" ToolTip.Tip="Enable module on running collector" />
                         <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding EventLogPaused}" />
-                        <Button Grid.Column="8" Content="Apply" Classes="accent-success" Command="{Binding ApplyEventLogsCommand}" ToolTip.Tip="Manually apply settings" />
+                        <Button Grid.Column="8" Classes="accent-success" Command="{Binding ApplyEventLogsCommand}" ToolTip.Tip="Manually apply settings" MinWidth="90">
+                            <Panel>
+                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                           IsVisible="{Binding !ApplyEventLogsCommand.IsRunning}" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            IsVisible="{Binding ApplyEventLogsCommand.IsRunning}">
+                                    <ProgressBar IsIndeterminate="True" Width="30" Height="3" VerticalAlignment="Center" />
+                                    <TextBlock Text="Applying…" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Panel>
+                        </Button>
                     </Grid>
 
                     <Grid Grid.Row="1" ColumnDefinitions="1.2*,1.4*,1.4*" ColumnSpacing="10" IsEnabled="{Binding EventLogConfigEditable}">
@@ -118,7 +128,17 @@
                         <Button Grid.Column="6" Content="Pause" Command="{Binding PauseIisCommand}" IsVisible="{Binding !IisPaused}" ToolTip.Tip="Disable module on running collector" />
                         <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeIisCommand}" IsVisible="{Binding IisPaused}" ToolTip.Tip="Enable module on running collector" />
                         <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding IisPaused}" />
-                        <Button Grid.Column="8" Content="Apply" Classes="accent-success" Command="{Binding ApplyIisCommand}" ToolTip.Tip="Manually apply settings" />
+                        <Button Grid.Column="8" Classes="accent-success" Command="{Binding ApplyIisCommand}" ToolTip.Tip="Manually apply settings" MinWidth="90">
+                            <Panel>
+                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                           IsVisible="{Binding !ApplyIisCommand.IsRunning}" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            IsVisible="{Binding ApplyIisCommand.IsRunning}">
+                                    <ProgressBar IsIndeterminate="True" Width="30" Height="3" VerticalAlignment="Center" />
+                                    <TextBlock Text="Applying…" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Panel>
+                        </Button>
                     </Grid>
 
                     <Grid Grid.Row="1" ColumnDefinitions="2*,1*" ColumnSpacing="10" IsEnabled="{Binding IisConfigEditable}">
@@ -275,7 +295,17 @@
                         <Button Grid.Column="6" Content="Pause" Command="{Binding PauseMetricsCommand}" IsVisible="{Binding !MetricsPaused}" ToolTip.Tip="Disable module on running collector" />
                         <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeMetricsCommand}" IsVisible="{Binding MetricsPaused}" ToolTip.Tip="Enable module on running collector" />
                         <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding MetricsPaused}" />
-                        <Button Grid.Column="8" Content="Apply" Classes="accent-success" Command="{Binding ApplyMetricsCommand}" ToolTip.Tip="Manually apply settings" />
+                        <Button Grid.Column="8" Classes="accent-success" Command="{Binding ApplyMetricsCommand}" ToolTip.Tip="Manually apply settings" MinWidth="90">
+                            <Panel>
+                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                           IsVisible="{Binding !ApplyMetricsCommand.IsRunning}" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            IsVisible="{Binding ApplyMetricsCommand.IsRunning}">
+                                    <ProgressBar IsIndeterminate="True" Width="30" Height="3" VerticalAlignment="Center" />
+                                    <TextBlock Text="Applying…" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Panel>
+                        </Button>
                     </Grid>
 
                     <Grid Grid.Row="1" ColumnDefinitions="1.2*,2*" ColumnSpacing="10" IsEnabled="{Binding MetricsConfigEditable}">

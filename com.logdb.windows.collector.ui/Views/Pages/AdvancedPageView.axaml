@@ -11,10 +11,20 @@
             <Button Content="Reset to Current"
                     Command="{Binding ResetEditorCommand}"
                     ToolTip.Tip="Discard your edits and reload the editor from the live config." />
-            <Button Content="Apply Changes"
-                    Classes="accent-success"
+            <Button Classes="accent-success"
                     Command="{Binding ApplyJsonCommand}"
-                    ToolTip.Tip="Validate and push the editor JSON to the running collector. If the API key field is blank, the existing key is kept." />
+                    ToolTip.Tip="Validate and push the editor JSON to the running collector. If the API key field is blank, the existing key is kept."
+                    MinWidth="150">
+                <Panel>
+                    <TextBlock Text="Apply Changes" VerticalAlignment="Center" HorizontalAlignment="Center"
+                               IsVisible="{Binding !ApplyJsonCommand.IsRunning}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                IsVisible="{Binding ApplyJsonCommand.IsRunning}">
+                        <ProgressBar IsIndeterminate="True" Width="40" Height="3" VerticalAlignment="Center" />
+                        <TextBlock Text="Applying…" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Panel>
+            </Button>
             <TextBlock VerticalAlignment="Center"
                        Classes="muted"
                        Text="The apiKey field is blanked on load for safety. Leave it blank to keep the current key; type a new value to change it." />

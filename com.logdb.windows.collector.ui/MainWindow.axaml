@@ -206,10 +206,28 @@
                                     Orientation="Horizontal"
                                     Spacing="8"
                                     VerticalAlignment="Center">
-                            <Button Content="Refresh Discovery"
-                                    Command="{Binding RefreshDiscoveryCommand}" />
-                            <Button Content="Check Updates"
-                                    Command="{Binding CheckUpdatesCommand}" />
+                            <Button Command="{Binding RefreshDiscoveryCommand}" MinWidth="160">
+                                <Panel>
+                                    <TextBlock Text="Refresh Discovery" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                               IsVisible="{Binding !RefreshDiscoveryCommand.IsRunning}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                IsVisible="{Binding RefreshDiscoveryCommand.IsRunning}">
+                                        <ProgressBar IsIndeterminate="True" Width="40" Height="3" VerticalAlignment="Center" />
+                                        <TextBlock Text="Refreshing…" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Panel>
+                            </Button>
+                            <Button Command="{Binding CheckUpdatesCommand}" MinWidth="140">
+                                <Panel>
+                                    <TextBlock Text="Check Updates" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                               IsVisible="{Binding !CheckUpdatesCommand.IsRunning}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                IsVisible="{Binding CheckUpdatesCommand.IsRunning}">
+                                        <ProgressBar IsIndeterminate="True" Width="40" Height="3" VerticalAlignment="Center" />
+                                        <TextBlock Text="Checking…" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Panel>
+                            </Button>
                         </StackPanel>
                     </Grid>
                 </Border>
