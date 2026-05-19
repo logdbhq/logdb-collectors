@@ -132,6 +132,21 @@ bootLogger.LogInformation(
     "▼ LogDB Windows Collector starting | mode={Mode} | assemblyVersion={AsmVer} | informationalVersion={InfoVer} | exePath={ExePath} | batchOptionsDto.EnableCompression(default)={CompressionDefault} | IRuntimeEndpointStore=registered | EphemeralLogDbClient=registered-in-module-BuildHost",
     runMode, bootAssemblyVersion, bootInformationalVersion, bootExePath, bootDefaultCompression);
 
+// Per-module override values as actually loaded from appsettings.json. Lets the
+// operator confirm at a glance whether their typed override survived the save
+// path and reached the running service. If a value here is "(unset)" but the
+// UI showed it filled in, the auto-save flow has a bug. If a value here is
+// "windows.motivp.com" but real ingestion still uses D9501, the module isn't
+// honoring the override at runtime.
+var loadedConfig = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<CollectorConfigDto>>().CurrentValue;
+bootLogger.LogInformation(
+    "Loaded config overrides | Server.ServerName={GlobalServer} | EventLog.ProviderNameOverride={EventLogProvider} | Metrics.ServerNameOverride={MetricsServer} | Heartbeat.ServerNameOverride={HeartbeatServer} | Heartbeat.EnvironmentOverride={HeartbeatEnv}",
+    string.IsNullOrWhiteSpace(loadedConfig.Server.ServerName) ? "(unset)" : loadedConfig.Server.ServerName,
+    string.IsNullOrWhiteSpace(loadedConfig.Modules.EventLog.ProviderNameOverride) ? "(unset)" : loadedConfig.Modules.EventLog.ProviderNameOverride,
+    string.IsNullOrWhiteSpace(loadedConfig.Modules.Metrics.ServerNameOverride) ? "(unset)" : loadedConfig.Modules.Metrics.ServerNameOverride,
+    string.IsNullOrWhiteSpace(loadedConfig.Modules.Heartbeat.ServerNameOverride) ? "(unset)" : loadedConfig.Modules.Heartbeat.ServerNameOverride,
+    string.IsNullOrWhiteSpace(loadedConfig.Modules.Heartbeat.EnvironmentOverride) ? "(unset)" : loadedConfig.Modules.Heartbeat.EnvironmentOverride);
+
 await host.RunAsync();
 
 static CollectorInstanceMode ResolveMode(string[] args)
