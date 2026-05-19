@@ -23,6 +23,7 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly CollectorLogSink _logSink;
     private readonly IOptionsMonitor<CollectorConfigDto> _configMonitor;
     private readonly ILogDbConnectionTester _connectionTester;
+    private readonly ILogDbServiceUrlResolver _serviceUrlResolver;
     private readonly ICollectorControlInspector _inspector;
     private readonly FirewallRuleApplier _firewallRuleApplier;
     private readonly IHostApplicationLifetime _hostLifetime;
@@ -36,6 +37,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         CollectorLogSink logSink,
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         ILogDbConnectionTester connectionTester,
+        ILogDbServiceUrlResolver serviceUrlResolver,
         ICollectorControlInspector inspector,
         FirewallRuleApplier firewallRuleApplier,
         IHostApplicationLifetime hostLifetime,
@@ -47,6 +49,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         _logSink = logSink;
         _configMonitor = configMonitor;
         _connectionTester = connectionTester;
+        _serviceUrlResolver = serviceUrlResolver;
         _inspector = inspector;
         _firewallRuleApplier = firewallRuleApplier;
         _hostLifetime = hostLifetime;
@@ -229,6 +232,30 @@ public sealed class NamedPipeControlServer : BackgroundService
                     Message = metricsPreview.Message,
                     PayloadJson = JsonSerializer.Serialize(metricsPreview, JsonOptions)
                 };
+
+            case ControlCommands.GetResolvedEndpoint:
+                try
+                {
+                    var resolved = await _serviceUrlResolver.ResolveAsync(_configMonitor.CurrentValue.LogDB, cancellationToken);
+                    return new ControlResponseDto
+                    {
+                        Success = true,
+                        Message = resolved,
+                        PayloadJson = JsonSerializer.Serialize(new ResolvedEndpointDto
+                        {
+                            Endpoint = resolved,
+                            ResolvedAtUtc = DateTime.UtcNow
+                        }, JsonOptions)
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new ControlResponseDto
+                    {
+                        Success = false,
+                        Message = $"Endpoint resolution failed: {ex.GetType().Name}: {ex.Message}"
+                    };
+                }
 
             case ControlCommands.ApplyFirewall:
                 return new ControlResponseDto

@@ -270,7 +270,7 @@ public sealed class LocalCollectorAdminClient
         return (validation.Success, validation.Message);
     }
 
-    public enum EndpointResolutionSource { Discovery, ServiceCache, None }
+    public enum EndpointResolutionSource { RunningService, Discovery, ServiceCache, None }
 
     /// <summary>
     /// Resolves the gRPC-logger URL for the current API key. Tries discovery first; if
@@ -284,6 +284,38 @@ public sealed class LocalCollectorAdminClient
         {
             DebugLog("ResolveGrpcLoggerEndpointAsync: no API key, skipping");
             return EndpointResolution.None;
+        }
+
+        // PREFERRED PATH: if a collector instance is running, ask it directly.
+        // This guarantees Test uses the same endpoint production is using —
+        // even when discovery is inconsistent / load-balanced across backends
+        // that disagree about the API key's mapping. Production-by-construction.
+        if (SelectedTarget != null)
+        {
+            DebugLog($"ResolveGrpcLoggerEndpointAsync: asking running service {SelectedTarget.Value} via control channel");
+            try
+            {
+                var response = await _controlClient.SendAsync(
+                    SelectedTarget.Value,
+                    ControlCommands.GetResolvedEndpoint,
+                    cancellationToken: cancellationToken);
+
+                if (response.Success && !string.IsNullOrWhiteSpace(response.PayloadJson))
+                {
+                    var payload = JsonSerializer.Deserialize<ResolvedEndpointDto>(response.PayloadJson, JsonOptions);
+                    if (payload is { Endpoint.Length: > 0 })
+                    {
+                        DebugLog($"ResolveGrpcLoggerEndpointAsync: service returned {payload.Endpoint} (resolved {payload.ResolvedAtUtc:O})");
+                        return new EndpointResolution(payload.Endpoint, EndpointResolutionSource.RunningService, payload.ResolvedAtUtc, null, null);
+                    }
+                }
+
+                DebugLog($"ResolveGrpcLoggerEndpointAsync: service responded but no usable endpoint (success={response.Success}, message={response.Message}) — falling back to local discovery");
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"ResolveGrpcLoggerEndpointAsync: control-channel call threw {ex.GetType().Name}: {ex.Message} — falling back to local discovery");
+            }
         }
 
         var discoveryUrl = _workingConfig.LogDB.DiscoveryUrl;

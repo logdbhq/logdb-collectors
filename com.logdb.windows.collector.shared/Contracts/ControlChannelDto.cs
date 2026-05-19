@@ -39,8 +39,20 @@ public static class ControlCommands
     public const string PreviewEventLogs = "preview-event-logs";
     public const string PreviewIisLogs = "preview-iis-logs";
     public const string PreviewMetrics = "preview-metrics";
+    public const string GetResolvedEndpoint = "get-resolved-endpoint";
 
     public const string ApplyFirewallRules = ApplyFirewall;
+}
+
+/// <summary>
+/// Payload returned by ControlCommands.GetResolvedEndpoint — lets the UI ask the
+/// service "what gRPC endpoint are you currently using?" instead of doing its own
+/// discovery call. Same endpoint = Test is guaranteed identical to production.
+/// </summary>
+public sealed class ResolvedEndpointDto
+{
+    public string Endpoint { get; set; } = string.Empty;
+    public DateTime ResolvedAtUtc { get; set; }
 }
 
 public static class ControlChannelDefaults
