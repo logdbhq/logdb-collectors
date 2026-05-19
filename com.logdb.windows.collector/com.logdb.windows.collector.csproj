@@ -12,9 +12,9 @@
          output exe with FileVersion 1.0.0.0 regardless of which tag we
          build from — making file-metadata checks meaningless and turning
          "is the binary actually updated" into a guessing game. -->
-    <Version>1.1.13</Version>
-    <AssemblyVersion>1.1.13.0</AssemblyVersion>
-    <FileVersion>1.1.13.0</FileVersion>
+    <Version>1.1.14</Version>
+    <AssemblyVersion>1.1.14.0</AssemblyVersion>
+    <FileVersion>1.1.14.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

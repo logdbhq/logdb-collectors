@@ -315,6 +315,15 @@
                                 <CheckBox Content="Include 4xx" IsChecked="{Binding IisInclude4xx}" />
                                 <CheckBox Content="Include 5xx" IsChecked="{Binding IisInclude5xx}" />
                                 <CheckBox Content="Exclude Static Files (.css, .js, .png, ...)" IsChecked="{Binding IisExcludeStaticFiles}" />
+
+                                <TextBlock FontWeight="SemiBold" Text="Server name override" Margin="0,8,0,0" />
+                                <TextBox Watermark="(use global Server name)"
+                                         Text="{Binding IisServerNameOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip.Tip="Optional Server name applied to every IIS row from this collector. Replaces Server:ServerName for the IIS module only — EventLog / Metrics / Heartbeat still use the global server name. Leave blank to inherit from the Destination page." />
+                                <TextBlock Classes="muted"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           Text="Used as the server identifier on every IIS row. Auto-saves on change." />
                             </StackPanel>
                         </Border>
                     </Grid>

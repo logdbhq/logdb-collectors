@@ -227,6 +227,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         nameof(IisInclude5xx),
         nameof(IisExcludeStaticFiles),
         nameof(IisPreviewCount),
+        nameof(IisServerNameOverride),
         nameof(MetricsEnabled),
         nameof(MetricsPollIntervalSeconds),
         nameof(MetricsCpu),
@@ -257,7 +258,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
     private static readonly HashSet<string> IisAutoApplyProperties = new(StringComparer.Ordinal)
     {
-        nameof(IisEnabled), nameof(IisInclude4xx), nameof(IisInclude5xx), nameof(IisExcludeStaticFiles)
+        nameof(IisEnabled), nameof(IisInclude4xx), nameof(IisInclude5xx), nameof(IisExcludeStaticFiles),
+        nameof(IisServerNameOverride)
     };
 
     private static readonly HashSet<string> MetricsAutoApplyProperties = new(StringComparer.Ordinal)
@@ -310,6 +312,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private string _iisValidationMessage = "-";
     private DateTime? _iisInitialStartDate;
     private bool _iisResumeFromLast = true;
+    private string _iisServerNameOverride = string.Empty;
     private IisFilterFieldOption _newIisFilterField = IisFilterFieldOption.All[0];
     private string _newIisFilterValue = string.Empty;
 
@@ -609,6 +612,16 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     {
         get => _iisExcludeStaticFiles;
         set => SetProperty(ref _iisExcludeStaticFiles, value);
+    }
+
+    /// <summary>
+    /// Optional Server name override applied to IIS rows only. Replaces
+    /// Server:ServerName for the IIS module. Blank = use global server name.
+    /// </summary>
+    public string IisServerNameOverride
+    {
+        get => _iisServerNameOverride;
+        set => SetProperty(ref _iisServerNameOverride, value ?? string.Empty);
     }
 
     public IisFilterFieldOption NewIisFilterField
@@ -976,6 +989,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             IisInclude4xx = iis.Include4xx;
             IisInclude5xx = iis.Include5xx;
             IisExcludeStaticFiles = iis.ExcludeStaticFiles;
+            IisServerNameOverride = iis.ServerNameOverride ?? string.Empty;
             IisResumeFromLast = !iis.ResetState && !iis.InitialStartDateUtc.HasValue;
             IisInitialStartDate = iis.InitialStartDateUtc.HasValue
                 ? iis.InitialStartDateUtc.Value
@@ -1113,6 +1127,9 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             .ToList();
         config.Modules.IIS.ResetState = !IisResumeFromLast;
         config.Modules.IIS.InitialStartDateUtc = IisResumeFromLast ? null : IisInitialStartDate;
+        config.Modules.IIS.ServerNameOverride = string.IsNullOrWhiteSpace(IisServerNameOverride)
+            ? null
+            : IisServerNameOverride.Trim();
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Message, result.Success);
@@ -1610,6 +1627,38 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
     private async Task SendTestLogAsync(string moduleName)
     {
+        // Avalonia's default TextBox.Text binding updates the VM on LostFocus, and
+        // OnDataSourcesPropertyChanged schedules an 800ms-debounced auto-apply.
+        // Clicking Test changes focus (so the VM gets the typed value), but the
+        // Test command runs immediately and the debounced auto-apply hasn't yet
+        // written the new value into the working config. Without forcing an
+        // Apply here, Test snapshots a stale working config and overrides typed
+        // moments ago (e.g. Server name override = windows.motivp.com) would
+        // silently get ignored — exact symptom observed in the field where the
+        // Test payload's host tag fell back to the global ServerName instead of
+        // the per-module override.
+        //
+        // Force-flush by invoking the module's Apply synchronously here.
+        // We swallow failures so a transient Apply error never blocks Test
+        // diagnosis — the Test will simply use whatever the working config
+        // already had.
+        try
+        {
+            Task applyTask = moduleName.ToLowerInvariant() switch
+            {
+                "eventlog"  => ApplyEventLogsAsync(),
+                "iis"       => ApplyIisAsync(),
+                "metrics"   => ApplyMetricsAsync(),
+                "heartbeat" => ApplyHeartbeatAsync(),
+                _           => Task.CompletedTask
+            };
+            await applyTask;
+        }
+        catch
+        {
+            // best-effort flush; never block Test on this
+        }
+
         using var session = _openTestReport?.Invoke(moduleName);
         var result = await _adminClient.SendTestLogAsync(moduleName, session?.Progress);
         _statusCallback(result.Message, result.Success);
@@ -1960,6 +2009,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             IisInclude5xx = IisInclude5xx,
             IisExcludeStaticFiles = IisExcludeStaticFiles,
             IisPreviewCount = IisPreviewCount,
+            IisServerNameOverride = IisServerNameOverride?.Trim() ?? string.Empty,
             IisFilterRules = IisFilterRules
                 .Where(r => !string.IsNullOrWhiteSpace(r.Value))
                 .Select(r => new WindowPlacementStore.IisFilterRuleDraftDto
@@ -2045,6 +2095,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         IisInclude5xx = draft.IisInclude5xx;
         IisExcludeStaticFiles = draft.IisExcludeStaticFiles;
         IisPreviewCount = Math.Clamp(draft.IisPreviewCount, 1, 50);
+        IisServerNameOverride = draft.IisServerNameOverride ?? string.Empty;
 
         IisDirectories.Clear();
         foreach (var path in draft.IisDirectories

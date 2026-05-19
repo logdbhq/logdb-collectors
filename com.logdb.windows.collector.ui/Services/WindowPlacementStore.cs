@@ -183,6 +183,7 @@ public static class WindowPlacementStore
         public bool IisInclude5xx { get; set; } = true;
         public bool IisExcludeStaticFiles { get; set; }
         public int IisPreviewCount { get; set; } = 20;
+        public string IisServerNameOverride { get; set; } = string.Empty;
         public List<IisFilterRuleDraftDto> IisFilterRules { get; set; } = new();
 
         public bool MetricsEnabled { get; set; } = true;

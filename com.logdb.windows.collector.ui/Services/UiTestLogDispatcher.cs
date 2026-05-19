@@ -239,10 +239,16 @@ internal sealed class UiTestLogDispatcher
         var (application, collection, label, _) = ResolveTarget(moduleName, config);
         var testMessage = $"Test log from {moduleName} tab — collector UI verification.";
 
-        // Per-module Server name override (currently used by Metrics). Falls back to
-        // the global Server:ServerName / Environment.MachineName.
+        // Per-module Server name overrides. Each module that has a
+        // ServerNameOverride field is resolved against its own DTO. Falls back
+        // to the global Server:ServerName / Environment.MachineName when
+        // unset. EventLog uses ProviderNameOverride (different concept) and
+        // is handled inline below.
         var metricsServerName = !string.IsNullOrWhiteSpace(config.Modules.Metrics.ServerNameOverride)
             ? config.Modules.Metrics.ServerNameOverride!.Trim()
+            : serverName;
+        var iisServerName = !string.IsNullOrWhiteSpace(config.Modules.IIS.ServerNameOverride)
+            ? config.Modules.IIS.ServerNameOverride!.Trim()
             : serverName;
 
         Log log = moduleName.ToLowerInvariant() switch
@@ -280,10 +286,10 @@ internal sealed class UiTestLogDispatcher
                 ClientIp = "127.0.0.1",
                 ServerIp = "127.0.0.1",
                 UserAgent = $"LogDB-Collector-UI-Test/{typeof(UiTestLogDispatcher).Assembly.GetName().Version}",
-                Host = serverName,
+                Host = iisServerName,
                 Port = 80,
                 SiteName = application,
-                ServerName = serverName
+                ServerName = iisServerName
             }.ToLog(),
 
             "metrics" => new LogWindowsMetric

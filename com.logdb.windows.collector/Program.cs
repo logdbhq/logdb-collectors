@@ -140,9 +140,10 @@ bootLogger.LogInformation(
 // honoring the override at runtime.
 var loadedConfig = host.Services.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<CollectorConfigDto>>().CurrentValue;
 bootLogger.LogInformation(
-    "Loaded config overrides | Server.ServerName={GlobalServer} | EventLog.ProviderNameOverride={EventLogProvider} | Metrics.ServerNameOverride={MetricsServer} | Heartbeat.ServerNameOverride={HeartbeatServer} | Heartbeat.EnvironmentOverride={HeartbeatEnv}",
+    "Loaded config overrides | Server.ServerName={GlobalServer} | EventLog.ProviderNameOverride={EventLogProvider} | IIS.ServerNameOverride={IisServer} | Metrics.ServerNameOverride={MetricsServer} | Heartbeat.ServerNameOverride={HeartbeatServer} | Heartbeat.EnvironmentOverride={HeartbeatEnv}",
     string.IsNullOrWhiteSpace(loadedConfig.Server.ServerName) ? "(unset)" : loadedConfig.Server.ServerName,
     string.IsNullOrWhiteSpace(loadedConfig.Modules.EventLog.ProviderNameOverride) ? "(unset)" : loadedConfig.Modules.EventLog.ProviderNameOverride,
+    string.IsNullOrWhiteSpace(loadedConfig.Modules.IIS.ServerNameOverride) ? "(unset)" : loadedConfig.Modules.IIS.ServerNameOverride,
     string.IsNullOrWhiteSpace(loadedConfig.Modules.Metrics.ServerNameOverride) ? "(unset)" : loadedConfig.Modules.Metrics.ServerNameOverride,
     string.IsNullOrWhiteSpace(loadedConfig.Modules.Heartbeat.ServerNameOverride) ? "(unset)" : loadedConfig.Modules.Heartbeat.ServerNameOverride,
     string.IsNullOrWhiteSpace(loadedConfig.Modules.Heartbeat.EnvironmentOverride) ? "(unset)" : loadedConfig.Modules.Heartbeat.EnvironmentOverride);

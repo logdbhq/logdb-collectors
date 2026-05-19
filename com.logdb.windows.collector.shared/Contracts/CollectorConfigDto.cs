@@ -101,6 +101,15 @@ public class IisModuleConfigDto : ModuleConfigDto
     public bool Include5xx { get; set; } = true;
     public bool ExcludeStaticFiles { get; set; }
     public List<IisFilterRuleDto> FilterRules { get; set; } = new();
+
+    /// <summary>
+    /// Optional Server name override applied to IIS log rows only. When set,
+    /// this value replaces the global Server:ServerName for the IIS module
+    /// (and the Test button). Useful for tagging which server / collector
+    /// instance the IIS access logs are coming from. Leave blank to use the
+    /// global server name from the Destination page.
+    /// </summary>
+    public string? ServerNameOverride { get; set; }
 }
 
 public class IisFilterRuleDto

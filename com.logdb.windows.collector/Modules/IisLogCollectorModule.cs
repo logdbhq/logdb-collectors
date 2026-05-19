@@ -58,6 +58,19 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
     protected override IHost BuildHost(CollectorConfigDto config, string endpoint)
     {
         var values = LegacyExporterConfigMapper.BuildIisConfig(config);
+
+        // Diagnostic: log the effective Server:ServerName the IIS child host
+        // will see, plus the raw config.Modules.IIS.ServerNameOverride value.
+        // If a user reports "Server name override ignored for IIS", this log
+        // line plus the boot banner pinpoints whether the override is in the
+        // loaded config or not.
+        values.TryGetValue("Server:ServerName", out var effectiveServer);
+        _logger.LogInformation(
+            "IIS module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} | config.Modules.IIS.ServerNameOverride={Override}",
+            endpoint,
+            string.IsNullOrWhiteSpace(effectiveServer) ? "(unset)" : effectiveServer,
+            string.IsNullOrWhiteSpace(config.Modules.IIS.ServerNameOverride) ? "(unset)" : config.Modules.IIS.ServerNameOverride);
+
         var builder = _moduleHostFactory.CreateBuilder(values);
 
         // Ephemeral client: every LogAsync rebuilds the inner gRPC channel,

@@ -71,6 +71,15 @@ internal static class LegacyExporterConfigMapper
         var values = BuildCommonValues(config);
         var module = config.Modules.IIS;
 
+        // Per-module Server name override. The IIS exporter reads
+        // Server:ServerName directly; rewriting the key here scopes the
+        // override to the IIS module — EventLog / Metrics / Heartbeat still
+        // see the global Server:ServerName.
+        if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
+        {
+            values["Server:ServerName"] = module.ServerNameOverride!.Trim();
+        }
+
         values["IIS:ExportIntervalMinutes"] = MinutesFromSeconds(module.PollIntervalSeconds).ToString();
         values["IIS:ApplicationName"] = "IIS";
         AddList(values, "IIS:LogPaths", module.LogDirectories);
