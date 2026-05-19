@@ -113,6 +113,25 @@ builder.Services.AddHostedService<RuntimeInfoPublisherService>();
 builder.Services.AddHostedService<NamedPipeControlServer>();
 
 var host = builder.Build();
+
+// Boot banner — written through the CollectorLoggerProvider, so it lands in
+// collector-YYYYMMDD.log the operator already reads. Independent of the .exe
+// FileVersion (which was wrong for half this codebase's life) — proves at
+// runtime what code is actually executing. Includes the in-source flags the
+// operator most often asks about during a postmortem.
+var bootLogger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("com.logdb.windows.collector.Boot");
+var bootAssembly = System.Reflection.Assembly.GetExecutingAssembly();
+var bootInformationalVersion = bootAssembly
+    .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+    .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+    .FirstOrDefault()?.InformationalVersion ?? "(no informational version)";
+var bootAssemblyVersion = bootAssembly.GetName().Version?.ToString() ?? "(no assembly version)";
+var bootExePath = Environment.ProcessPath ?? "(unknown)";
+var bootDefaultCompression = new BatchOptionsDto().EnableCompression;  // reflects current DTO default
+bootLogger.LogInformation(
+    "▼ LogDB Windows Collector starting | mode={Mode} | assemblyVersion={AsmVer} | informationalVersion={InfoVer} | exePath={ExePath} | batchOptionsDto.EnableCompression(default)={CompressionDefault} | IRuntimeEndpointStore=registered | EphemeralLogDbClient=registered-in-module-BuildHost",
+    runMode, bootAssemblyVersion, bootInformationalVersion, bootExePath, bootDefaultCompression);
+
 await host.RunAsync();
 
 static CollectorInstanceMode ResolveMode(string[] args)
