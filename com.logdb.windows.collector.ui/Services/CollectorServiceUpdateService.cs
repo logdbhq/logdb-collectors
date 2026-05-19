@@ -21,7 +21,10 @@ public sealed class ServiceUpdateCheckResult
 public sealed class CollectorServiceUpdateService
 {
     private const string TagPrefix = "win-col-v";
-    private const string DefaultReleasesApiUrl = "https://api.github.com/repos/vlapec/LogDB.Exporters/releases";
+    // Public collector repo — must match the same org/repo the release workflow
+    // uploads to. The Velopack auto-updater for the UI was fixed to this URL
+    // in 1.1.4; this one was missed and quietly 404'd until 1.1.11.
+    private const string DefaultReleasesApiUrl = "https://api.github.com/repos/logdbhq/logdb-collectors/releases";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly HttpClient _httpClient;
