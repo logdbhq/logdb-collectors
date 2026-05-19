@@ -41,6 +41,10 @@ public sealed class MainWindowViewModel : ObservableObject
     private bool _showApiKeyModal;
     private string _modalApiKey = string.Empty;
     private string _modalApiKeyError = string.Empty;
+    private bool _isTestReportOpen;
+    private string _testReportTitle = "Test Report";
+    private string _testReportSubtitle = string.Empty;
+    private bool _isTestReportRunning;
     private bool _toastVisible;
     private string _toastMessage = string.Empty;
     private string _toastColor = "#9ED29E";
@@ -60,8 +64,10 @@ public sealed class MainWindowViewModel : ObservableObject
         _adminClient = new LocalCollectorAdminClient();
         _updateService = new VelopackUpdateService();
 
+        TestReportSteps = new ObservableCollection<TestReportStep>();
+
         OverviewPage = new OverviewPageViewModel(_adminClient, OpenDiagnosticsAsync, SetStatus);
-        DataSourcesPage = new DataSourcesPageViewModel(_adminClient, SetStatus);
+        DataSourcesPage = new DataSourcesPageViewModel(_adminClient, SetStatus, OpenTestReport);
         DestinationPage = new DestinationPageViewModel(_adminClient, SetStatus);
         DiagnosticsPage = new DiagnosticsPageViewModel(_adminClient, SetStatus, _exportTextAsync, _copyToClipboardAsync);
         ServiceManagementPage = new ServiceManagementPageViewModel(_adminClient, SetStatus);
@@ -79,9 +85,9 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             dashboardNav,
             dataSourcesNav,
+            serviceNav,
             destinationNav,
             diagnosticsNav,
-            serviceNav,
             advancedNav
         };
 
@@ -119,6 +125,8 @@ public sealed class MainWindowViewModel : ObservableObject
         ControlCenterOpenDiagnosticsCommand = new AsyncRelayCommand(OpenDiagnosticsAsync);
         SaveModalApiKeyCommand = new AsyncRelayCommand(SaveModalApiKeyAsync);
         ExitFromApiKeyModalCommand = new RelayCommand(ExitFromApiKeyModal);
+        CloseTestReportCommand = new RelayCommand(CloseTestReport);
+        CopyTestReportCommand = new AsyncRelayCommand(CopyTestReportAsync);
     }
 
     public OverviewPageViewModel OverviewPage { get; }
@@ -342,6 +350,35 @@ public sealed class MainWindowViewModel : ObservableObject
     public AsyncRelayCommand SaveModalApiKeyCommand { get; }
     public RelayCommand ExitFromApiKeyModalCommand { get; }
 
+    public ObservableCollection<TestReportStep> TestReportSteps { get; }
+
+    public bool IsTestReportOpen
+    {
+        get => _isTestReportOpen;
+        set => SetProperty(ref _isTestReportOpen, value);
+    }
+
+    public string TestReportTitle
+    {
+        get => _testReportTitle;
+        set => SetProperty(ref _testReportTitle, value);
+    }
+
+    public string TestReportSubtitle
+    {
+        get => _testReportSubtitle;
+        set => SetProperty(ref _testReportSubtitle, value);
+    }
+
+    public bool IsTestReportRunning
+    {
+        get => _isTestReportRunning;
+        set => SetProperty(ref _isTestReportRunning, value);
+    }
+
+    public RelayCommand CloseTestReportCommand { get; }
+    public AsyncRelayCommand CopyTestReportCommand { get; }
+
     public Action? RequestShutdown { get; set; }
 
     public AsyncRelayCommand RefreshDiscoveryCommand { get; }
@@ -482,6 +519,49 @@ public sealed class MainWindowViewModel : ObservableObject
     private void CloseControlCenter()
     {
         IsControlCenterOpen = false;
+    }
+
+    /// <summary>
+    /// Opens the Test Report modal and returns a handle. The caller uses
+    /// <see cref="TestReportSession.Progress"/> to stream timeline steps as work
+    /// happens, then disposes the handle (idiomatically via `using`) so the
+    /// "Running" spinner flips off.
+    /// </summary>
+    private TestReportSession OpenTestReport(string moduleName)
+    {
+        TestReportTitle = $"Test — {moduleName}";
+        TestReportSubtitle = $"Ships one test record to verify {moduleName} ingestion end-to-end.";
+        TestReportSteps.Clear();
+        IsTestReportRunning = true;
+        IsTestReportOpen = true;
+        var progress = new Progress<TestReportStep>(step => TestReportSteps.Add(step));
+        return new TestReportSession(progress, () => IsTestReportRunning = false);
+    }
+
+    private void CloseTestReport()
+    {
+        IsTestReportOpen = false;
+        IsTestReportRunning = false;
+    }
+
+    private async Task CopyTestReportAsync()
+    {
+        if (TestReportSteps.Count == 0) return;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(TestReportTitle);
+        if (!string.IsNullOrWhiteSpace(TestReportSubtitle)) sb.AppendLine(TestReportSubtitle);
+        sb.AppendLine();
+        foreach (var step in TestReportSteps)
+        {
+            sb.Append('[').Append(step.StatusLabel).Append("] ").AppendLine(step.Title);
+            if (!string.IsNullOrWhiteSpace(step.Detail))
+            {
+                sb.AppendLine(step.Detail);
+            }
+            sb.AppendLine();
+        }
+        await _copyToClipboardAsync(sb.ToString());
+        SetStatus("Test report copied to clipboard.", true);
     }
 
     private async Task RefreshControlCenterAsync()

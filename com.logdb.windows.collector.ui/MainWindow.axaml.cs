@@ -24,8 +24,9 @@ public partial class MainWindow : Window
         InitializeComponent();
         _loadedWindowPlacement = WindowPlacementStore.LoadMainWindowPlacement();
         ApplyInitialSizeFromSettings(_loadedWindowPlacement);
-        ApplyTheme(true);
-        _viewModel = new MainWindowViewModel(ExportTextAsync, CopyToClipboardAsync, ApplyTheme, initialDarkTheme: true);
+        var initialDarkTheme = WindowPlacementStore.LoadIsDarkTheme(defaultValue: true);
+        ApplyTheme(initialDarkTheme);
+        _viewModel = new MainWindowViewModel(ExportTextAsync, CopyToClipboardAsync, ApplyThemeAndPersist, initialDarkTheme: initialDarkTheme);
         _viewModel.RequestShutdown = () => Close();
         DataContext = _viewModel;
         Opened += OnOpenedAsync;
@@ -103,6 +104,19 @@ public partial class MainWindow : Window
         }
 
         Application.Current.RequestedThemeVariant = isDark ? ThemeVariant.Dark : ThemeVariant.Light;
+    }
+
+    private static void ApplyThemeAndPersist(bool isDark)
+    {
+        ApplyTheme(isDark);
+        try
+        {
+            WindowPlacementStore.SaveIsDarkTheme(isDark);
+        }
+        catch
+        {
+            // Theme persistence is best-effort; never break the UI on a disk error.
+        }
     }
 
     private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)

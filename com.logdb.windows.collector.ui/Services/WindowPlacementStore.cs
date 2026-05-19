@@ -53,6 +53,25 @@ public static class WindowPlacementStore
         }
     }
 
+    public static bool LoadIsDarkTheme(bool defaultValue = true)
+    {
+        try
+        {
+            return LoadSettings()?.IsDarkTheme ?? defaultValue;
+        }
+        catch
+        {
+            return defaultValue;
+        }
+    }
+
+    public static void SaveIsDarkTheme(bool isDark)
+    {
+        var settings = LoadSettings() ?? new UserSettingsDto();
+        settings.IsDarkTheme = isDark;
+        SaveSettings(settings);
+    }
+
     public static DiagnosticsOnlineColumnsDto? LoadDiagnosticsOnlineColumns()
     {
         try
@@ -125,6 +144,7 @@ public static class WindowPlacementStore
         public MainWindowPlacementDto MainWindow { get; set; } = new();
         public DataSourcesDraftDto? DataSourcesDraft { get; set; }
         public DiagnosticsOnlineColumnsDto? DiagnosticsOnlineColumns { get; set; }
+        public bool? IsDarkTheme { get; set; }
     }
 
     public sealed class MainWindowPlacementDto
@@ -152,6 +172,8 @@ public static class WindowPlacementStore
         public bool LevelVerbose { get; set; }
         public int EventLogPreviewCount { get; set; } = 20;
         public List<string> CustomChannels { get; set; } = new();
+        public List<EventLogFilterRuleDraftDto> EventLogFilterRules { get; set; } = new();
+        public string EventLogProviderNameOverride { get; set; } = string.Empty;
 
         public bool IisEnabled { get; set; }
         public int IisPollIntervalSeconds { get; set; } = 60;
@@ -169,12 +191,33 @@ public static class WindowPlacementStore
         public bool MetricsMemory { get; set; } = true;
         public bool MetricsDisk { get; set; } = true;
         public bool MetricsNetwork { get; set; } = true;
+        public string MetricsServerNameOverride { get; set; } = string.Empty;
         public Dictionary<string, string> MetricTags { get; set; } = new();
+
+        public bool HeartbeatEnabled { get; set; }
+        public int HeartbeatPollIntervalSeconds { get; set; } = 60;
+        public string HeartbeatMeasurement { get; set; } = "heartbeat";
+        public string HeartbeatCollection { get; set; } = "beats";
+        public bool HeartbeatIncludeUptime { get; set; } = true;
+        public bool HeartbeatIncludeHostnameTag { get; set; } = true;
+        public bool HeartbeatIncludeAppVersionTag { get; set; }
+        public bool HeartbeatIncludeCpuPercent { get; set; }
+        public bool HeartbeatIncludeMemoryPercent { get; set; }
+        public string HeartbeatServerNameOverride { get; set; } = string.Empty;
+        public string HeartbeatEnvironmentOverride { get; set; } = string.Empty;
+        public Dictionary<string, string> HeartbeatTags { get; set; } = new();
 
         public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
     }
 
     public sealed class IisFilterRuleDraftDto
+    {
+        public string Field { get; set; } = string.Empty;
+        public string Value { get; set; } = string.Empty;
+        public bool Enabled { get; set; } = true;
+    }
+
+    public sealed class EventLogFilterRuleDraftDto
     {
         public string Field { get; set; } = string.Empty;
         public string Value { get; set; } = string.Empty;

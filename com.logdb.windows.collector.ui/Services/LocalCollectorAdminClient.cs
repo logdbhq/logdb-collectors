@@ -1,6 +1,7 @@
 using System.Text.Json;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.shared.Services;
+using com.logdb.windows.collector.ui.ViewModels;
 
 namespace com.logdb.windows.collector.ui.Services;
 
@@ -559,6 +560,50 @@ public sealed class LocalCollectorAdminClient
 
         var response = await _controlClient.SendAsync(SelectedTarget.Value, ControlCommands.DisableModule, $"\"{moduleName}\"", cancellationToken: cancellationToken);
         return (response.Success, response.Message ?? (response.Success ? $"{moduleName} disabled." : $"Failed to disable {moduleName}."));
+    }
+
+    public async Task<(bool Success, string Message)> SendTestLogAsync(
+        string moduleName,
+        IProgress<TestReportStep>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        // The Test buttons must work even when no collector instance is running, so we resolve
+        // the endpoint here in the UI process and ship the log directly via the SDK rather than
+        // routing through the named-pipe control server.
+        if (string.IsNullOrWhiteSpace(_apiKeySecret))
+        {
+            progress?.Report(new TestReportStep("Resolve API key", "no key set (configure on Destination page)", TestReportStepStatus.Fail));
+            return (false, "Test log: set the LogDB API key on the Destination page first.");
+        }
+
+        progress?.Report(new TestReportStep("Resolve discovery URL",
+            string.IsNullOrWhiteSpace(_workingConfig.LogDB.DiscoveryUrl) ? "(empty — will skip discovery)" : _workingConfig.LogDB.DiscoveryUrl!,
+            TestReportStepStatus.Info));
+
+        progress?.Report(new TestReportStep("Resolve gRPC endpoint", "calling discovery service…", TestReportStepStatus.Running));
+        var resolution = await ResolveGrpcLoggerEndpointAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(resolution.Endpoint))
+        {
+            var detail = resolution.LastError ?? "no discovery response and no cached endpoint";
+            progress?.Report(new TestReportStep("Resolve gRPC endpoint", $"failed — {detail}", TestReportStepStatus.Fail));
+            return (false, $"Test log: could not resolve gRPC endpoint ({detail}).");
+        }
+
+        progress?.Report(new TestReportStep("Resolve gRPC endpoint",
+            $"{resolution.Endpoint} (source={resolution.Source}, statusCode={resolution.LastDiscoveryStatusCode?.ToString() ?? "—"})",
+            TestReportStepStatus.Ok));
+
+        DebugLog($"SendTestLogAsync: module={moduleName} resolvedEndpoint={resolution.Endpoint} source={resolution.Source}");
+
+        // Use the current working config plus the freshly resolved endpoint and the secret API key.
+        var config = SnapshotWorkingConfig();
+        config.LogDB.ApiKey = _apiKeySecret;
+
+        var dispatcher = new UiTestLogDispatcher();
+        var result = await dispatcher.SendAsync(moduleName, config, resolution.Endpoint!, progress, cancellationToken);
+        DebugLog($"SendTestLogAsync: module={moduleName} success={result.Success} message={result.Message}");
+        return result;
     }
 
     public async Task<(bool Success, string Message)> ApplyFirewallAsync(CancellationToken cancellationToken = default)

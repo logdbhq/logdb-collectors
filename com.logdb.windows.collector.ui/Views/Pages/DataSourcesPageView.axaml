@@ -6,24 +6,52 @@
     <Grid>
         <TabControl Classes="standard-tabs">
             <TabItem Header="{Binding EventLogTabHeader}">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
                     <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
                         <CheckBox Content="Enabled" IsChecked="{Binding EventLogEnabled}" IsEnabled="{Binding EventLogConfigEditable}" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
                         <NumericUpDown Grid.Column="2" Width="140" Minimum="5" Maximum="3600" Value="{Binding EventLogPollIntervalSeconds}" IsEnabled="{Binding EventLogConfigEditable}" />
 
                         <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8">
-                            <Button Content="Validate Access" Command="{Binding ValidateEventLogsCommand}" />
-                            <Button Content="Preview" Command="{Binding PreviewEventLogsCommand}" />
-                            <TextBlock VerticalAlignment="Center" Text="N" />
-                            <NumericUpDown Width="130" Minimum="1" Maximum="50" Value="{Binding EventLogPreviewCount}" />
+                            <Button Content="Validate Access"
+                                    Command="{Binding ValidateEventLogsCommand}"
+                                    ToolTip.Tip="Check that the selected event-log channels can actually be read with the current process privileges." />
+                            <Button Content="Preview"
+                                    Command="{Binding PreviewEventLogsCommand}"
+                                    ToolTip.Tip="Read the last N entries from the selected channels without sending them — useful to verify the filter set." />
+                            <TextBlock VerticalAlignment="Center" Text="Last" />
+                            <NumericUpDown Width="130" Minimum="1" Maximum="50" Value="{Binding EventLogPreviewCount}" ToolTip.Tip="How many entries Preview will return (1–50)." />
+                            <Button Command="{Binding TestEventLogCommand}"
+                                    ToolTip.Tip="Ship one synthetic event-log entry end-to-end to LogDB. Opens the Test Report modal with each step (discovery → endpoint → payload → gRPC → result)."
+                                    MinWidth="80">
+                                <Panel>
+                                    <TextBlock Text="Test" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                               IsVisible="{Binding !TestEventLogCommand.IsRunning}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                IsVisible="{Binding TestEventLogCommand.IsRunning}">
+                                        <ProgressBar IsIndeterminate="True" Width="24" Height="3" VerticalAlignment="Center" />
+                                        <TextBlock Text="Sending…" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Panel>
+                            </Button>
                         </StackPanel>
 
                         <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
-                        <Button Grid.Column="6" Content="Pause" Command="{Binding PauseEventLogCommand}" IsVisible="{Binding !EventLogPaused}" ToolTip.Tip="Disable module on running collector" />
-                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeEventLogCommand}" IsVisible="{Binding EventLogPaused}" ToolTip.Tip="Enable module on running collector" />
+                        <Button Grid.Column="6" Content="Pause"
+                                Command="{Binding PauseEventLogCommand}"
+                                IsVisible="{Binding !EventLogPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Stop the EventLog module on the running collector (requires the service or console to be running)." />
+                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning"
+                                Command="{Binding ResumeEventLogCommand}"
+                                IsVisible="{Binding EventLogPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Re-enable the EventLog module on the running collector." />
                         <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding EventLogPaused}" />
-                        <Button Grid.Column="8" Classes="accent-success" Command="{Binding ApplyEventLogsCommand}" ToolTip.Tip="Manually apply settings" MinWidth="90">
+                        <Button Grid.Column="8" Classes="accent-success"
+                                Command="{Binding ApplyEventLogsCommand}"
+                                ToolTip.Tip="Save the EventLog settings to disk and (if a collector is running) push them live without restart."
+                                MinWidth="90">
                             <Panel>
                                 <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
                                            IsVisible="{Binding !ApplyEventLogsCommand.IsRunning}" />
@@ -52,8 +80,12 @@
                                 <TextBlock FontWeight="SemiBold" Text="Custom Channels" />
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <TextBox Width="260" Watermark="Custom channel name" Text="{Binding NewCustomChannel}" />
-                                    <Button Content="Add" Command="{Binding AddCustomChannelCommand}" />
-                                    <Button Content="Remove Selected" Command="{Binding RemoveCustomChannelCommand}" />
+                                    <Button Content="Add"
+                                            Command="{Binding AddCustomChannelCommand}"
+                                            ToolTip.Tip="Add the channel name on the left to the list of custom event-log channels." />
+                                    <Button Content="Remove Selected"
+                                            Command="{Binding RemoveCustomChannelCommand}"
+                                            ToolTip.Tip="Remove the selected custom channel from the list." />
                                 </StackPanel>
                                 <ListBox Height="120"
                                          ItemsSource="{Binding CustomChannels}"
@@ -87,13 +119,91 @@
                                 <CalendarDatePicker SelectedDate="{Binding EventLogInitialStartDate}" Width="220" Watermark="Pick a date..." />
                                 <TextBlock VerticalAlignment="Center" Classes="muted" Text="Clear date for full history." />
                             </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock VerticalAlignment="Center" Text="Provider name override" />
+                                <TextBox Width="280"
+                                         Watermark="(keep original Provider per event)"
+                                         Text="{Binding EventLogProviderNameOverride}"
+                                         ToolTip.Tip="Replace every ingested event's Provider (Source) with this value — applies to both real Windows events AND the Test button. Useful for tagging which server / collector the rows are coming from. The original Provider is preserved on each row as the 'original_provider' attribute. Leave blank to keep each event's actual Source." />
+                                <TextBlock VerticalAlignment="Center" Classes="muted"
+                                           Text="Applied to every event from this collector. Original Provider kept in 'original_provider' attribute." />
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
-                    <TextBlock Grid.Row="3" Text="{Binding EventLogValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+                    <Border Grid.Row="3" Classes="panel" Padding="8" IsEnabled="{Binding EventLogConfigEditable}">
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" Text="Skip Rules" />
+                                    <TextBlock Classes="muted" VerticalAlignment="Center"
+                                               Text="(any matching rule drops the event before it leaves the collector)" />
+                                </StackPanel>
+                                <Button Grid.Column="1"
+                                        Content="Clear All"
+                                        Command="{Binding ClearEventLogFilterRulesCommand}"
+                                        ToolTip.Tip="Remove every rule below." />
+                            </Grid>
 
-                    <TextBlock Grid.Row="4" Text="Preview" FontWeight="SemiBold" />
-                    <Border Grid.Row="5" Classes="panel">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="muted" VerticalAlignment="Center" Text="Presets:" />
+                                <Button Content="Security Audit Chatter"
+                                        Command="{Binding ApplyEventLogPresetSecurityAuditCommand}"
+                                        ToolTip.Tip="Drop high-volume Security audit events (4624, 4634, 4647, 4672)." />
+                                <Button Content="Service State Changes"
+                                        Command="{Binding ApplyEventLogPresetServiceStateCommand}"
+                                        ToolTip.Tip="Drop service start/stop events (7036, 7045)." />
+                                <Button Content="DCOM Noise"
+                                        Command="{Binding ApplyEventLogPresetDcomCommand}"
+                                        ToolTip.Tip="Drop noisy DCOM events (10016, 10010)." />
+                            </StackPanel>
+
+                            <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="6">
+                                <ComboBox HorizontalAlignment="Stretch"
+                                          ItemsSource="{Binding EventLogFilterFieldOptions}"
+                                          SelectedItem="{Binding NewEventLogFilterField}" />
+                                <TextBox Grid.Column="1"
+                                         Watermark="Value (e.g. 7036, MSSQL, 'access denied')"
+                                         Text="{Binding NewEventLogFilterValue}" />
+                                <Button Grid.Column="2"
+                                        Content="Add Rule"
+                                        Command="{Binding AddEventLogFilterRuleCommand}"
+                                        ToolTip.Tip="Add a skip rule from the field + value to the left. Any matching event will be dropped before it reaches LogDB." />
+                            </Grid>
+
+                            <Border Classes="panel" Padding="4">
+                                <ItemsControl ItemsSource="{Binding EventLogFilterRules}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="Auto,220,*,Auto" ColumnSpacing="8" Margin="4">
+                                                <CheckBox IsChecked="{Binding Enabled}"
+                                                          VerticalAlignment="Center"
+                                                          ToolTip.Tip="Disable this rule without deleting it" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding FieldDisplay}"
+                                                           VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding Value}"
+                                                           FontFamily="Consolas"
+                                                           VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <Button Grid.Column="3"
+                                                        Content="Remove"
+                                                        Command="{Binding $parent[ItemsControl].DataContext.RemoveEventLogFilterRuleCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip.Tip="Delete this skip rule. Use the checkbox to disable it temporarily instead." />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Grid.Row="4" Text="{Binding EventLogValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+
+                    <TextBlock Grid.Row="5" Text="Preview" FontWeight="SemiBold" />
+                    <Border Grid.Row="6" Classes="panel">
                         <dgrid:DataGrid ItemsSource="{Binding EventLogPreviewRows}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"
@@ -118,17 +228,45 @@
                         <NumericUpDown Grid.Column="2" Width="140" Minimum="5" Maximum="3600" Value="{Binding IisPollIntervalSeconds}" IsEnabled="{Binding IisConfigEditable}" />
 
                         <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8">
-                            <Button Content="Validate Directories" Command="{Binding ValidateIisCommand}" />
-                            <Button Content="Preview" Command="{Binding PreviewIisCommand}" />
-                            <TextBlock VerticalAlignment="Center" Text="N" />
-                            <NumericUpDown Width="130" Minimum="1" Maximum="50" Value="{Binding IisPreviewCount}" />
+                            <Button Content="Validate Directories"
+                                    Command="{Binding ValidateIisCommand}"
+                                    ToolTip.Tip="Check that each configured IIS log directory exists and is readable by the collector." />
+                            <Button Content="Preview"
+                                    Command="{Binding PreviewIisCommand}"
+                                    ToolTip.Tip="Read the last N IIS access-log entries from the most recent log file without sending — useful to verify the parser and filter set." />
+                            <TextBlock VerticalAlignment="Center" Text="Last" />
+                            <NumericUpDown Width="130" Minimum="1" Maximum="50" Value="{Binding IisPreviewCount}" ToolTip.Tip="How many entries Preview will return (1–50)." />
+                            <Button Command="{Binding TestIisCommand}"
+                                    ToolTip.Tip="Ship one synthetic IIS access-log entry end-to-end to LogDB. Opens the Test Report modal with each step (discovery → endpoint → payload → gRPC → result)."
+                                    MinWidth="80">
+                                <Panel>
+                                    <TextBlock Text="Test" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                               IsVisible="{Binding !TestIisCommand.IsRunning}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                IsVisible="{Binding TestIisCommand.IsRunning}">
+                                        <ProgressBar IsIndeterminate="True" Width="24" Height="3" VerticalAlignment="Center" />
+                                        <TextBlock Text="Sending…" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Panel>
+                            </Button>
                         </StackPanel>
 
                         <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
-                        <Button Grid.Column="6" Content="Pause" Command="{Binding PauseIisCommand}" IsVisible="{Binding !IisPaused}" ToolTip.Tip="Disable module on running collector" />
-                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeIisCommand}" IsVisible="{Binding IisPaused}" ToolTip.Tip="Enable module on running collector" />
+                        <Button Grid.Column="6" Content="Pause"
+                                Command="{Binding PauseIisCommand}"
+                                IsVisible="{Binding !IisPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Stop the IIS module on the running collector (requires the service or console to be running)." />
+                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning"
+                                Command="{Binding ResumeIisCommand}"
+                                IsVisible="{Binding IisPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Re-enable the IIS module on the running collector." />
                         <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding IisPaused}" />
-                        <Button Grid.Column="8" Classes="accent-success" Command="{Binding ApplyIisCommand}" ToolTip.Tip="Manually apply settings" MinWidth="90">
+                        <Button Grid.Column="8" Classes="accent-success"
+                                Command="{Binding ApplyIisCommand}"
+                                ToolTip.Tip="Save the IIS settings to disk and (if a collector is running) push them live without restart."
+                                MinWidth="90">
                             <Panel>
                                 <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
                                            IsVisible="{Binding !ApplyIisCommand.IsRunning}" />
@@ -147,9 +285,15 @@
                                 <TextBlock FontWeight="SemiBold" Text="Log Directories" />
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <TextBox Width="430" Watermark="C:\inetpub\logs\LogFiles" Text="{Binding NewIisDirectory}" />
-                                    <Button Content="Add" Command="{Binding AddIisDirectoryCommand}" />
-                                    <Button Content="Pick Folder" Click="OnPickFolderClick" />
-                                    <Button Content="Remove Selected" Command="{Binding RemoveIisDirectoryCommand}" />
+                                    <Button Content="Add"
+                                            Command="{Binding AddIisDirectoryCommand}"
+                                            ToolTip.Tip="Add the path on the left to the list of IIS log directories the collector should watch." />
+                                    <Button Content="Pick Folder"
+                                            Click="OnPickFolderClick"
+                                            ToolTip.Tip="Open a folder picker to choose an IIS log directory and add it to the list." />
+                                    <Button Content="Remove Selected"
+                                            Command="{Binding RemoveIisDirectoryCommand}"
+                                            ToolTip.Tip="Remove the selected directory from the watch list." />
                                 </StackPanel>
                                 <ListBox Height="140"
                                          ItemsSource="{Binding IisDirectories}"
@@ -217,7 +361,8 @@
                                          Text="{Binding NewIisFilterValue}" />
                                 <Button Grid.Column="2"
                                         Content="Add Rule"
-                                        Command="{Binding AddIisFilterRuleCommand}" />
+                                        Command="{Binding AddIisFilterRuleCommand}"
+                                        ToolTip.Tip="Add a skip rule from the field + value to the left. Any matching IIS entry will be dropped before it reaches LogDB." />
                             </Grid>
 
                             <Border Classes="panel" Padding="4">
@@ -238,8 +383,9 @@
                                                            TextTrimming="CharacterEllipsis" />
                                                 <Button Grid.Column="3"
                                                         Content="Remove"
-                                                        Command="{Binding $parent[ItemsControl].((vmPages:DataSourcesPageViewModel)DataContext).RemoveIisFilterRuleCommand}"
-                                                        CommandParameter="{Binding}" />
+                                                        Command="{Binding $parent[ItemsControl].DataContext.RemoveIisFilterRuleCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        ToolTip.Tip="Delete this skip rule. Use the checkbox to disable it temporarily instead." />
                                             </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -288,14 +434,40 @@
                         <NumericUpDown Grid.Column="2" Width="140" Minimum="5" Maximum="3600" Value="{Binding MetricsPollIntervalSeconds}" IsEnabled="{Binding MetricsConfigEditable}" />
 
                         <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8">
-                            <Button Content="Preview Snapshot" Command="{Binding PreviewMetricsCommand}" />
+                            <Button Content="Preview Snapshot"
+                                    Command="{Binding PreviewMetricsCommand}"
+                                    ToolTip.Tip="Sample the current values of CPU / memory / disk / network and display them below — without sending to LogDB." />
+                            <Button Command="{Binding TestMetricsCommand}"
+                                    ToolTip.Tip="Ship one synthetic CPU metric end-to-end to LogDB. Opens the Test Report modal with each step (discovery → endpoint → payload → gRPC → result)."
+                                    MinWidth="80">
+                                <Panel>
+                                    <TextBlock Text="Test" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                               IsVisible="{Binding !TestMetricsCommand.IsRunning}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                IsVisible="{Binding TestMetricsCommand.IsRunning}">
+                                        <ProgressBar IsIndeterminate="True" Width="24" Height="3" VerticalAlignment="Center" />
+                                        <TextBlock Text="Sending…" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Panel>
+                            </Button>
                         </StackPanel>
 
                         <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
-                        <Button Grid.Column="6" Content="Pause" Command="{Binding PauseMetricsCommand}" IsVisible="{Binding !MetricsPaused}" ToolTip.Tip="Disable module on running collector" />
-                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning" Command="{Binding ResumeMetricsCommand}" IsVisible="{Binding MetricsPaused}" ToolTip.Tip="Enable module on running collector" />
+                        <Button Grid.Column="6" Content="Pause"
+                                Command="{Binding PauseMetricsCommand}"
+                                IsVisible="{Binding !MetricsPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Stop the Metrics module on the running collector (requires the service or console to be running)." />
+                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning"
+                                Command="{Binding ResumeMetricsCommand}"
+                                IsVisible="{Binding MetricsPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Re-enable the Metrics module on the running collector." />
                         <TextBlock Grid.Column="7" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding MetricsPaused}" />
-                        <Button Grid.Column="8" Classes="accent-success" Command="{Binding ApplyMetricsCommand}" ToolTip.Tip="Manually apply settings" MinWidth="90">
+                        <Button Grid.Column="8" Classes="accent-success"
+                                Command="{Binding ApplyMetricsCommand}"
+                                ToolTip.Tip="Save the Metrics settings to disk and (if a collector is running) push them live without restart."
+                                MinWidth="90">
                             <Panel>
                                 <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
                                            IsVisible="{Binding !ApplyMetricsCommand.IsRunning}" />
@@ -316,6 +488,15 @@
                                 <CheckBox Content="Memory" IsChecked="{Binding MetricsMemory}" />
                                 <CheckBox Content="Disk" IsChecked="{Binding MetricsDisk}" />
                                 <CheckBox Content="Network" IsChecked="{Binding MetricsNetwork}" />
+
+                                <TextBlock FontWeight="SemiBold" Text="Server name override" Margin="0,8,0,0" />
+                                <TextBox Watermark="(use global Server name)"
+                                         Text="{Binding MetricsServerNameOverride}"
+                                         ToolTip.Tip="Optional Server name applied to every metric row from this collector. Replaces Server:ServerName for the WindowsTracker module only — EventLog / IIS still use the global server name. Leave blank to inherit from the Destination page." />
+                                <TextBlock Classes="muted"
+                                           FontSize="11"
+                                           TextWrapping="Wrap"
+                                           Text="Used as the server identifier on every metric. Auto-saves on change." />
                             </StackPanel>
                         </Border>
 
@@ -325,8 +506,12 @@
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <TextBox Width="180" Watermark="Key" Text="{Binding NewTagKey}" />
                                     <TextBox Width="220" Watermark="Value" Text="{Binding NewTagValue}" />
-                                    <Button Content="Add/Update" Command="{Binding AddTagCommand}" />
-                                    <Button Content="Remove Selected" Command="{Binding RemoveTagCommand}" />
+                                    <Button Content="Add/Update"
+                                            Command="{Binding AddTagCommand}"
+                                            ToolTip.Tip="Add the key=value pair to every metric sample, or update the value if the key already exists." />
+                                    <Button Content="Remove Selected"
+                                            Command="{Binding RemoveTagCommand}"
+                                            ToolTip.Tip="Remove the selected tag from the list." />
                                 </StackPanel>
                                 <ListBox Height="120" ItemsSource="{Binding MetricTags}" SelectedItem="{Binding SelectedTag}">
                                     <ListBox.ItemTemplate>
@@ -360,6 +545,123 @@
                 </Grid>
             </TabItem>
 
+            <TabItem Header="{Binding HeartbeatTabHeader}">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                        <CheckBox Content="Enabled" IsChecked="{Binding HeartbeatEnabled}" IsEnabled="{Binding HeartbeatConfigEditable}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
+                        <NumericUpDown Grid.Column="2" Width="140" Minimum="5" Maximum="3600" Value="{Binding HeartbeatPollIntervalSeconds}" IsEnabled="{Binding HeartbeatConfigEditable}" />
+
+                        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
+                            <Button Command="{Binding TestHeartbeatCommand}"
+                                    ToolTip.Tip="Ship one synthetic LogBeat end-to-end to LogDB. Opens the Test Report modal with each step (discovery → endpoint → payload → gRPC → result)."
+                                    MinWidth="80">
+                                <Panel>
+                                    <TextBlock Text="Test" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                               IsVisible="{Binding !TestHeartbeatCommand.IsRunning}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                IsVisible="{Binding TestHeartbeatCommand.IsRunning}">
+                                        <ProgressBar IsIndeterminate="True" Width="24" Height="3" VerticalAlignment="Center" />
+                                        <TextBlock Text="Sending…" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Panel>
+                            </Button>
+                        </StackPanel>
+
+                        <Border Grid.Column="4" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
+                        <Button Grid.Column="5" Content="Pause"
+                                Command="{Binding PauseHeartbeatCommand}"
+                                IsVisible="{Binding !HeartbeatPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Stop the Heartbeat module on the running collector (requires the service or console to be running)." />
+                        <Button Grid.Column="5" Content="Resume" Classes="accent-warning"
+                                Command="{Binding ResumeHeartbeatCommand}"
+                                IsVisible="{Binding HeartbeatPaused}"
+                                IsEnabled="{Binding CollectorConnected}"
+                                ToolTip.Tip="Re-enable the Heartbeat module on the running collector." />
+                        <TextBlock Grid.Column="6" VerticalAlignment="Center" Text="PAUSED" Foreground="Orange" FontWeight="Bold" IsVisible="{Binding HeartbeatPaused}" />
+                        <Button Grid.Column="7" Classes="accent-success"
+                                Command="{Binding ApplyHeartbeatCommand}"
+                                ToolTip.Tip="Save the Heartbeat settings to disk and (if a collector is running) push them live without restart."
+                                MinWidth="90">
+                            <Panel>
+                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                           IsVisible="{Binding !ApplyHeartbeatCommand.IsRunning}" />
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            IsVisible="{Binding ApplyHeartbeatCommand.IsRunning}">
+                                    <ProgressBar IsIndeterminate="True" Width="30" Height="3" VerticalAlignment="Center" />
+                                    <TextBlock Text="Applying…" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Panel>
+                        </Button>
+                    </Grid>
+
+                    <TextBlock Grid.Row="1" Classes="muted" TextWrapping="Wrap"
+                               Text="Emits a periodic LogBeat record to the log_beats time-series table. Each beat carries one measurement in a collection, plus user-selected fields and custom tags." />
+
+                    <Grid Grid.Row="2" ColumnDefinitions="1.2*,1.4*,2*" ColumnSpacing="10" IsEnabled="{Binding HeartbeatConfigEditable}">
+                        <Border Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Identity" />
+                                <TextBlock Text="Measurement" Classes="muted" />
+                                <TextBox Watermark="heartbeat"
+                                         Text="{Binding HeartbeatMeasurement}"
+                                         ToolTip.Tip="The InfluxDB-style measurement name written to log_beats. Default: heartbeat." />
+                                <TextBlock Text="Collection" Classes="muted" />
+                                <TextBox Watermark="beats"
+                                         Text="{Binding HeartbeatCollection}"
+                                         ToolTip.Tip="Collection (tenant/group) the beat belongs to in LogDB. Default: beats." />
+                                <TextBlock Text="Server name override" Classes="muted" Margin="0,4,0,0" />
+                                <TextBox Watermark="(use global Server name)"
+                                         Text="{Binding HeartbeatServerNameOverride}"
+                                         ToolTip.Tip="Optional Server name used for the 'host' tag on every beat (and the Heartbeat Test). Replaces Server:ServerName for this module only. Leave blank to use the global server name from Destination." />
+                                <TextBlock Text="Environment override" Classes="muted" />
+                                <TextBox Watermark="(use global Environment)"
+                                         Text="{Binding HeartbeatEnvironmentOverride}"
+                                         ToolTip.Tip="Optional Environment set on every emitted beat (and the Heartbeat Test). Replaces LogDB:DefaultEnvironment for this module only. Leave blank to use the global Environment." />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Fields to send" />
+                                <CheckBox Content="Uptime (field: uptime_seconds)" IsChecked="{Binding HeartbeatIncludeUptime}" />
+                                <CheckBox Content="Hostname (tag: host)" IsChecked="{Binding HeartbeatIncludeHostnameTag}" />
+                                <CheckBox Content="App version (tag: app_version)" IsChecked="{Binding HeartbeatIncludeAppVersionTag}" />
+                                <CheckBox Content="CPU snapshot (field: cpu_percent)" IsChecked="{Binding HeartbeatIncludeCpuPercent}" />
+                                <CheckBox Content="Memory snapshot (field: memory_percent)" IsChecked="{Binding HeartbeatIncludeMemoryPercent}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2" Classes="panel" Padding="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock FontWeight="SemiBold" Text="Custom tags" />
+                                <Grid ColumnDefinitions="*,*,Auto,Auto" ColumnSpacing="6">
+                                    <TextBox Grid.Column="0" Watermark="Key" Text="{Binding NewHeartbeatTagKey}" />
+                                    <TextBox Grid.Column="1" Watermark="Value" Text="{Binding NewHeartbeatTagValue}" />
+                                    <Button Grid.Column="2" Content="Add/Update"
+                                            Command="{Binding AddHeartbeatTagCommand}"
+                                            ToolTip.Tip="Add the key=value pair to every beat sent, or update the value if the key already exists." />
+                                    <Button Grid.Column="3" Content="Remove Selected"
+                                            Command="{Binding RemoveHeartbeatTagCommand}"
+                                            ToolTip.Tip="Remove the selected tag from the list." />
+                                </Grid>
+                                <ListBox Height="160" ItemsSource="{Binding HeartbeatTags}" SelectedItem="{Binding SelectedHeartbeatTag}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="160,*">
+                                                <TextBlock Text="{Binding Key}" />
+                                                <TextBlock Grid.Column="1" Text="{Binding Value}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
             <TabItem Header="Firewall">
                 <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
                     <Border Classes="panel">
@@ -372,7 +674,9 @@
                     </Border>
 
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-                        <Button Content="Refresh Firewall History" Command="{Binding RefreshFirewallHistoryCommand}" />
+                        <Button Content="Refresh Firewall History"
+                                Command="{Binding RefreshFirewallHistoryCommand}"
+                                ToolTip.Tip="Pull the latest firewall apply / remove diagnostic entries from the running collector and rebuild the table below." />
                         <TextBlock VerticalAlignment="Center"
                                    Classes="muted"
                                    Text="History is derived from local collector diagnostics." />

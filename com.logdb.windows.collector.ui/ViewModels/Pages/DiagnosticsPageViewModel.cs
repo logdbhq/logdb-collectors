@@ -13,6 +13,7 @@ public sealed class OnlineDiagnosticRowViewModel
     private static readonly IBrush EventLogBrush = new SolidColorBrush(Color.Parse("#81C784"));
     private static readonly IBrush IisBrush = new SolidColorBrush(Color.Parse("#4FC3F7"));
     private static readonly IBrush MetricsBrush = new SolidColorBrush(Color.Parse("#FFB74D"));
+    private static readonly IBrush HeartbeatBrush = new SolidColorBrush(Color.Parse("#BA68C8"));
 
     public string TimeLocal { get; set; } = string.Empty;
     public string Level { get; set; } = string.Empty;
@@ -32,6 +33,8 @@ public sealed class OnlineDiagnosticRowViewModel
             return ("IIS", IisBrush);
         if (category.Contains(".tracker.", StringComparison.OrdinalIgnoreCase))
             return ("Metrics", MetricsBrush);
+        if (category.Contains("Heartbeat", StringComparison.OrdinalIgnoreCase))
+            return ("Heartbeat", HeartbeatBrush);
 
         var shortName = category.Contains('.') ? category[(category.LastIndexOf('.') + 1)..] : category;
         return (shortName, null);
@@ -80,7 +83,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     private readonly List<OnlineDiagnosticRowViewModel> _allOnlineRows = new();
     private static readonly HashSet<string> KnownModules = new(StringComparer.OrdinalIgnoreCase)
     {
-        "EventLog", "IIS", "Metrics"
+        "EventLog", "IIS", "Metrics", "Heartbeat"
     };
 
     public const string OnlineModuleFilterAll = "(All)";
@@ -104,6 +107,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
             new("EventLog", OnFilterSelectionChanged),
             new("IIS", OnFilterSelectionChanged),
             new("Metrics", OnFilterSelectionChanged),
+            new("Heartbeat", OnFilterSelectionChanged),
             new(OnlineModuleFilterOther, OnFilterSelectionChanged)
         };
 

@@ -14,9 +14,6 @@ public sealed class DestinationPageViewModel : PageViewModelBase
     private string _endpoint = string.Empty;
     private string _discoveryUrl = string.Empty;
     private string _protocol = "Native";
-    private string _defaultApplication = "LogDB Collector";
-    private string _defaultEnvironment = "Production";
-    private string _defaultCollection = "windows";
     private string _validationMessage = "-";
     private string _customerName = string.Empty;
     private string _resolvedEndpointDisplay = "Not resolved yet.";
@@ -107,24 +104,6 @@ public sealed class DestinationPageViewModel : PageViewModelBase
 
     public IReadOnlyList<string> ProtocolOptions { get; } = new[] { "Native", "OpenTelemetry", "Rest" };
 
-    public string DefaultApplication
-    {
-        get => _defaultApplication;
-        set => SetProperty(ref _defaultApplication, value);
-    }
-
-    public string DefaultEnvironment
-    {
-        get => _defaultEnvironment;
-        set => SetProperty(ref _defaultEnvironment, value);
-    }
-
-    public string DefaultCollection
-    {
-        get => _defaultCollection;
-        set => SetProperty(ref _defaultCollection, value);
-    }
-
     public string ValidationMessage
     {
         get => _validationMessage;
@@ -183,15 +162,6 @@ public sealed class DestinationPageViewModel : PageViewModelBase
         Endpoint = config.LogDB.Endpoint ?? string.Empty;
         DiscoveryUrl = config.LogDB.DiscoveryUrl ?? string.Empty;
         Protocol = string.IsNullOrWhiteSpace(config.LogDB.Protocol) ? "Native" : config.LogDB.Protocol;
-        DefaultApplication = string.IsNullOrWhiteSpace(config.LogDB.DefaultApplication)
-            ? "LogDB Collector"
-            : config.LogDB.DefaultApplication;
-        DefaultEnvironment = string.IsNullOrWhiteSpace(config.LogDB.DefaultEnvironment)
-            ? "Production"
-            : config.LogDB.DefaultEnvironment;
-        DefaultCollection = string.IsNullOrWhiteSpace(config.LogDB.DefaultCollection)
-            ? "windows"
-            : config.LogDB.DefaultCollection;
 
         ApiKeySaved = _adminClient.HasApiKey;
         if (!IsReplacingApiKey)
@@ -287,9 +257,6 @@ public sealed class DestinationPageViewModel : PageViewModelBase
         config.LogDB.Endpoint = string.IsNullOrWhiteSpace(Endpoint) ? null : Endpoint.Trim();
         config.LogDB.DiscoveryUrl = string.IsNullOrWhiteSpace(DiscoveryUrl) ? null : DiscoveryUrl.Trim();
         config.LogDB.Protocol = string.IsNullOrWhiteSpace(Protocol) ? "Native" : Protocol.Trim();
-        config.LogDB.DefaultApplication = DefaultApplication.Trim();
-        config.LogDB.DefaultEnvironment = DefaultEnvironment.Trim();
-        config.LogDB.DefaultCollection = DefaultCollection.Trim();
 
         var apply = await _adminClient.ApplyConfigAsync(config, replacementApiKey: null);
         _statusCallback(apply.Message, apply.Success);
@@ -362,21 +329,6 @@ public sealed class DestinationPageViewModel : PageViewModelBase
         if (!ApiKeySaved)
         {
             return "API key is required. Click Replace Key and save it first.";
-        }
-
-        if (string.IsNullOrWhiteSpace(DefaultApplication))
-        {
-            return "Default Application is required.";
-        }
-
-        if (string.IsNullOrWhiteSpace(DefaultEnvironment))
-        {
-            return "Default Environment is required.";
-        }
-
-        if (string.IsNullOrWhiteSpace(DefaultCollection))
-        {
-            return "Default Collection is required.";
         }
 
         return string.Empty;

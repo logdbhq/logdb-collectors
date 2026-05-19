@@ -1,7 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.DestinationPageView">
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="10">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="10">
         <Border Classes="panel">
             <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                 <TextBlock Text="API Key" VerticalAlignment="Center" />
@@ -71,20 +71,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="2" Classes="panel">
-            <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
-                <TextBlock Text="Default Application" VerticalAlignment="Center" />
-                <TextBox Grid.Column="1" Text="{Binding DefaultApplication}" />
-
-                <TextBlock Grid.Row="1" Text="Default Environment" VerticalAlignment="Center" />
-                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding DefaultEnvironment}" />
-
-                <TextBlock Grid.Row="2" Text="Default Collection" VerticalAlignment="Center" />
-                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding DefaultCollection}" />
-            </Grid>
-        </Border>
-
-        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
             <Button Command="{Binding SaveCommand}"
                     IsEnabled="{Binding CanSaveDestinationSettings}"
                     MinWidth="200">
@@ -119,6 +106,6 @@
             </Button>
         </StackPanel>
 
-        <TextBlock Grid.Row="4" Text="{Binding ValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+        <TextBlock Grid.Row="3" Text="{Binding ValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
     </Grid>
 </UserControl>

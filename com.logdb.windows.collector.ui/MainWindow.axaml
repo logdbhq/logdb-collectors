@@ -377,6 +377,86 @@
         </Border>
         </Grid>
 
+        <!-- Test Report modal: live timeline of what the Test button is doing.
+             Mirrors the API-Key modal pattern: full-screen dim backdrop + centered
+             frosted card. ZIndex sits above the Control Center but below the API
+             Key modal so a missing key still takes priority. -->
+        <Grid Grid.RowSpan="3"
+              IsVisible="{Binding IsTestReportOpen}"
+              ZIndex="80">
+            <Border Background="#99000000"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch" />
+
+            <Border Classes="detail-panel"
+                    Width="720"
+                    MaxHeight="640"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Padding="20">
+                <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="12">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{Binding TestReportTitle}" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="{Binding TestReportSubtitle}"
+                                       Classes="muted"
+                                       FontSize="11"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Top"
+                                    IsVisible="{Binding IsTestReportRunning}">
+                            <ProgressBar IsIndeterminate="True" Width="60" Height="3" VerticalAlignment="Center" />
+                            <TextBlock Text="Running…" VerticalAlignment="Center" Classes="muted" FontSize="11" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Grid.Row="1"
+                               Text="Each step shows what the test attempted and what came back. Use 'Copy Report' to share the timeline."
+                               Classes="muted"
+                               FontSize="11"
+                               TextWrapping="Wrap" />
+
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding TestReportSteps}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Classes="card" Padding="10" Margin="0,0,0,6">
+                                        <Grid ColumnDefinitions="28,*" RowDefinitions="Auto,Auto">
+                                            <TextBlock Text="{Binding StatusIcon}"
+                                                       FontSize="18"
+                                                       FontWeight="Bold"
+                                                       Foreground="{Binding StatusBrush}"
+                                                       VerticalAlignment="Top" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Title}"
+                                                       FontWeight="SemiBold"
+                                                       TextWrapping="Wrap" />
+                                            <TextBlock Grid.Row="1" Grid.Column="1"
+                                                       Text="{Binding Detail}"
+                                                       Classes="muted"
+                                                       FontFamily="Consolas, Menlo, 'Courier New', monospace"
+                                                       FontSize="11"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,4,0,0" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                        <Button Content="Copy Report"
+                                Command="{Binding CopyTestReportCommand}"
+                                ToolTip.Tip="Copy the full timeline (steps + details) to the clipboard for sharing." />
+                        <Button Grid.Column="2"
+                                Content="Close"
+                                Command="{Binding CloseTestReportCommand}" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+
         <Border Grid.RowSpan="3"
                 Background="#CC000000"
                 IsVisible="{Binding ShowApiKeyModal}"

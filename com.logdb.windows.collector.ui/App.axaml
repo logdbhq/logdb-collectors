@@ -374,6 +374,17 @@
             <Setter Property="BorderBrush" Value="{DynamicResource ThemeAccentSecondary}" />
             <Setter Property="BorderThickness" Value="0,0,0,3" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <!-- FluentTheme adds TextDecorations="Underline" on the selected tab's text
+                 (visible as a thin underline right under the letters) which collides
+                 with our thick bottom-border accent bar. Force decorations off. -->
+            <Setter Property="TextBlock.TextDecorations" Value="{x:Null}" />
+        </Style>
+
+        <!-- FluentTheme renders its own selection pipe (Border#PART_SelectedPipe)
+             at the bottom of selected TabItems. Hide it so only our 3px accent
+             border above shows up. -->
+        <Style Selector="TabControl.standard-tabs TabItem /template/ Border#PART_SelectedPipe">
+            <Setter Property="IsVisible" Value="False" />
         </Style>
 
         <Style Selector="ListBox.sidebarNav">
