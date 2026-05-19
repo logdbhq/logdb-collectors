@@ -36,7 +36,12 @@ public class BatchOptionsDto
     public bool EnableBatching { get; set; } = false;
     public int BatchSize { get; set; } = 100;
     public int FlushIntervalSeconds { get; set; } = 5;
-    public bool EnableCompression { get; set; } = true;
+    // Default to uncompressed: many self-hosted LogDB deployments don't fully
+    // implement the SendCompressedLog* RPCs and silently drop rows even though
+    // the gRPC call returns Success. The plain Log / LogBeat handlers are
+    // universally supported. Users on a deployment with working compression
+    // can flip this back to true via the Advanced JSON editor.
+    public bool EnableCompression { get; set; } = false;
 }
 
 public class ModulesConfigDto

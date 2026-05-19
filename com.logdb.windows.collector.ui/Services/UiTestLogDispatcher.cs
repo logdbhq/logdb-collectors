@@ -67,21 +67,19 @@ internal sealed class UiTestLogDispatcher
             Emit(progress, "Endpoint check", serviceUrl, TestReportStepStatus.Ok);
         }
 
-        // Force EnableCompression=false for Test so we exercise the plain Log / LogBeat RPCs
-        // on the server. If the user's deployment routes /Log differently than
-        // /SendCompressedLog, this isolates that. The compression default of the running
-        // modules is unchanged.
-        var testConfig = CloneWithCompressionOff(config);
-        var compressionInUse = testConfig.LogDB.Batch.EnableCompression;
+        // Surface the actual compression setting so test results match production
+        // behavior. (Previously Test forced uncompressed for diagnostic isolation, but
+        // that hid production silent-drop bugs caused by broken SendCompressedLog
+        // handlers — now Test uses whatever the user has configured.)
+        var compressionInUse = config.LogDB.Batch.EnableCompression;
         Emit(progress, "Compression mode",
             compressionInUse
                 ? "compression=ON → gRPC method: SendCompressedLog / SendCompressedLogBeat"
-                : "compression=OFF (forced for Test) → gRPC method: Log / LogBeat",
+                : "compression=OFF → gRPC method: Log / LogBeat",
             TestReportStepStatus.Info);
 
         using var capture = new CapturingLoggerFactory();
-        var client = UiLogDbClientFactory.Create(testConfig.LogDB, serviceUrl, capture);
-        config = testConfig;
+        var client = UiLogDbClientFactory.Create(config.LogDB, serviceUrl, capture);
 
         try
         {
@@ -184,41 +182,6 @@ internal sealed class UiTestLogDispatcher
 
     private static bool IsHeartbeat(string moduleName) =>
         moduleName.Equals("Heartbeat", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>
-    /// Returns a shallow clone of the config with Batch.EnableCompression forced to false.
-    /// Test uses the uncompressed gRPC path so the user can isolate whether
-    /// SendCompressedLog handler vs Log handler is broken server-side. The running
-    /// modules still use whatever compression the config says.
-    /// </summary>
-    private static CollectorConfigDto CloneWithCompressionOff(CollectorConfigDto config)
-    {
-        return new CollectorConfigDto
-        {
-            LogDB = new LogDbConfigDto
-            {
-                ApiKey = config.LogDB.ApiKey,
-                Endpoint = config.LogDB.Endpoint,
-                DiscoveryUrl = config.LogDB.DiscoveryUrl,
-                Protocol = config.LogDB.Protocol,
-                Retry = new RetryOptionsDto
-                {
-                    MaxRetries = config.LogDB.Retry.MaxRetries,
-                    EnableCircuitBreaker = config.LogDB.Retry.EnableCircuitBreaker
-                },
-                Batch = new BatchOptionsDto
-                {
-                    EnableBatching = false,
-                    BatchSize = config.LogDB.Batch.BatchSize,
-                    FlushIntervalSeconds = config.LogDB.Batch.FlushIntervalSeconds,
-                    EnableCompression = false
-                }
-            },
-            Modules = config.Modules,
-            Firewall = config.Firewall,
-            Server = config.Server
-        };
-    }
 
     private static string Mask(string apiKey)
     {
