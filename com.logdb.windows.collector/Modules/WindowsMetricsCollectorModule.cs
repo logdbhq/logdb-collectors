@@ -16,11 +16,11 @@ public sealed class WindowsMetricsCollectorModule : ExporterModuleBase
     public WindowsMetricsCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
-        ILogDbServiceUrlResolver serviceUrlResolver,
+        IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         ILogger<WindowsMetricsCollectorModule> logger)
-        : base("Metrics", configMonitor, statusRegistry, serviceUrlResolver, logger)
+        : base("Metrics", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;

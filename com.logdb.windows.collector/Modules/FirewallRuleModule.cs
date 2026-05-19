@@ -11,7 +11,7 @@ public sealed class FirewallRuleModule : BackgroundService
     private readonly IOptionsMonitor<CollectorConfigDto> _configMonitor;
     private readonly CollectorStatusRegistry _statusRegistry;
     private readonly FirewallRuleApplier _firewallRuleApplier;
-    private readonly ILogDbServiceUrlResolver _serviceUrlResolver;
+    private readonly IRuntimeEndpointStore _endpointStore;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<FirewallRuleModule> _logger;
 
@@ -19,14 +19,14 @@ public sealed class FirewallRuleModule : BackgroundService
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
         FirewallRuleApplier firewallRuleApplier,
-        ILogDbServiceUrlResolver serviceUrlResolver,
+        IRuntimeEndpointStore endpointStore,
         IHttpClientFactory httpClientFactory,
         ILogger<FirewallRuleModule> logger)
     {
         _configMonitor = configMonitor;
         _statusRegistry = statusRegistry;
         _firewallRuleApplier = firewallRuleApplier;
-        _serviceUrlResolver = serviceUrlResolver;
+        _endpointStore = endpointStore;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
@@ -59,7 +59,7 @@ public sealed class FirewallRuleModule : BackgroundService
                     continue;
                 }
 
-                var baseUrl = await _serviceUrlResolver.ResolveAsync(config.LogDB, stoppingToken);
+                var baseUrl = await _endpointStore.GetEndpointAsync(stoppingToken);
                 var blockedIps = await FetchBlockedIpsAsync(baseUrl, apiKey, stoppingToken);
 
                 var result = await _firewallRuleApplier.SyncAsync(config.Firewall, blockedIps, stoppingToken);

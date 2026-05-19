@@ -16,11 +16,11 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     public EventLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
-        ILogDbServiceUrlResolver serviceUrlResolver,
+        IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         ILogger<EventLogCollectorModule> logger)
-        : base("EventLog", configMonitor, statusRegistry, serviceUrlResolver, logger)
+        : base("EventLog", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;

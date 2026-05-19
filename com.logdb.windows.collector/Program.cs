@@ -97,6 +97,7 @@ builder.Services.AddSingleton<CollectorStatusRegistry>(_ => new CollectorStatusR
     runtimeContext.ProcessId,
     runtimeContext.ServiceName));
 builder.Services.AddSingleton<ILogDbServiceUrlResolver, LogDbServiceUrlResolver>();
+builder.Services.AddSingleton<IRuntimeEndpointStore, RuntimeEndpointStore>();
 builder.Services.AddSingleton<ILogDbConnectionTester, LogDbConnectionTester>();
 builder.Services.AddSingleton<ICollectorControlInspector, CollectorControlInspector>();
 builder.Services.AddSingleton<FirewallRuleApplier>();

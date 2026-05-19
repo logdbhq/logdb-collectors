@@ -14,20 +14,20 @@ public abstract class ExporterModuleBase : BackgroundService
 
     private readonly IOptionsMonitor<CollectorConfigDto> _configMonitor;
     private readonly CollectorStatusRegistry _statusRegistry;
-    private readonly ILogDbServiceUrlResolver _serviceUrlResolver;
+    private readonly IRuntimeEndpointStore _endpointStore;
     private readonly ILogger _logger;
 
     protected ExporterModuleBase(
         string moduleName,
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
-        ILogDbServiceUrlResolver serviceUrlResolver,
+        IRuntimeEndpointStore endpointStore,
         ILogger logger)
     {
         _moduleName = moduleName;
         _configMonitor = configMonitor;
         _statusRegistry = statusRegistry;
-        _serviceUrlResolver = serviceUrlResolver;
+        _endpointStore = endpointStore;
         _logger = logger;
     }
 
@@ -50,7 +50,12 @@ public abstract class ExporterModuleBase : BackgroundService
 
             try
             {
-                var endpoint = await _serviceUrlResolver.ResolveAsync(currentConfig.LogDB, stoppingToken);
+                // All modules read the same locked-in endpoint from the store.
+                // Resolves discovery exactly once per service process (or once
+                // per ApiKey / DiscoveryUrl change). No more independent
+                // per-module resolves landing on different endpoints when
+                // discovery is non-deterministic.
+                var endpoint = await _endpointStore.GetEndpointAsync(stoppingToken);
                 ApplyFlags(currentConfig);
 
                 var fingerprint = ComputeFingerprint(currentConfig);

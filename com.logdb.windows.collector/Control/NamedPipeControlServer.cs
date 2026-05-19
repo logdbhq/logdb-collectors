@@ -23,7 +23,7 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly CollectorLogSink _logSink;
     private readonly IOptionsMonitor<CollectorConfigDto> _configMonitor;
     private readonly ILogDbConnectionTester _connectionTester;
-    private readonly ILogDbServiceUrlResolver _serviceUrlResolver;
+    private readonly IRuntimeEndpointStore _endpointStore;
     private readonly ICollectorControlInspector _inspector;
     private readonly FirewallRuleApplier _firewallRuleApplier;
     private readonly IHostApplicationLifetime _hostLifetime;
@@ -37,7 +37,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         CollectorLogSink logSink,
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         ILogDbConnectionTester connectionTester,
-        ILogDbServiceUrlResolver serviceUrlResolver,
+        IRuntimeEndpointStore endpointStore,
         ICollectorControlInspector inspector,
         FirewallRuleApplier firewallRuleApplier,
         IHostApplicationLifetime hostLifetime,
@@ -49,7 +49,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         _logSink = logSink;
         _configMonitor = configMonitor;
         _connectionTester = connectionTester;
-        _serviceUrlResolver = serviceUrlResolver;
+        _endpointStore = endpointStore;
         _inspector = inspector;
         _firewallRuleApplier = firewallRuleApplier;
         _hostLifetime = hostLifetime;
@@ -236,7 +236,11 @@ public sealed class NamedPipeControlServer : BackgroundService
             case ControlCommands.GetResolvedEndpoint:
                 try
                 {
-                    var resolved = await _serviceUrlResolver.ResolveAsync(_configMonitor.CurrentValue.LogDB, cancellationToken);
+                    // Returns the locked-in endpoint from IRuntimeEndpointStore —
+                    // the SAME value every running module uses for its gRPC
+                    // channel. No fresh discovery call here; the store
+                    // re-resolves only when ApiKey / DiscoveryUrl change.
+                    var resolved = await _endpointStore.GetEndpointAsync(cancellationToken);
                     return new ControlResponseDto
                     {
                         Success = true,

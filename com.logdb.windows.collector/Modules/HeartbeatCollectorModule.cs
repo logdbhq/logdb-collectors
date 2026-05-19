@@ -15,11 +15,11 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
     public HeartbeatCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
-        ILogDbServiceUrlResolver serviceUrlResolver,
+        IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         ILogger<HeartbeatCollectorModule> logger)
-        : base("Heartbeat", configMonitor, statusRegistry, serviceUrlResolver, logger)
+        : base("Heartbeat", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;

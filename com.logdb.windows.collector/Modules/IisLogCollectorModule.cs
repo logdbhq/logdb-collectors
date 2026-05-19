@@ -17,11 +17,11 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
     public IisLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
-        ILogDbServiceUrlResolver serviceUrlResolver,
+        IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         ILogger<IisLogCollectorModule> logger)
-        : base("IIS", configMonitor, statusRegistry, serviceUrlResolver, logger)
+        : base("IIS", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
