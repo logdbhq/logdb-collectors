@@ -12,14 +12,58 @@ internal static class LegacyExporterConfigMapper
 
         values["EventViewer:ExportIntervalMinutes"] = MinutesFromSeconds(module.PollIntervalSeconds).ToString();
         values["EventViewer:MaxEventsPerExport"] = "1000";
-        values["EventViewer:ApplicationName"] = ResolveApplicationName(config, "Windows Event Viewer");
+        values["EventViewer:ApplicationName"] = "Windows Event Viewer";
         values["EventViewer:IncludeXmlDetails"] = "false";
+        if (!string.IsNullOrWhiteSpace(module.ProviderNameOverride))
+        {
+            values["EventViewer:ProviderNameOverride"] = module.ProviderNameOverride!.Trim();
+        }
 
         AddList(values, "EventViewer:LogSources", module.SourcesChannels);
         AddList(values, "EventViewer:EventLevels", module.LevelFilters);
         AddList(values, "EventViewer:Labels", config.Server.DefaultLabels.Concat(new[] { "event-viewer" }));
 
+        ApplyEventLogFilters(values, module);
+
         return values;
+    }
+
+    private static void ApplyEventLogFilters(IDictionary<string, string?> values, EventLogModuleConfigDto module)
+    {
+        var excludeEventIds = new List<int>();
+        var excludeSourceContains = new List<string>();
+        var excludeKeywords = new List<string>();
+
+        foreach (var rule in module.FilterRules ?? Enumerable.Empty<EventLogFilterRuleDto>())
+        {
+            if (!rule.Enabled || string.IsNullOrWhiteSpace(rule.Value)) continue;
+            var value = rule.Value.Trim();
+            switch (rule.Field)
+            {
+                case EventLogFilterFields.EventId:
+                    if (int.TryParse(value, out var id)) excludeEventIds.Add(id);
+                    break;
+                case EventLogFilterFields.SourceContains:
+                    excludeSourceContains.Add(value);
+                    break;
+                case EventLogFilterFields.MessageContains:
+                    excludeKeywords.Add(value);
+                    break;
+            }
+        }
+
+        if (excludeEventIds.Count == 0 && excludeSourceContains.Count == 0 && excludeKeywords.Count == 0)
+            return;
+
+        var filter = new Dictionary<string, object?>();
+        if (excludeEventIds.Count > 0)
+            filter["ExcludeEventIds"] = excludeEventIds.Distinct().ToList();
+        if (excludeSourceContains.Count > 0)
+            filter["ExcludeSourceContains"] = excludeSourceContains.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (excludeKeywords.Count > 0)
+            filter["ExcludeKeywords"] = excludeKeywords.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        values["EventViewer:FilterConditions"] = JsonSerializer.Serialize(filter);
     }
 
     public static Dictionary<string, string?> BuildIisConfig(CollectorConfigDto config)
@@ -28,7 +72,7 @@ internal static class LegacyExporterConfigMapper
         var module = config.Modules.IIS;
 
         values["IIS:ExportIntervalMinutes"] = MinutesFromSeconds(module.PollIntervalSeconds).ToString();
-        values["IIS:ApplicationName"] = ResolveApplicationName(config, "IIS");
+        values["IIS:ApplicationName"] = "IIS";
         AddList(values, "IIS:LogPaths", module.LogDirectories);
         AddList(values, "IIS:Labels", config.Server.DefaultLabels.Concat(new[] { "iis" }));
 
@@ -137,6 +181,14 @@ internal static class LegacyExporterConfigMapper
         var values = BuildCommonValues(config);
         var module = config.Modules.Metrics;
 
+        // Per-module Server name override. The tracker reads Server:ServerName directly,
+        // so the cleanest path is to replace that key here for the Metrics module only —
+        // EventLog / IIS still see the global Server:ServerName.
+        if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
+        {
+            values["Server:ServerName"] = module.ServerNameOverride!.Trim();
+        }
+
         values["WindowsTracker:CollectionIntervalSeconds"] = Math.Max(5, module.PollIntervalSeconds).ToString();
         values["WindowsTracker:Collection"] = "windows-metrics";
         values["WindowsTracker:Metrics:CPU"] = module.IncludeCpu.ToString();
@@ -152,6 +204,46 @@ internal static class LegacyExporterConfigMapper
         return values;
     }
 
+    public static Dictionary<string, string?> BuildHeartbeatConfig(CollectorConfigDto config)
+    {
+        var values = BuildCommonValues(config);
+        var module = config.Modules.Heartbeat;
+
+        // Per-module overrides — replace the values inherited from BuildCommonValues so
+        // HeartbeatBeatExportService picks up the user's tags without needing extra config
+        // keys. Only the Heartbeat module is affected; EventLog / IIS / Metrics still see
+        // the global Server:ServerName and Server:ServerEnvironment.
+        if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
+        {
+            values["Server:ServerName"] = module.ServerNameOverride!.Trim();
+        }
+        if (!string.IsNullOrWhiteSpace(module.EnvironmentOverride))
+        {
+            values["Server:ServerEnvironment"] = module.EnvironmentOverride!.Trim();
+        }
+
+        values["Heartbeat:IntervalSeconds"] = Math.Max(5, module.PollIntervalSeconds).ToString();
+        values["Heartbeat:Measurement"] = string.IsNullOrWhiteSpace(module.Measurement) ? "heartbeat" : module.Measurement;
+        values["Heartbeat:Collection"] = string.IsNullOrWhiteSpace(module.Collection) ? "beats" : module.Collection;
+
+        values["Heartbeat:IncludeUptime"] = module.IncludeUptime.ToString();
+        values["Heartbeat:IncludeHostnameTag"] = module.IncludeHostnameTag.ToString();
+        values["Heartbeat:IncludeAppVersionTag"] = module.IncludeAppVersionTag.ToString();
+        values["Heartbeat:IncludeCpuPercent"] = module.IncludeCpuPercent.ToString();
+        values["Heartbeat:IncludeMemoryPercent"] = module.IncludeMemoryPercent.ToString();
+
+        var index = 0;
+        foreach (var tag in module.Tags)
+        {
+            if (string.IsNullOrWhiteSpace(tag.Key)) continue;
+            values[$"Heartbeat:Tags:{index}:Key"] = tag.Key;
+            values[$"Heartbeat:Tags:{index}:Value"] = tag.Value ?? string.Empty;
+            index++;
+        }
+
+        return values;
+    }
+
     private static Dictionary<string, string?> BuildCommonValues(CollectorConfigDto config)
     {
         return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
@@ -159,37 +251,10 @@ internal static class LegacyExporterConfigMapper
             ["Server:ServerName"] = string.IsNullOrWhiteSpace(config.Server.ServerName)
                 ? Environment.MachineName
                 : config.Server.ServerName,
-            ["Server:ServerEnvironment"] = ResolveEnvironmentName(config),
-            ["LogDB:DefaultApplication"] = config.LogDB.DefaultApplication,
-            ["LogDB:DefaultEnvironment"] = config.LogDB.DefaultEnvironment,
-            ["LogDB:DefaultCollection"] = config.LogDB.DefaultCollection
+            ["Server:ServerEnvironment"] = string.IsNullOrWhiteSpace(config.Server.ServerEnvironment)
+                ? "Production"
+                : config.Server.ServerEnvironment
         };
-    }
-
-    private static string ResolveApplicationName(CollectorConfigDto config, string fallback)
-    {
-        return string.IsNullOrWhiteSpace(config.LogDB.DefaultApplication)
-            ? fallback
-            : config.LogDB.DefaultApplication;
-    }
-
-    private static string ResolveEnvironmentName(CollectorConfigDto config)
-    {
-        if (!string.IsNullOrWhiteSpace(config.LogDB.DefaultEnvironment))
-        {
-            return config.LogDB.DefaultEnvironment;
-        }
-
-        return string.IsNullOrWhiteSpace(config.Server.ServerEnvironment)
-            ? "Production"
-            : config.Server.ServerEnvironment;
-    }
-
-    private static string ResolveCollectionName(CollectorConfigDto config, string fallback)
-    {
-        return string.IsNullOrWhiteSpace(config.LogDB.DefaultCollection)
-            ? fallback
-            : config.LogDB.DefaultCollection;
     }
 
     private static int MinutesFromSeconds(int seconds)

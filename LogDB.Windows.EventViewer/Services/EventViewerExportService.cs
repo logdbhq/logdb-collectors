@@ -323,7 +323,9 @@ public class EventViewerExportService : BackgroundService
             Environment = serverEnvironment,
             Level = MapEventLevel(eventEntry.EntryType),
             Message = eventEntry.Message ?? $"Event {eventEntry.EventID} from {eventEntry.Source}",
-            ProviderName = eventEntry.Source,
+            ProviderName = string.IsNullOrWhiteSpace(_config.ProviderNameOverride)
+                ? eventEntry.Source
+                : _config.ProviderNameOverride,
             Collection = collectionName,
             IpAddress = eventEntry.IP,
             EventId = eventEntry.EventID,
@@ -343,6 +345,13 @@ public class EventViewerExportService : BackgroundService
         log.AttributesS["category"] = eventEntry.Category ?? "";
         log.AttributesS["serverName"] = serverName;
         log.AttributesN["eventId"] = eventEntry.EventID;
+
+        // When the user overrides Provider for tagging purposes, keep the
+        // original Windows event Source on the row so it remains queryable.
+        if (!string.IsNullOrWhiteSpace(_config.ProviderNameOverride) && !string.IsNullOrWhiteSpace(eventEntry.Source))
+        {
+            log.AttributesS["original_provider"] = eventEntry.Source;
+        }
 
         return log;
     }

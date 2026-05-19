@@ -43,4 +43,11 @@ public class EventViewerExportConfig
 
     /// <summary>Skip these log sources</summary>
     public List<string>? ExcludeSources { get; set; }
+
+    /// <summary>
+    /// Optional Provider (Source) name override. When set, every emitted event
+    /// uses this value instead of the original Windows event Source. Used to
+    /// tag which server / collector instance the logs are coming from.
+    /// </summary>
+    public string? ProviderNameOverride { get; set; }
 }

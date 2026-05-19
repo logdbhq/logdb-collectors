@@ -14,9 +14,6 @@ public static class CollectorConfigRedactor
                 Endpoint = source.LogDB.Endpoint,
                 DiscoveryUrl = source.LogDB.DiscoveryUrl,
                 Protocol = source.LogDB.Protocol,
-                DefaultApplication = source.LogDB.DefaultApplication,
-                DefaultEnvironment = source.LogDB.DefaultEnvironment,
-                DefaultCollection = source.LogDB.DefaultCollection,
                 Retry = new RetryOptionsDto
                 {
                     MaxRetries = source.LogDB.Retry.MaxRetries,

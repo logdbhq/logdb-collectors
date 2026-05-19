@@ -59,8 +59,16 @@ public class EventLogFilter
             // Exclude keywords
             if (filter.ExcludeKeywords?.Any() == true)
             {
-                if (filter.ExcludeKeywords.Any(k => 
+                if (filter.ExcludeKeywords.Any(k =>
                     (entry.Message ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)))
+                    return false;
+            }
+
+            // Exclude by source substring
+            if (filter.ExcludeSourceContains?.Any() == true)
+            {
+                if (filter.ExcludeSourceContains.Any(s =>
+                    entry.Source.Contains(s, StringComparison.OrdinalIgnoreCase)))
                     return false;
             }
 
@@ -83,6 +91,7 @@ public class EventFilter
     public List<string>? SourceContains { get; set; }
     public List<string>? MessageContains { get; set; }
     public List<string>? ExcludeKeywords { get; set; }
+    public List<string>? ExcludeSourceContains { get; set; }
 }
 
 

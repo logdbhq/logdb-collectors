@@ -106,6 +106,7 @@ builder.Services.AddSingleton<ModuleHostFactory>();
 builder.Services.AddHostedService<EventLogCollectorModule>();
 builder.Services.AddHostedService<IisLogCollectorModule>();
 builder.Services.AddHostedService<WindowsMetricsCollectorModule>();
+builder.Services.AddHostedService<HeartbeatCollectorModule>();
 builder.Services.AddHostedService<FirewallRuleModule>();
 builder.Services.AddHostedService<RuntimeInfoPublisherService>();
 builder.Services.AddHostedService<NamedPipeControlServer>();
