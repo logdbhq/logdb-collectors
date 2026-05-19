@@ -44,18 +44,25 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
     {
         var values = LegacyExporterConfigMapper.BuildHeartbeatConfig(config);
 
-        // Diagnostic: log the effective Server:ServerName +
-        // LogDB:DefaultEnvironment the heartbeat child host will see. If the
-        // per-module overrides are set on the DTO, the mapper rewrote these
-        // keys — this log line proves it (or shows the bug if it didn't).
+        // Diagnostic: log the effective Server:ServerName + Server:ServerEnvironment
+        // the heartbeat child host will see (these are the keys
+        // HeartbeatBeatExportService actually reads). If the per-module overrides are
+        // set on the DTO, the mapper rewrote these keys — this log line proves it
+        // (or shows the bug if it didn't). The earlier diagnostic checked the wrong
+        // key name (LogDB:DefaultEnvironment), which is never written by the mapper,
+        // so the line always read "(unset)" even when the env was correctly configured.
         var bootLogger = _loggerFactory.CreateLogger<HeartbeatCollectorModule>();
         values.TryGetValue("Server:ServerName", out var effectiveServer);
-        values.TryGetValue("LogDB:DefaultEnvironment", out var effectiveEnv);
+        values.TryGetValue("Server:ServerEnvironment", out var effectiveEnv);
+        values.TryGetValue("Server:ServerNameOverride", out var serverOverrideSignal);
+        values.TryGetValue("Server:ServerEnvironmentOverride", out var envOverrideSignal);
         bootLogger.LogInformation(
-            "Heartbeat module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} | effective LogDB:DefaultEnvironment={Environment} | config.Modules.Heartbeat.ServerNameOverride={ServerOverride} | config.Modules.Heartbeat.EnvironmentOverride={EnvOverride}",
+            "Heartbeat module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} | effective Server:ServerEnvironment={Environment} | Server:ServerNameOverride={ServerSignal} | Server:ServerEnvironmentOverride={EnvSignal} | config.Modules.Heartbeat.ServerNameOverride={ServerOverride} | config.Modules.Heartbeat.EnvironmentOverride={EnvOverride}",
             endpoint,
             string.IsNullOrWhiteSpace(effectiveServer) ? "(unset)" : effectiveServer,
             string.IsNullOrWhiteSpace(effectiveEnv) ? "(unset)" : effectiveEnv,
+            string.IsNullOrWhiteSpace(serverOverrideSignal) ? "(unset)" : serverOverrideSignal,
+            string.IsNullOrWhiteSpace(envOverrideSignal) ? "(unset)" : envOverrideSignal,
             string.IsNullOrWhiteSpace(config.Modules.Heartbeat.ServerNameOverride) ? "(unset)" : config.Modules.Heartbeat.ServerNameOverride,
             string.IsNullOrWhiteSpace(config.Modules.Heartbeat.EnvironmentOverride) ? "(unset)" : config.Modules.Heartbeat.EnvironmentOverride);
 

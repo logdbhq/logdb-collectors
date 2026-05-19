@@ -182,8 +182,9 @@ public class HeartbeatModuleConfigDto : ModuleConfigDto
 
     /// <summary>
     /// Optional Environment override applied to every emitted beat (and the
-    /// Test). When set, replaces LogDB:DefaultEnvironment for the Heartbeat
-    /// module only. Leave blank to use the global Environment.
+    /// Test). When set, replaces Server:ServerEnvironment for the Heartbeat
+    /// module only. Leave blank to use the global Environment (defaults to
+    /// "Production" when nothing is configured at all).
     /// </summary>
     public string? EnvironmentOverride { get; set; }
 }

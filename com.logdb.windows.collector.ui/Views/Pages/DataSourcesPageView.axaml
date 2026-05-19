@@ -636,7 +636,7 @@
                                 <TextBlock Text="Environment override" Classes="muted" />
                                 <TextBox Watermark="(use global Environment)"
                                          Text="{Binding HeartbeatEnvironmentOverride}"
-                                         ToolTip.Tip="Optional Environment set on every emitted beat (and the Heartbeat Test). Replaces LogDB:DefaultEnvironment for this module only. Leave blank to use the global Environment." />
+                                         ToolTip.Tip="Optional Environment set on every emitted beat (and the Heartbeat Test). Replaces Server:ServerEnvironment for this module only. Leave blank to use the global Environment (defaults to 'Production')." />
                             </StackPanel>
                         </Border>
 

@@ -237,14 +237,21 @@ internal static class LegacyExporterConfigMapper
         // Per-module overrides — replace the values inherited from BuildCommonValues so
         // HeartbeatBeatExportService picks up the user's tags without needing extra config
         // keys. Only the Heartbeat module is affected; EventLog / IIS / Metrics still see
-        // the global Server:ServerName and Server:ServerEnvironment.
+        // the global Server:ServerName and Server:ServerEnvironment. The signal keys
+        // (Server:ServerNameOverride / Server:ServerEnvironmentOverride) are written only
+        // when the user explicitly set the override — mirrors EventLog / IIS so the
+        // operator can verify at-a-glance which typed override survived.
         if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
         {
-            values["Server:ServerName"] = module.ServerNameOverride!.Trim();
+            var serverNameOverride = module.ServerNameOverride!.Trim();
+            values["Server:ServerName"] = serverNameOverride;
+            values["Server:ServerNameOverride"] = serverNameOverride;
         }
         if (!string.IsNullOrWhiteSpace(module.EnvironmentOverride))
         {
-            values["Server:ServerEnvironment"] = module.EnvironmentOverride!.Trim();
+            var environmentOverride = module.EnvironmentOverride!.Trim();
+            values["Server:ServerEnvironment"] = environmentOverride;
+            values["Server:ServerEnvironmentOverride"] = environmentOverride;
         }
 
         values["Heartbeat:IntervalSeconds"] = Math.Max(5, module.PollIntervalSeconds).ToString();

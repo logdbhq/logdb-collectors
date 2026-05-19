@@ -83,9 +83,13 @@ public sealed class HeartbeatBeatExportService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Show every identity field the beat will carry so an operator can
+        // verify at one glance which overrides survived the save/reload path.
+        // (Environment was previously logged via the wrong key name in the
+        // module wrapper — see HeartbeatCollectorModule for context.)
         _logger.LogInformation(
-            "Heartbeat service starting (interval={Interval}s measurement={Measurement} collection={Collection})",
-            _intervalSeconds, _measurement, _collection);
+            "Heartbeat service starting (interval={Interval}s measurement={Measurement} collection={Collection} environment={Environment} serverName={ServerName} application={Application})",
+            _intervalSeconds, _measurement, _collection, _environment, _serverName, _application);
 
         // Initial delay so the SDK has a chance to settle before the first beat.
         try { await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken); }
