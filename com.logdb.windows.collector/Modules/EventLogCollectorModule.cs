@@ -52,8 +52,12 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         var values = LegacyExporterConfigMapper.BuildEventLogConfig(config);
         var builder = _moduleHostFactory.CreateBuilder(values);
 
+        // Ephemeral client: every LogAsync rebuilds the inner gRPC channel,
+        // sends, flushes, disposes. Same pattern the UI Test uses — bypasses
+        // the zombie-long-lived-channel class of bugs where a stale HTTP/2
+        // connection silently swallows rows.
         builder.Services.AddSingleton<ILogDBClient>(_ =>
-            LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory));
+            new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)));
 
         builder.Services.AddSingleton<EventLogReader>();
         builder.Services.AddSingleton<EventLogFilter>();
