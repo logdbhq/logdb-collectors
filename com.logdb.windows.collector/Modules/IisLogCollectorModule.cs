@@ -65,10 +65,12 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
         // line plus the boot banner pinpoints whether the override is in the
         // loaded config or not.
         values.TryGetValue("Server:ServerName", out var effectiveServer);
+        values.TryGetValue("Server:ServerNameOverride", out var serverOverrideSignal);
         _logger.LogInformation(
-            "IIS module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} | config.Modules.IIS.ServerNameOverride={Override}",
+            "IIS module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} | Server:ServerNameOverride={OverrideSignal} | config.Modules.IIS.ServerNameOverride={Override}",
             endpoint,
             string.IsNullOrWhiteSpace(effectiveServer) ? "(unset)" : effectiveServer,
+            string.IsNullOrWhiteSpace(serverOverrideSignal) ? "(unset)" : serverOverrideSignal,
             string.IsNullOrWhiteSpace(config.Modules.IIS.ServerNameOverride) ? "(unset)" : config.Modules.IIS.ServerNameOverride);
 
         var builder = _moduleHostFactory.CreateBuilder(values);

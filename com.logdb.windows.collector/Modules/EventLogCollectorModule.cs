@@ -12,6 +12,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
 {
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger<EventLogCollectorModule> _logger;
 
     public EventLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -24,6 +25,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
+        _logger = logger;
     }
 
     protected override bool IsEnabled(CollectorConfigDto config)
@@ -50,6 +52,21 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     protected override IHost BuildHost(CollectorConfigDto config, string endpoint)
     {
         var values = LegacyExporterConfigMapper.BuildEventLogConfig(config);
+
+        // Diagnostic: log the effective Server:ServerName + override signal so
+        // operators can verify at boot that the typed-override actually reached
+        // the child host. If a user reports "Server name override ignored for
+        // EventLog", this log line + the boot banner pinpoint whether the
+        // override survived the save / reload path.
+        values.TryGetValue("Server:ServerName", out var effectiveServer);
+        values.TryGetValue("Server:ServerNameOverride", out var serverOverrideSignal);
+        _logger.LogInformation(
+            "EventLog module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} | Server:ServerNameOverride={OverrideSignal} | config.Modules.EventLog.ServerNameOverride={Override}",
+            endpoint,
+            string.IsNullOrWhiteSpace(effectiveServer) ? "(unset)" : effectiveServer,
+            string.IsNullOrWhiteSpace(serverOverrideSignal) ? "(unset)" : serverOverrideSignal,
+            string.IsNullOrWhiteSpace(config.Modules.EventLog.ServerNameOverride) ? "(unset)" : config.Modules.EventLog.ServerNameOverride);
+
         var builder = _moduleHostFactory.CreateBuilder(values);
 
         // Ephemeral client: every LogAsync rebuilds the inner gRPC channel,

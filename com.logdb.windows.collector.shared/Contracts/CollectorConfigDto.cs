@@ -74,6 +74,14 @@ public class EventLogModuleConfigDto : ModuleConfigDto
     /// "LogDB.UI.Test").
     /// </summary>
     public string? ProviderNameOverride { get; set; }
+
+    /// <summary>
+    /// Optional Server name override applied to EventLog rows only. When set,
+    /// replaces the Computer field and the serverName attribute on every
+    /// emitted row (both real and Test). Leave blank to keep the original
+    /// Computer / global Server:ServerName.
+    /// </summary>
+    public string? ServerNameOverride { get; set; }
 }
 
 public class EventLogFilterRuleDto

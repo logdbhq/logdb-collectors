@@ -242,8 +242,10 @@ internal sealed class UiTestLogDispatcher
         // Per-module Server name overrides. Each module that has a
         // ServerNameOverride field is resolved against its own DTO. Falls back
         // to the global Server:ServerName / Environment.MachineName when
-        // unset. EventLog uses ProviderNameOverride (different concept) and
-        // is handled inline below.
+        // unset.
+        var eventLogServerName = !string.IsNullOrWhiteSpace(config.Modules.EventLog.ServerNameOverride)
+            ? config.Modules.EventLog.ServerNameOverride!.Trim()
+            : serverName;
         var metricsServerName = !string.IsNullOrWhiteSpace(config.Modules.Metrics.ServerNameOverride)
             ? config.Modules.Metrics.ServerNameOverride!.Trim()
             : serverName;
@@ -266,7 +268,7 @@ internal sealed class UiTestLogDispatcher
                     : config.Modules.EventLog.ProviderNameOverride!.Trim(),
                 Channel = "Application",
                 EventId = 0,
-                Computer = serverName,
+                Computer = eventLogServerName,
                 UserId = Environment.UserName
             }.ToLog(),
 

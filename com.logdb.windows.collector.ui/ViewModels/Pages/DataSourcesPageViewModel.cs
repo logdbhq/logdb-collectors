@@ -220,6 +220,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         nameof(LevelVerbose),
         nameof(EventLogPreviewCount),
         nameof(EventLogProviderNameOverride),
+        nameof(EventLogServerNameOverride),
         nameof(IisEnabled),
         nameof(IisPollIntervalSeconds),
         nameof(IisSiteName),
@@ -253,7 +254,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         nameof(EventLogEnabled), nameof(EventLogApplication), nameof(EventLogSystem),
         nameof(EventLogSecurity), nameof(EventLogSetup), nameof(LevelCritical),
         nameof(LevelError), nameof(LevelWarning), nameof(LevelInformation), nameof(LevelVerbose),
-        nameof(EventLogProviderNameOverride)
+        nameof(EventLogProviderNameOverride), nameof(EventLogServerNameOverride)
     };
 
     private static readonly HashSet<string> IisAutoApplyProperties = new(StringComparer.Ordinal)
@@ -300,6 +301,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private EventLogFilterFieldOption _newEventLogFilterField = EventLogFilterFieldOption.All[0];
     private string _newEventLogFilterValue = string.Empty;
     private string _eventLogProviderNameOverride = string.Empty;
+    private string _eventLogServerNameOverride = string.Empty;
 
     private bool _iisEnabled;
     private int _iisPollIntervalSeconds = 60;
@@ -570,6 +572,18 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     {
         get => _eventLogProviderNameOverride;
         set => SetProperty(ref _eventLogProviderNameOverride, value ?? string.Empty);
+    }
+
+    /// <summary>
+    /// Optional per-module Server name override for the EventLog tab. When set,
+    /// every emitted row (real + Test) carries this value as Computer + the
+    /// serverName attribute. The original raw machine name is preserved on each
+    /// row as the 'original_computer' attribute so it stays queryable.
+    /// </summary>
+    public string EventLogServerNameOverride
+    {
+        get => _eventLogServerNameOverride;
+        set => SetProperty(ref _eventLogServerNameOverride, value ?? string.Empty);
     }
 
     public bool IisEnabled
@@ -966,6 +980,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
                 ? eventLog.InitialStartDateUtc.Value
                 : EventLogResumeFromLast ? null : DateTime.UtcNow.Date;
             EventLogProviderNameOverride = eventLog.ProviderNameOverride ?? string.Empty;
+            EventLogServerNameOverride = eventLog.ServerNameOverride ?? string.Empty;
 
             CustomChannels.Clear();
             foreach (var channel in eventLog.SourcesChannels
@@ -1097,6 +1112,9 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         config.Modules.EventLog.ProviderNameOverride = string.IsNullOrWhiteSpace(EventLogProviderNameOverride)
             ? null
             : EventLogProviderNameOverride.Trim();
+        config.Modules.EventLog.ServerNameOverride = string.IsNullOrWhiteSpace(EventLogServerNameOverride)
+            ? null
+            : EventLogServerNameOverride.Trim();
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Message, result.Success);
@@ -1983,6 +2001,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             LevelVerbose = LevelVerbose,
             EventLogPreviewCount = EventLogPreviewCount,
             EventLogProviderNameOverride = EventLogProviderNameOverride?.Trim() ?? string.Empty,
+            EventLogServerNameOverride = EventLogServerNameOverride?.Trim() ?? string.Empty,
             CustomChannels = CustomChannels
                 .Select(item => item.Value.Trim())
                 .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -2070,6 +2089,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         LevelVerbose = draft.LevelVerbose;
         EventLogPreviewCount = Math.Clamp(draft.EventLogPreviewCount, 1, 50);
         EventLogProviderNameOverride = draft.EventLogProviderNameOverride ?? string.Empty;
+        EventLogServerNameOverride = draft.EventLogServerNameOverride ?? string.Empty;
 
         CustomChannels.Clear();
         foreach (var channel in draft.CustomChannels

@@ -174,6 +174,7 @@ public static class WindowPlacementStore
         public List<string> CustomChannels { get; set; } = new();
         public List<EventLogFilterRuleDraftDto> EventLogFilterRules { get; set; } = new();
         public string EventLogProviderNameOverride { get; set; } = string.Empty;
+        public string EventLogServerNameOverride { get; set; } = string.Empty;
 
         public bool IisEnabled { get; set; }
         public int IisPollIntervalSeconds { get; set; } = 60;

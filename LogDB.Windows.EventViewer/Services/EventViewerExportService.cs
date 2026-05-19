@@ -271,6 +271,14 @@ public class EventViewerExportService : BackgroundService
         var serverName = _configuration["Server:ServerName"] ?? Environment.MachineName;
         var serverEnvironment = _configuration["Server:ServerEnvironment"] ?? "Production";
 
+        // Server:ServerNameOverride is the explicit "user typed a per-module override" signal
+        // set by LegacyExporterConfigMapper. When present, override the raw Computer field
+        // (which otherwise carries eventEntry.MachineName from the Windows EventLog itself).
+        var serverNameOverride = _configuration["Server:ServerNameOverride"];
+        var computerName = string.IsNullOrWhiteSpace(serverNameOverride)
+            ? eventEntry.MachineName
+            : serverNameOverride;
+
         // Build labels
         var allLabels = new List<string>(_config.Labels);
         if (!string.IsNullOrEmpty(serverName) && !allLabels.Contains(serverName.ToLower()))
@@ -329,7 +337,7 @@ public class EventViewerExportService : BackgroundService
             Collection = collectionName,
             IpAddress = eventEntry.IP,
             EventId = eventEntry.EventID,
-            Computer = eventEntry.MachineName,
+            Computer = computerName,
             UserId = eventEntry.UserName,
             Channel = logSource,
             XmlData = xmlDetails,
@@ -351,6 +359,13 @@ public class EventViewerExportService : BackgroundService
         if (!string.IsNullOrWhiteSpace(_config.ProviderNameOverride) && !string.IsNullOrWhiteSpace(eventEntry.Source))
         {
             log.AttributesS["original_provider"] = eventEntry.Source;
+        }
+
+        // Same idea for the Server name override: keep the original raw machine
+        // name on the row so post-hoc queries can still find the source host.
+        if (!string.IsNullOrWhiteSpace(serverNameOverride) && !string.IsNullOrWhiteSpace(eventEntry.MachineName))
+        {
+            log.AttributesS["original_computer"] = eventEntry.MachineName;
         }
 
         return log;

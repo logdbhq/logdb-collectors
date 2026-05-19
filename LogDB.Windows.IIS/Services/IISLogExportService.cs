@@ -24,6 +24,7 @@ public class IISLogExportService : BackgroundService
     private readonly IISExportConfig _config;
     private readonly string _serverName;
     private readonly string _serverEnvironment;
+    private readonly string? _serverNameOverride;
 
     // Command-line flags (set from Program.cs)
     public static DateTime? InitialStartDate { get; set; }
@@ -52,6 +53,10 @@ public class IISLogExportService : BackgroundService
 
         _serverName = configuration["Server:ServerName"] ?? Environment.MachineName;
         _serverEnvironment = configuration["Server:ServerEnvironment"] ?? "Production";
+        // Explicit "user typed a per-module override" signal set by the IIS
+        // config mapper. When present, the typed LogIISEvent.ServerName field
+        // is rewritten from the override instead of the W3C log's s-computername.
+        _serverNameOverride = configuration["Server:ServerNameOverride"];
 
         // Bind IIS config section
         _config = new IISExportConfig();
@@ -324,7 +329,9 @@ public class IISLogExportService : BackgroundService
                     BytesSent = entry.BytesSent > 0 ? entry.BytesSent : null,
                     BytesReceived = entry.BytesReceived > 0 ? entry.BytesReceived : null,
                     SiteName = entry.SiteName,
-                    ServerName = entry.ServerName,
+                    ServerName = string.IsNullOrWhiteSpace(_serverNameOverride)
+                        ? entry.ServerName
+                        : _serverNameOverride,
                 };
 
                 var log = iisEvent.ToLog();
@@ -345,6 +352,13 @@ public class IISLogExportService : BackgroundService
                     log.AttributesS["sourceFile"] = Path.GetFileName(entry.SourceFile);
                 if (entry.LineNumber > 0)
                     log.AttributesN["lineNumber"] = entry.LineNumber;
+
+                // When the user overrode ServerName for tagging purposes, keep the
+                // original W3C s-computername on the row so it remains queryable.
+                if (!string.IsNullOrWhiteSpace(_serverNameOverride) && !string.IsNullOrEmpty(entry.ServerName))
+                {
+                    log.AttributesS["original_server_name"] = entry.ServerName;
+                }
 
                 foreach (var kvp in entry.AdditionalFields)
                 {

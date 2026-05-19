@@ -10,6 +10,18 @@ internal static class LegacyExporterConfigMapper
         var values = BuildCommonValues(config);
         var module = config.Modules.EventLog;
 
+        // Per-module Server name override. Rewriting Server:ServerName here scopes the
+        // override to the EventLog module — IIS / Metrics / Heartbeat still see the
+        // global Server:ServerName. The signal key Server:ServerNameOverride tells
+        // EventViewerExportService that the user explicitly opted in to override the
+        // Computer field (otherwise it keeps the raw eventEntry.MachineName).
+        if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
+        {
+            var serverNameOverride = module.ServerNameOverride!.Trim();
+            values["Server:ServerName"] = serverNameOverride;
+            values["Server:ServerNameOverride"] = serverNameOverride;
+        }
+
         values["EventViewer:ExportIntervalMinutes"] = MinutesFromSeconds(module.PollIntervalSeconds).ToString();
         values["EventViewer:MaxEventsPerExport"] = "1000";
         values["EventViewer:ApplicationName"] = "Windows Event Viewer";
@@ -72,12 +84,16 @@ internal static class LegacyExporterConfigMapper
         var module = config.Modules.IIS;
 
         // Per-module Server name override. The IIS exporter reads
-        // Server:ServerName directly; rewriting the key here scopes the
-        // override to the IIS module — EventLog / Metrics / Heartbeat still
-        // see the global Server:ServerName.
+        // Server:ServerName for general identity AND uses the dedicated
+        // Server:ServerNameOverride signal key to know when to also rewrite
+        // the typed LogIISEvent.ServerName field (which defaults to the W3C
+        // log's s-computername). Setting both: scopes override + opt-in to
+        // wire-level field rewrite — EventLog / Metrics / Heartbeat untouched.
         if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
         {
-            values["Server:ServerName"] = module.ServerNameOverride!.Trim();
+            var serverNameOverride = module.ServerNameOverride!.Trim();
+            values["Server:ServerName"] = serverNameOverride;
+            values["Server:ServerNameOverride"] = serverNameOverride;
         }
 
         values["IIS:ExportIntervalMinutes"] = MinutesFromSeconds(module.PollIntervalSeconds).ToString();

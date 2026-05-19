@@ -128,6 +128,15 @@
                                 <TextBlock VerticalAlignment="Center" Classes="muted"
                                            Text="Applied to every event from this collector. Original Provider kept in 'original_provider' attribute." />
                             </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock VerticalAlignment="Center" Text="Server name override" />
+                                <TextBox Width="280"
+                                         Watermark="(keep Computer per event)"
+                                         Text="{Binding EventLogServerNameOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip.Tip="Replace every ingested event's Computer field (and serverName attribute) with this value — applies to both real Windows events AND the Test button. Useful for tagging which server / collector the rows are coming from. The original Computer is preserved as the 'original_computer' attribute. Leave blank to keep the raw machine name from the Windows event." />
+                                <TextBlock VerticalAlignment="Center" Classes="muted"
+                                           Text="Overrides Computer + serverName. Raw machine name kept in 'original_computer'." />
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 
