@@ -67,26 +67,39 @@ internal sealed class UiTestLogDispatcher
             Emit(progress, "Endpoint check", serviceUrl, TestReportStepStatus.Ok);
         }
 
-        // Surface the actual compression setting so test results match production
-        // behavior. (Previously Test forced uncompressed for diagnostic isolation, but
-        // that hid production silent-drop bugs caused by broken SendCompressedLog
-        // handlers — now Test uses whatever the user has configured.)
-        var compressionInUse = config.LogDB.Batch.EnableCompression;
+        // Compression is hard-pinned to false in UiLogDbClientFactory until the
+        // server-side fanout for SendCompressedLog* is confirmed working. The
+        // DTO flag is shown for reference but does NOT control wire behavior.
+        var dtoFlag = config.LogDB.Batch.EnableCompression;
         Emit(progress, "Compression mode",
-            compressionInUse
-                ? "compression=ON → gRPC method: SendCompressedLog / SendCompressedLogBeat"
-                : "compression=OFF → gRPC method: Log / LogBeat",
+            $"wire: compression=OFF → gRPC method: Log / LogBeat (DTO flag={dtoFlag}, ignored by factory)",
             TestReportStepStatus.Info);
 
+        // Compute the effective DefaultApplication / DefaultEnvironment for the
+        // SDK client so the wire-level baseline matches whatever per-record tag
+        // we'll set on the beat / log. Without this the SDK falls back to its
+        // own "production" default and the server-side log_beats.environment
+        // column shows that value instead of the user's typed override.
+        var (defaultApplication, defaultEnvironment) = ResolveClientDefaults(moduleName, config);
         using var capture = new CapturingLoggerFactory();
-        var client = UiLogDbClientFactory.Create(config.LogDB, serviceUrl, capture);
+        var client = UiLogDbClientFactory.Create(
+            config.LogDB,
+            serviceUrl,
+            capture,
+            defaultApplication: defaultApplication,
+            defaultEnvironment: defaultEnvironment);
+
+        Emit(progress, "SDK client defaults",
+            $"DefaultApplication={defaultApplication} DefaultEnvironment={defaultEnvironment} (mirrors per-record values to keep server-side columns aligned)",
+            TestReportStepStatus.Info);
 
         try
         {
             // Pick the wire RPC name to surface in step labels so the user can grep
             // server-side logs for exactly which handler was hit.
-            var rpcLog = config.LogDB.Batch.EnableCompression ? "LogGrpcService/SendCompressedLog" : "LogGrpcService/Log";
-            var rpcBeat = config.LogDB.Batch.EnableCompression ? "LogGrpcService/SendCompressedLogBeat" : "LogGrpcService/LogBeat";
+            // Factory pins compression to false; reflect that in the surfaced RPC name.
+            const string rpcLog = "LogGrpcService/Log";
+            const string rpcBeat = "LogGrpcService/LogBeat";
 
             if (IsHeartbeat(moduleName))
             {
@@ -352,13 +365,17 @@ internal sealed class UiTestLogDispatcher
         var measurement = string.IsNullOrWhiteSpace(heartbeat.Measurement) ? "heartbeat" : heartbeat.Measurement;
         var collection = string.IsNullOrWhiteSpace(heartbeat.Collection) ? "beats" : heartbeat.Collection;
 
-        // Per-Heartbeat-module overrides — fall back to global server / environment.
+        // Per-Heartbeat-module overrides. ServerName falls back to global / hostname
+        // as before. Environment falls back to the same ServerName so a beat without
+        // an explicit Environment override carries the host identity in both the
+        // 'environment' field and the 'host' tag — matches the same defaulting
+        // BuildHeartbeatConfig does for real ingestion.
         var serverName = !string.IsNullOrWhiteSpace(heartbeat.ServerNameOverride)
             ? heartbeat.ServerNameOverride!.Trim()
             : (string.IsNullOrWhiteSpace(config.Server.ServerName) ? Environment.MachineName : config.Server.ServerName);
         var environmentName = !string.IsNullOrWhiteSpace(heartbeat.EnvironmentOverride)
             ? heartbeat.EnvironmentOverride!.Trim()
-            : (string.IsNullOrWhiteSpace(config.Server.ServerEnvironment) ? "Production" : config.Server.ServerEnvironment);
+            : serverName;
 
         var beat = new LogBeat
         {
@@ -375,6 +392,42 @@ internal sealed class UiTestLogDispatcher
         beat.Field.Add(new LogMeta { Key = "uptime_seconds", Value = (Environment.TickCount64 / 1000L).ToString() });
         beat.Field.Add(new LogMeta { Key = "test", Value = "1" });
         return beat;
+    }
+
+    /// <summary>
+    /// Mirrors the per-record Application + Environment the matching production
+    /// exporter sets, so the SDK client's DefaultApplication / DefaultEnvironment
+    /// agree with what each beat / log carries. For Heartbeat: server name comes
+    /// from the dedicated Heartbeat override → falls back to global Server.ServerName
+    /// → Environment.MachineName. Environment override → falls back to the same
+    /// server name (matches BuildHeartbeatConfig's mapper-side default so Test
+    /// and real ingestion produce identical wire values).
+    /// </summary>
+    private static (string DefaultApplication, string DefaultEnvironment) ResolveClientDefaults(
+        string moduleName,
+        CollectorConfigDto config)
+    {
+        var globalServer = !string.IsNullOrWhiteSpace(config.Server.ServerName)
+            ? config.Server.ServerName
+            : Environment.MachineName;
+
+        if (moduleName.Equals("Heartbeat", StringComparison.OrdinalIgnoreCase))
+        {
+            var heartbeat = config.Modules.Heartbeat;
+            var server = !string.IsNullOrWhiteSpace(heartbeat.ServerNameOverride)
+                ? heartbeat.ServerNameOverride!.Trim()
+                : globalServer;
+            var env = !string.IsNullOrWhiteSpace(heartbeat.EnvironmentOverride)
+                ? heartbeat.EnvironmentOverride!.Trim()
+                : server;
+            return ("LogDB Collector", env);
+        }
+
+        var (application, _, _, _) = ResolveTarget(moduleName, config);
+        var globalEnv = !string.IsNullOrWhiteSpace(config.Server.ServerEnvironment)
+            ? config.Server.ServerEnvironment
+            : "Production";
+        return (application, globalEnv);
     }
 
     private static (string Application, string Collection, string Label, string Source) ResolveTarget(

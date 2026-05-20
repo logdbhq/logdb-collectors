@@ -24,7 +24,6 @@ public class IISLogExportService : BackgroundService
     private readonly IISExportConfig _config;
     private readonly string _serverName;
     private readonly string _serverEnvironment;
-    private readonly string? _serverNameOverride;
 
     // Command-line flags (set from Program.cs)
     public static DateTime? InitialStartDate { get; set; }
@@ -53,10 +52,6 @@ public class IISLogExportService : BackgroundService
 
         _serverName = configuration["Server:ServerName"] ?? Environment.MachineName;
         _serverEnvironment = configuration["Server:ServerEnvironment"] ?? "Production";
-        // Explicit "user typed a per-module override" signal set by the IIS
-        // config mapper. When present, the typed LogIISEvent.ServerName field
-        // is rewritten from the override instead of the W3C log's s-computername.
-        _serverNameOverride = configuration["Server:ServerNameOverride"];
 
         // Bind IIS config section
         _config = new IISExportConfig();
@@ -329,9 +324,14 @@ public class IISLogExportService : BackgroundService
                     BytesSent = entry.BytesSent > 0 ? entry.BytesSent : null,
                     BytesReceived = entry.BytesReceived > 0 ? entry.BytesReceived : null,
                     SiteName = entry.SiteName,
-                    ServerName = string.IsNullOrWhiteSpace(_serverNameOverride)
-                        ? entry.ServerName
-                        : _serverNameOverride,
+                    // LogIISEvent.ServerName always carries the configured Server:ServerName —
+                    // matches the working Metrics pattern. The mapper rewrites the key when
+                    // the user typed any per-module override, so the override flows here
+                    // without needing a separate signal key. In the no-override case the
+                    // value defaults to Environment.MachineName, which equals the W3C
+                    // log's s-computername for local IIS — bit-for-bit identical to the
+                    // pre-1.1.15 path.
+                    ServerName = _serverName,
                 };
 
                 var log = iisEvent.ToLog();
@@ -353,9 +353,11 @@ public class IISLogExportService : BackgroundService
                 if (entry.LineNumber > 0)
                     log.AttributesN["lineNumber"] = entry.LineNumber;
 
-                // When the user overrode ServerName for tagging purposes, keep the
-                // original W3C s-computername on the row so it remains queryable.
-                if (!string.IsNullOrWhiteSpace(_serverNameOverride) && !string.IsNullOrEmpty(entry.ServerName))
+                // Preserve the raw W3C s-computername on the row whenever it
+                // differs from the configured ServerName — keeps it queryable
+                // after an override (or in UNC-path multi-server collection).
+                if (!string.IsNullOrEmpty(entry.ServerName)
+                    && !string.Equals(entry.ServerName, _serverName, StringComparison.OrdinalIgnoreCase))
                 {
                     log.AttributesS["original_server_name"] = entry.ServerName;
                 }

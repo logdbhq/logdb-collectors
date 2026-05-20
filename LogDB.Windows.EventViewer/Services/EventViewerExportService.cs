@@ -271,13 +271,14 @@ public class EventViewerExportService : BackgroundService
         var serverName = _configuration["Server:ServerName"] ?? Environment.MachineName;
         var serverEnvironment = _configuration["Server:ServerEnvironment"] ?? "Production";
 
-        // Server:ServerNameOverride is the explicit "user typed a per-module override" signal
-        // set by LegacyExporterConfigMapper. When present, override the raw Computer field
-        // (which otherwise carries eventEntry.MachineName from the Windows EventLog itself).
-        var serverNameOverride = _configuration["Server:ServerNameOverride"];
-        var computerName = string.IsNullOrWhiteSpace(serverNameOverride)
-            ? eventEntry.MachineName
-            : serverNameOverride;
+        // Computer field is always the configured Server:ServerName — matches the working
+        // pattern used by WindowsTrackerExportService (Metrics). The mapper rewrites
+        // Server:ServerName when ANY of the user's override fields is set, so the typed
+        // override flows here without needing a separate signal key. In the no-override
+        // case Server:ServerName defaults to Environment.MachineName which equals
+        // eventEntry.MachineName for local-EventLog collection — bit-for-bit identical
+        // behaviour to the pre-1.1.15 code path when nothing is overridden.
+        var computerName = serverName;
 
         // Build labels
         var allLabels = new List<string>(_config.Labels);
@@ -361,9 +362,12 @@ public class EventViewerExportService : BackgroundService
             log.AttributesS["original_provider"] = eventEntry.Source;
         }
 
-        // Same idea for the Server name override: keep the original raw machine
-        // name on the row so post-hoc queries can still find the source host.
-        if (!string.IsNullOrWhiteSpace(serverNameOverride) && !string.IsNullOrWhiteSpace(eventEntry.MachineName))
+        // Preserve the raw machine name on the row whenever it differs from the
+        // configured Computer (so post-hoc queries can still find the source host
+        // even after override). Differs in two cases: (a) user typed an override,
+        // or (b) collector is reading remote-machine events (rare).
+        if (!string.IsNullOrWhiteSpace(eventEntry.MachineName)
+            && !string.Equals(eventEntry.MachineName, computerName, StringComparison.OrdinalIgnoreCase))
         {
             log.AttributesS["original_computer"] = eventEntry.MachineName;
         }

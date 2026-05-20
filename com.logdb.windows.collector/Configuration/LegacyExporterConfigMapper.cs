@@ -10,16 +10,17 @@ internal static class LegacyExporterConfigMapper
         var values = BuildCommonValues(config);
         var module = config.Modules.EventLog;
 
-        // Per-module Server name override. Rewriting Server:ServerName here scopes the
-        // override to the EventLog module — IIS / Metrics / Heartbeat still see the
-        // global Server:ServerName. The signal key Server:ServerNameOverride tells
-        // EventViewerExportService that the user explicitly opted in to override the
-        // Computer field (otherwise it keeps the raw eventEntry.MachineName).
-        if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
+        // Per-module Server name override. ServerNameOverride (the dedicated field)
+        // wins; when it's empty we fall back to ProviderNameOverride so users who
+        // typed their server tag in the original Provider field (the only one that
+        // existed before 1.1.15) still get the override on Computer / serverName
+        // without needing to copy the value into a second field.
+        var effectiveServerOverride = !string.IsNullOrWhiteSpace(module.ServerNameOverride)
+            ? module.ServerNameOverride!.Trim()
+            : (!string.IsNullOrWhiteSpace(module.ProviderNameOverride) ? module.ProviderNameOverride!.Trim() : null);
+        if (!string.IsNullOrWhiteSpace(effectiveServerOverride))
         {
-            var serverNameOverride = module.ServerNameOverride!.Trim();
-            values["Server:ServerName"] = serverNameOverride;
-            values["Server:ServerNameOverride"] = serverNameOverride;
+            values["Server:ServerName"] = effectiveServerOverride;
         }
 
         values["EventViewer:ExportIntervalMinutes"] = MinutesFromSeconds(module.PollIntervalSeconds).ToString();
@@ -83,17 +84,13 @@ internal static class LegacyExporterConfigMapper
         var values = BuildCommonValues(config);
         var module = config.Modules.IIS;
 
-        // Per-module Server name override. The IIS exporter reads
-        // Server:ServerName for general identity AND uses the dedicated
-        // Server:ServerNameOverride signal key to know when to also rewrite
-        // the typed LogIISEvent.ServerName field (which defaults to the W3C
-        // log's s-computername). Setting both: scopes override + opt-in to
-        // wire-level field rewrite — EventLog / Metrics / Heartbeat untouched.
+        // Per-module Server name override scoped to this module — rewriting
+        // Server:ServerName here means IISLogExportService picks up the override
+        // when it builds LogIISEvent.ServerName from _serverName. EventLog /
+        // Metrics / Heartbeat still see the global Server:ServerName.
         if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
         {
-            var serverNameOverride = module.ServerNameOverride!.Trim();
-            values["Server:ServerName"] = serverNameOverride;
-            values["Server:ServerNameOverride"] = serverNameOverride;
+            values["Server:ServerName"] = module.ServerNameOverride!.Trim();
         }
 
         values["IIS:ExportIntervalMinutes"] = MinutesFromSeconds(module.PollIntervalSeconds).ToString();
@@ -237,21 +234,24 @@ internal static class LegacyExporterConfigMapper
         // Per-module overrides — replace the values inherited from BuildCommonValues so
         // HeartbeatBeatExportService picks up the user's tags without needing extra config
         // keys. Only the Heartbeat module is affected; EventLog / IIS / Metrics still see
-        // the global Server:ServerName and Server:ServerEnvironment. The signal keys
-        // (Server:ServerNameOverride / Server:ServerEnvironmentOverride) are written only
-        // when the user explicitly set the override — mirrors EventLog / IIS so the
-        // operator can verify at-a-glance which typed override survived.
+        // the global Server:ServerName and Server:ServerEnvironment.
         if (!string.IsNullOrWhiteSpace(module.ServerNameOverride))
         {
-            var serverNameOverride = module.ServerNameOverride!.Trim();
-            values["Server:ServerName"] = serverNameOverride;
-            values["Server:ServerNameOverride"] = serverNameOverride;
+            values["Server:ServerName"] = module.ServerNameOverride!.Trim();
         }
         if (!string.IsNullOrWhiteSpace(module.EnvironmentOverride))
         {
-            var environmentOverride = module.EnvironmentOverride!.Trim();
-            values["Server:ServerEnvironment"] = environmentOverride;
-            values["Server:ServerEnvironmentOverride"] = environmentOverride;
+            values["Server:ServerEnvironment"] = module.EnvironmentOverride!.Trim();
+        }
+        else
+        {
+            // Heartbeat-specific default: when the user has NOT typed an Environment
+            // override, mirror the effective ServerName into the beat's Environment
+            // field. Avoids the static "Production" string that sits in every fresh
+            // appsettings.json sticking on every beat the user never asked to label.
+            // EventLog / IIS / Metrics are unaffected — they still resolve
+            // Server:ServerEnvironment from their own mappers / BuildCommonValues.
+            values["Server:ServerEnvironment"] = values["Server:ServerName"];
         }
 
         values["Heartbeat:IntervalSeconds"] = Math.Max(5, module.PollIntervalSeconds).ToString();

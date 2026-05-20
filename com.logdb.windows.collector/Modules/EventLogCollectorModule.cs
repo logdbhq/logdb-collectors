@@ -53,19 +53,19 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     {
         var values = LegacyExporterConfigMapper.BuildEventLogConfig(config);
 
-        // Diagnostic: log the effective Server:ServerName + override signal so
-        // operators can verify at boot that the typed-override actually reached
-        // the child host. If a user reports "Server name override ignored for
-        // EventLog", this log line + the boot banner pinpoint whether the
-        // override survived the save / reload path.
+        // Diagnostic: log the effective Server:ServerName (this is what
+        // EventViewerExportService uses for the Computer field on every row)
+        // plus both DTO override fields so an operator can verify at boot
+        // which value reached the child host. ProviderNameOverride is included
+        // because the mapper falls back to it for the server-name when the
+        // dedicated ServerNameOverride field is empty.
         values.TryGetValue("Server:ServerName", out var effectiveServer);
-        values.TryGetValue("Server:ServerNameOverride", out var serverOverrideSignal);
         _logger.LogInformation(
-            "EventLog module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} | Server:ServerNameOverride={OverrideSignal} | config.Modules.EventLog.ServerNameOverride={Override}",
+            "EventLog module child host built | endpoint={Endpoint} | effective Server:ServerName={ServerName} (= LogWindowsEvent.Computer on every row) | config.Modules.EventLog.ServerNameOverride={ServerOverride} | config.Modules.EventLog.ProviderNameOverride={ProviderOverride}",
             endpoint,
             string.IsNullOrWhiteSpace(effectiveServer) ? "(unset)" : effectiveServer,
-            string.IsNullOrWhiteSpace(serverOverrideSignal) ? "(unset)" : serverOverrideSignal,
-            string.IsNullOrWhiteSpace(config.Modules.EventLog.ServerNameOverride) ? "(unset)" : config.Modules.EventLog.ServerNameOverride);
+            string.IsNullOrWhiteSpace(config.Modules.EventLog.ServerNameOverride) ? "(unset)" : config.Modules.EventLog.ServerNameOverride,
+            string.IsNullOrWhiteSpace(config.Modules.EventLog.ProviderNameOverride) ? "(unset)" : config.Modules.EventLog.ProviderNameOverride);
 
         var builder = _moduleHostFactory.CreateBuilder(values);
 
