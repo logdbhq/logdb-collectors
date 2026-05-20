@@ -9,9 +9,9 @@
     <ApplicationIcon>Assets\Icons\logo-mark-c.ico</ApplicationIcon>
     <Win32Icon>Assets\Icons\logo-mark-c.ico</Win32Icon>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
-    <Version>1.1.17</Version>
-    <AssemblyVersion>1.1.17.0</AssemblyVersion>
-    <FileVersion>1.1.17.0</FileVersion>
+    <Version>1.1.18</Version>
+    <AssemblyVersion>1.1.18.0</AssemblyVersion>
+    <FileVersion>1.1.18.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

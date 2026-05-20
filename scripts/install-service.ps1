@@ -14,7 +14,25 @@ if (-not $isAdmin) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+    # Candidate paths, in priority order:
+    # 1. Velopack-managed install (machine-wide ProgramFiles): the service exe ships
+    #    inside the Velopack package next to the UI, at <install>\current\service\.
+    #    Registering the service with this path lets Velopack-driven UI updates also
+    #    update the service in place (UI's Velopack hooks stop/start the service
+    #    around the file swap — see com.logdb.windows.collector.ui/Program.cs).
+    # 2. Velopack-managed install (per-user LocalAppData): same idea but for per-user
+    #    Velopack installs. Note: a service running as LocalSystem cannot read files
+    #    under another user's LocalAppData; prefer machine-wide Velopack install for
+    #    multi-user / production scenarios.
+    # 3. Same-folder fallback for the raw release zip layout (LogDB-Windows-Collector-vX.Y.Z-win-x64.zip
+    #    extracts to a tree where install-service.ps1 lives in scripts/ and the exe in service/).
+    # 4. The dev bin output.
+    # 5. The legacy hard-coded path.
+    $velopackUI = "com.logdb.windows.collector.ui"
     $candidates = @(
+        (Join-Path $env:ProgramFiles "$velopackUI\current\service\com.logdb.windows.collector.exe"),
+        (Join-Path $env:LOCALAPPDATA "$velopackUI\current\service\com.logdb.windows.collector.exe"),
+        (Join-Path $PSScriptRoot "..\service\com.logdb.windows.collector.exe"),
         (Join-Path $PSScriptRoot "..\com.logdb.windows.collector.exe"),
         (Join-Path $PSScriptRoot "..\com.logdb.windows.collector\bin\Release\net10.0-windows\com.logdb.windows.collector.exe"),
         "C:\Program Files\LogDB\collector\com.logdb.windows.collector.exe"
