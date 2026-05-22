@@ -14,7 +14,7 @@
 ## Quick Start (Compose)
 
 ```bash
-docker compose -f docker-compose.yaml up -d
+docker compose -f docker-compose.docker.collector.yaml up -d
 ```
 
 Default compose services:
@@ -22,11 +22,15 @@ Default compose services:
 - `logdb-docker-collector` on `8080`
 - `logdb-docker-collector-ui` on `5010`
 
+### Snap-installed Docker
+
+If Docker was installed via snap, its data lives under `/var/snap/docker/common/var-lib-docker` instead of `/var/lib/docker`. Open the compose file, comment out the standard host-path line, and uncomment the snap one (they're labeled inline). Confirm your host's path with `docker info | grep "Docker Root Dir"`.
+
 ## Required Mounts
 
-| Mount | Target | Mode | Purpose |
+| Host source | Container target | Mode | Purpose |
 |---|---|---|---|
-| `/var/lib/docker/containers` | `/var/lib/docker/containers` | `ro` | Read Docker json-file logs |
+| `/var/lib/docker/containers` (or snap equivalent) | `/var/lib/docker/containers` | `ro` | Read Docker json-file logs |
 | `/var/run/docker.sock` | `/var/run/docker.sock` | `ro` | Container discovery |
 | `logdb-collector` volume | `/var/lib/logdb-collector` | `rw` | Checkpoints + spool |
 

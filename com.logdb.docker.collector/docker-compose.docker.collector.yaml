@@ -1,18 +1,20 @@
-version: "3.8"
-
 services:
   logdb-docker-collector:
-    image: logdb/docker-collector:0.1
+    image: logdb/docker-collector:latest
     container_name: logdb-docker-collector
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Docker container logs.
+      # Pick the line that matches your host. Check with: docker info | grep "Docker Root Dir"
+      # - Standard install (apt/deb/rpm): /var/lib/docker
+      # - Snap install:                   /var/snap/docker/common/var-lib-docker
+      # - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - logdb-collector:/var/lib/logdb-collector
     environment:
-      - LOGDB_EXPORTER_ENDPOINT=http://grpc-logger:8080
       - LOGDB_EXPORTER_APIKEY=your-api-key-here
       # Optional overrides:
       # - LOGDB_EXPORTER_ENABLED=true             # default: true in Docker env
@@ -25,19 +27,21 @@ services:
       - backend
 
   logdb-docker-collector-ui:
-    image: logdb/docker-collector-ui:0.1
+    image: logdb/docker-collector-ui:latest
     container_name: logdb-docker-collector-ui
     restart: unless-stopped
     ports:
       - "5010:8080"
     environment:
       - COLLECTOR_API_URL=http://logdb-docker-collector:8080
+      # Sub-path under which the UI is served, must match the nginx location prefix.
+      # Leave unset to serve at "/".
+      - PathBase=/docker-collector
     networks:
       - backend
 
 networks:
   backend:
-    external: true
     name: logdb-net
 
 volumes:

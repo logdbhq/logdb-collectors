@@ -1,10 +1,18 @@
 using System.Diagnostics;
+using System.Diagnostics.Eventing.Reader;
 using System.Net;
+using System.Security.Principal;
 using System.Text.RegularExpressions;
 using com.logdb.windows.eventviewer.Models;
 
 namespace com.logdb.windows.eventviewer.Services;
 
+// Reads Windows Event Log channels via the modern Eventing.Reader API. The
+// legacy System.Diagnostics.EventLog API only enumerates the three classic logs
+// (Application, Security, System); modern channels like Setup, ForwardedEvents,
+// and everything under "Applications and Services Logs" return an empty
+// Entries collection there. This implementation uses EventLogReader +
+// EventLogQuery, which works uniformly across classic and modern channels.
 public class EventLogReader
 {
     private readonly ILogger<EventLogReader>? _logger;
@@ -27,36 +35,31 @@ public class EventLogReader
         Func<EventLogEntryModel, Task> processor)
     {
         int processedCount = 0;
+        var levelFilter = levels.Select(ParseLevel).Where(l => l.HasValue).Select(l => l!.Value).ToHashSet();
 
         try
         {
-            using var eventLog = new EventLog(logName);
+            var query = BuildIncrementalQuery(logName, since, afterEventId);
+            using var reader = new System.Diagnostics.Eventing.Reader.EventLogReader(query);
 
-            if (!EventLog.Exists(logName))
+            while (processedCount < maxCount)
             {
-                _logger?.LogWarning("Event log '{LogName}' does not exist", logName);
-                return 0;
-            }
+                using var record = ReadNext(reader, logName);
+                if (record == null) break;
 
-            var levelFilter = levels.Select(ParseLevel).Where(l => l.HasValue).Select(l => l!.Value).ToHashSet();
-
-            for (int i = 0; i < eventLog.Entries.Count && processedCount < maxCount; i++)
-            {
                 try
                 {
-                    var entry = eventLog.Entries[i];
-
-                    if (!ShouldIncludeEvent(entry, since, afterEventId, levelFilter))
+                    if (!ShouldIncludeEvent(record, since, afterEventId, levelFilter))
                         continue;
 
-                    var model = CreateModel(entry, logName);
+                    var model = CreateModel(record, logName);
                     await processor(model);
                     processedCount++;
                     WriteProgress(processedCount, logName);
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex, "Error processing event at index {Index} in {LogName}", i, logName);
+                    _logger?.LogWarning(ex, "Error processing event in {LogName}", logName);
                 }
             }
 
@@ -64,6 +67,10 @@ public class EventLogReader
             _logger?.LogDebug(
                 "Read {Count} events from {LogName} (since: {Since}, afterEventId: {AfterEventId})",
                 processedCount, logName, since, afterEventId);
+        }
+        catch (EventLogNotFoundException)
+        {
+            _logger?.LogWarning("Event log '{LogName}' does not exist", logName);
         }
         catch (System.Security.SecurityException ex)
         {
@@ -77,11 +84,11 @@ public class EventLogReader
                 "UNAUTHORIZED ACCESS: Cannot read Event Log '{LogName}'. Current user: {CurrentUser}.",
                 logName, Environment.UserName);
         }
-        catch (System.ComponentModel.Win32Exception ex)
+        catch (EventLogException ex)
         {
             _logger?.LogError(ex,
-                "WINDOWS ERROR: Failed to access Event Log '{LogName}'. Win32 Error Code: {ErrorCode}. Current user: {CurrentUser}.",
-                logName, ex.NativeErrorCode, Environment.UserName);
+                "EVENT LOG ERROR: Failed to read Event Log '{LogName}'. Current user: {CurrentUser}.",
+                logName, Environment.UserName);
         }
         catch (Exception ex)
         {
@@ -105,49 +112,36 @@ public class EventLogReader
         Func<EventLogEntryModel, Task> processor)
     {
         int processedCount = 0;
+        var levelFilter = levels.Select(ParseLevel).Where(l => l.HasValue).Select(l => l!.Value).ToHashSet();
 
         try
         {
-            using var eventLog = new EventLog(logName);
-
-            if (!EventLog.Exists(logName))
-            {
-                _logger?.LogWarning("Event log '{LogName}' does not exist", logName);
-                return 0;
-            }
-
-            var levelFilter = levels.Select(ParseLevel).Where(l => l.HasValue).Select(l => l!.Value).ToHashSet();
-            var totalEntries = eventLog.Entries.Count;
+            var query = BuildUpToDateQuery(logName, upToDate);
+            using var reader = new System.Diagnostics.Eventing.Reader.EventLogReader(query);
 
             _logger?.LogInformation(
-                "Starting full export from {LogName} up to {UpToDate} (total entries in log: {TotalCount})",
-                logName, upToDate, totalEntries);
+                "Starting full export from {LogName} up to {UpToDate}",
+                logName, upToDate);
 
-            for (int i = 0; i < eventLog.Entries.Count; i++)
+            while (true)
             {
+                using var record = ReadNext(reader, logName);
+                if (record == null) break;
+
                 try
                 {
-                    var entry = eventLog.Entries[i];
-
-                    if (entry.TimeGenerated > upToDate)
-                    {
-                        _logger?.LogInformation(
-                            "Reached events newer than {UpToDate} at index {Index}, stopping",
-                            upToDate, i);
-                        break;
-                    }
-
-                    if (levelFilter.Count > 0 && !levelFilter.Contains(entry.EntryType))
+                    var entryType = MapToEntryType(record);
+                    if (levelFilter.Count > 0 && !levelFilter.Contains(entryType))
                         continue;
 
-                    var model = CreateModel(entry, logName);
+                    var model = CreateModel(record, logName);
                     await processor(model);
                     processedCount++;
                     WriteProgress(processedCount, logName);
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogWarning(ex, "Error processing event at index {Index} in {LogName}", i, logName);
+                    _logger?.LogWarning(ex, "Error processing event in {LogName}", logName);
                 }
             }
 
@@ -155,6 +149,10 @@ public class EventLogReader
             _logger?.LogInformation(
                 "Completed reading {LogName}: streamed {Count} events up to {UpToDate}",
                 logName, processedCount, upToDate);
+        }
+        catch (EventLogNotFoundException)
+        {
+            _logger?.LogWarning("Event log '{LogName}' does not exist", logName);
         }
         catch (System.Security.SecurityException ex)
         {
@@ -168,11 +166,11 @@ public class EventLogReader
                 "UNAUTHORIZED ACCESS: Cannot read Event Log '{LogName}'. Current user: {CurrentUser}.",
                 logName, Environment.UserName);
         }
-        catch (System.ComponentModel.Win32Exception ex)
+        catch (EventLogException ex)
         {
             _logger?.LogError(ex,
-                "WINDOWS ERROR: Failed to access Event Log '{LogName}'. Win32 Error Code: {ErrorCode}. Current user: {CurrentUser}.",
-                logName, ex.NativeErrorCode, Environment.UserName);
+                "EVENT LOG ERROR: Failed to read Event Log '{LogName}'. Current user: {CurrentUser}.",
+                logName, Environment.UserName);
         }
         catch (Exception ex)
         {
@@ -192,28 +190,35 @@ public class EventLogReader
     {
         try
         {
-            using var eventLog = new EventLog(logName);
+            // ReverseDirection makes the reader return newest-first, so the first
+            // record is the latest. Works for both classic and modern channels.
+            var query = new EventLogQuery(logName, PathType.LogName) { ReverseDirection = true };
+            using var reader = new System.Diagnostics.Eventing.Reader.EventLogReader(query);
 
-            if (!EventLog.Exists(logName))
-            {
-                _logger?.LogWarning("Event log '{LogName}' does not exist", logName);
-                return null;
-            }
-
-            if (eventLog.Entries.Count == 0)
+            using var record = reader.ReadEvent();
+            if (record == null)
             {
                 _logger?.LogDebug("Event log '{LogName}' has no entries", logName);
                 return null;
             }
 
-            var latestEntry = eventLog.Entries[eventLog.Entries.Count - 1];
-            var latestDate = latestEntry.TimeGenerated;
+            if (!record.TimeCreated.HasValue)
+            {
+                _logger?.LogDebug("Latest event in '{LogName}' has no TimeCreated", logName);
+                return null;
+            }
 
+            var latestDate = record.TimeCreated.Value;
             _logger?.LogInformation(
-                "Latest event in {LogName}: {LatestDate} (EventID: {EventId}, Index: {Index})",
-                logName, latestDate, latestEntry.InstanceId, latestEntry.Index);
+                "Latest event in {LogName}: {LatestDate} (EventID: {EventId}, RecordID: {RecordId})",
+                logName, latestDate, record.Id, record.RecordId);
 
             return latestDate;
+        }
+        catch (EventLogNotFoundException)
+        {
+            _logger?.LogWarning("Event log '{LogName}' does not exist", logName);
+            return null;
         }
         catch (System.Security.SecurityException ex)
         {
@@ -229,11 +234,11 @@ public class EventLogReader
                 logName, Environment.UserName);
             return null;
         }
-        catch (System.ComponentModel.Win32Exception ex)
+        catch (EventLogException ex)
         {
             _logger?.LogError(ex,
-                "WINDOWS ERROR: Failed to access Event Log '{LogName}'. Win32 Error Code: {ErrorCode}. Current user: {CurrentUser}.",
-                logName, ex.NativeErrorCode, Environment.UserName);
+                "EVENT LOG ERROR: Failed to read Event Log '{LogName}'. Current user: {CurrentUser}.",
+                logName, Environment.UserName);
             return null;
         }
         catch (Exception ex)
@@ -241,6 +246,48 @@ public class EventLogReader
             _logger?.LogError(ex,
                 "Error getting latest event date from {LogName}. Current user: {CurrentUser}",
                 logName, Environment.UserName);
+            return null;
+        }
+    }
+
+    private static EventLogQuery BuildIncrementalQuery(string logName, DateTime? since, long? afterEventId)
+    {
+        var conditions = new List<string>();
+
+        if (since.HasValue)
+        {
+            var sinceUtc = since.Value.Kind == DateTimeKind.Utc ? since.Value : since.Value.ToUniversalTime();
+            conditions.Add($"TimeCreated[@SystemTime>='{sinceUtc:yyyy-MM-ddTHH:mm:ss.fffZ}']");
+        }
+
+        if (afterEventId.HasValue && afterEventId.Value > 0)
+        {
+            conditions.Add($"EventRecordID>{afterEventId.Value}");
+        }
+
+        string? xpath = conditions.Count > 0
+            ? $"*[System[{string.Join(" and ", conditions)}]]"
+            : null;
+
+        return new EventLogQuery(logName, PathType.LogName, xpath);
+    }
+
+    private static EventLogQuery BuildUpToDateQuery(string logName, DateTime upToDate)
+    {
+        var upToDateUtc = upToDate.Kind == DateTimeKind.Utc ? upToDate : upToDate.ToUniversalTime();
+        var xpath = $"*[System[TimeCreated[@SystemTime<='{upToDateUtc:yyyy-MM-ddTHH:mm:ss.fffZ}']]]";
+        return new EventLogQuery(logName, PathType.LogName, xpath);
+    }
+
+    private EventRecord? ReadNext(System.Diagnostics.Eventing.Reader.EventLogReader reader, string logName)
+    {
+        try
+        {
+            return reader.ReadEvent();
+        }
+        catch (EventLogException ex)
+        {
+            _logger?.LogWarning(ex, "Error reading next event from {LogName}", logName);
             return null;
         }
     }
@@ -264,38 +311,67 @@ public class EventLogReader
         }
     }
 
-    private EventLogEntryModel CreateModel(EventLogEntry entry, string logName)
+    private EventLogEntryModel CreateModel(EventRecord record, string logName)
     {
+        var message = SafeFormat(record);
+
         return new EventLogEntryModel
         {
-            Index = entry.Index,
-            TimeGenerated = entry.TimeGenerated,
-            Source = entry.Source,
-            Message = entry.Message,
-            EntryType = entry.EntryType,
-            EventID = (int)entry.InstanceId,
-            Category = entry.Category,
-            MachineName = entry.MachineName,
-            UserName = entry.UserName,
+            Index = record.RecordId ?? 0L,
+            TimeGenerated = record.TimeCreated ?? DateTime.UtcNow,
+            Source = record.ProviderName ?? string.Empty,
+            Message = message ?? string.Empty,
+            EntryType = MapToEntryType(record),
+            EventID = record.Id,
+            Category = SafeTaskName(record),
+            MachineName = record.MachineName ?? string.Empty,
+            UserName = TranslateUser(record),
             Log = logName,
-            IP = ExtractIpFromMessage(entry.Message)
+            IP = ExtractIpFromMessage(message)
         };
     }
 
+    private static string? SafeFormat(EventRecord record)
+    {
+        // FormatDescription throws or returns null for events whose provider
+        // metadata isn't installed locally (common for ForwardedEvents).
+        try { return record.FormatDescription(); }
+        catch { return null; }
+    }
+
+    private static string? SafeTaskName(EventRecord record)
+    {
+        try { return record.TaskDisplayName; }
+        catch { return null; }
+    }
+
+    private static string? TranslateUser(EventRecord record)
+    {
+        try
+        {
+            return record.UserId?.Translate(typeof(NTAccount))?.Value;
+        }
+        catch
+        {
+            // Identity not mappable to an NT account — fall back to SID string.
+            return record.UserId?.Value;
+        }
+    }
+
     private bool ShouldIncludeEvent(
-        EventLogEntry entry,
+        EventRecord record,
         DateTime? since,
         long? afterEventId,
         HashSet<EventLogEntryType> levelFilter)
     {
-        if (levelFilter.Count > 0 && !levelFilter.Contains(entry.EntryType))
+        if (levelFilter.Count > 0 && !levelFilter.Contains(MapToEntryType(record)))
             return false;
 
-        if (since.HasValue)
+        if (since.HasValue && record.TimeCreated.HasValue)
         {
-            var entryTimeUtc = entry.TimeGenerated.Kind == DateTimeKind.Utc
-                ? entry.TimeGenerated
-                : entry.TimeGenerated.ToUniversalTime();
+            var entryTimeUtc = record.TimeCreated.Value.Kind == DateTimeKind.Utc
+                ? record.TimeCreated.Value
+                : record.TimeCreated.Value.ToUniversalTime();
 
             var sinceUtc = since.Value.Kind == DateTimeKind.Utc
                 ? since.Value
@@ -305,10 +381,30 @@ public class EventLogReader
                 return false;
         }
 
-        if (afterEventId.HasValue && entry.Index <= afterEventId.Value)
+        if (afterEventId.HasValue && record.RecordId.HasValue && record.RecordId.Value <= afterEventId.Value)
             return false;
 
         return true;
+    }
+
+    private static EventLogEntryType MapToEntryType(EventRecord record)
+    {
+        // Security-channel audit events carry their success/failure flag in
+        // Keywords, not Level. Check those first.
+        const long AUDIT_SUCCESS = 0x0020000000000000L;
+        const long AUDIT_FAILURE = 0x0010000000000000L;
+        var keywords = record.Keywords ?? 0L;
+
+        if ((keywords & AUDIT_SUCCESS) != 0) return EventLogEntryType.SuccessAudit;
+        if ((keywords & AUDIT_FAILURE) != 0) return EventLogEntryType.FailureAudit;
+
+        // Modern API Level: 1=Critical, 2=Error, 3=Warning, 4=Information, 5=Verbose, 0=LogAlways.
+        return record.Level switch
+        {
+            1 or 2 => EventLogEntryType.Error,
+            3 => EventLogEntryType.Warning,
+            _ => EventLogEntryType.Information
+        };
     }
 
     private EventLogEntryType? ParseLevel(string level)
