@@ -69,6 +69,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _toastMessage = string.Empty;
     private string _toastColor = "#9ED29E";
     private CancellationTokenSource? _toastCts;
+    private string _serviceVersion = "—";
 
     public MainWindowViewModel(
         Func<string, string, Task<bool>> exportTextAsync,
@@ -147,6 +148,35 @@ public sealed class MainWindowViewModel : ObservableObject
         ExitFromApiKeyModalCommand = new RelayCommand(ExitFromApiKeyModal);
         CloseTestReportCommand = new RelayCommand(CloseTestReport);
         CopyTestReportCommand = new AsyncRelayCommand(CopyTestReportAsync);
+
+        // Fire-and-forget: query SCM for the installed service exe's FileVersion so
+        // the status bar can show 'UI vX  ·  Svc vY'. Refreshing once at startup is
+        // enough — Velopack restarts the UI after applying an update, so the next
+        // value the user sees is naturally re-read from the freshly-swapped service
+        // binary. ServiceQueryResult.BinaryVersion is the same field the Service
+        // Management page already binds to, so this stays consistent across views.
+        _ = RefreshServiceVersionAsync();
+    }
+
+    private async Task RefreshServiceVersionAsync()
+    {
+        try
+        {
+            var query = await ServiceControl.QueryAsync();
+            ServiceVersion = query.Installed
+                && !string.IsNullOrWhiteSpace(query.BinaryVersion)
+                && !string.Equals(query.BinaryVersion, "Unknown", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(query.BinaryVersion, "NotInstalled", StringComparison.OrdinalIgnoreCase)
+                    ? $"v{query.BinaryVersion}"
+                    : "—";
+        }
+        catch
+        {
+            // QueryAsync shells out to sc.exe and FileVersionInfo.GetVersionInfo —
+            // both can fail on non-Windows / locked-down hosts. Don't crash the
+            // status bar; leave the placeholder.
+            ServiceVersion = "—";
+        }
     }
 
     public OverviewPageViewModel OverviewPage { get; }
@@ -208,6 +238,17 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         get => _instanceSummary;
         set => SetProperty(ref _instanceSummary, value);
+    }
+
+    /// <summary>
+    /// FileVersion of the SCM-registered service exe, prefixed with 'v', or "—" when
+    /// the service is not installed / query failed. Refreshed once at startup; the UI
+    /// gets restarted by Velopack after an update so we never need to poll.
+    /// </summary>
+    public string ServiceVersion
+    {
+        get => _serviceVersion;
+        private set => SetProperty(ref _serviceVersion, value);
     }
 
     public string StatusMessage
