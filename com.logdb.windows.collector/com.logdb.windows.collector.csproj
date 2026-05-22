@@ -11,10 +11,12 @@
     <!-- Must match the UI csproj. Without these set, MSBuild stamps the
          output exe with FileVersion 1.0.0.0 regardless of which tag we
          build from — making file-metadata checks meaningless and turning
-         "is the binary actually updated" into a guessing game. -->
-    <Version>1.1.18</Version>
-    <AssemblyVersion>1.1.18.0</AssemblyVersion>
-    <FileVersion>1.1.18.0</FileVersion>
+         "is the binary actually updated" into a guessing game.
+         Baseline for local/dev builds; CI overrides via -p:Version=<tag-version>
+         so the released binary's version matches the tag exactly. -->
+    <Version>1.1.20</Version>
+    <AssemblyVersion>1.1.20.0</AssemblyVersion>
+    <FileVersion>1.1.20.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

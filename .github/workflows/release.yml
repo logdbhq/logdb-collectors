@@ -145,6 +145,7 @@ jobs:
         ./scripts/publish-windows-collector.ps1 `
           -Configuration Release `
           -Runtime win-x64 `
+          -Version "${{ steps.check.outputs.version_number }}" `
           -SelfContained:$true `
           -CreateZip:$true
 

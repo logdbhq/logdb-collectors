@@ -14,7 +14,27 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly Func<string, Task> _copyToClipboardAsync;
     private readonly Action<bool> _applyThemeAction;
 
-    public string AppVersion { get; } = $"v{typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.0.0"}";
+    // Prefer the version Velopack wrote to sq.version (always matches the package
+    // tag this install was built from) and fall back to the compiled assembly's
+    // version only when not running inside a Velopack-managed install (dev builds).
+    // Without the Velopack-first path, a stale <Version> in the csproj would freeze
+    // the displayed version even though the deployed package is newer.
+    public string AppVersion { get; } = $"v{ResolveDisplayVersion()}";
+
+    private static string ResolveDisplayVersion()
+    {
+        try
+        {
+            var velopack = new UpdaterService().CurrentVersion;
+            if (!string.IsNullOrWhiteSpace(velopack)) return velopack;
+        }
+        catch
+        {
+            // UpdaterService constructor can throw on non-Windows or when Velopack
+            // metadata is unreadable — fall through to assembly version.
+        }
+        return typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    }
 
     private NavigationItemViewModel? _selectedNavigationItem;
     private PageViewModelBase? _currentPage;

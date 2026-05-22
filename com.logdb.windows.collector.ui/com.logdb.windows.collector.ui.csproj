@@ -9,9 +9,12 @@
     <ApplicationIcon>Assets\Icons\logo-mark-c.ico</ApplicationIcon>
     <Win32Icon>Assets\Icons\logo-mark-c.ico</Win32Icon>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
-    <Version>1.1.18</Version>
-    <AssemblyVersion>1.1.18.0</AssemblyVersion>
-    <FileVersion>1.1.18.0</FileVersion>
+    <!-- Baseline for local/dev builds. CI overrides via -p:Version=<tag-version> so
+         the assembly's version matches the released tag exactly. Don't rely on this
+         file being bumped before tagging — the CI override is the source of truth. -->
+    <Version>1.1.20</Version>
+    <AssemblyVersion>1.1.20.0</AssemblyVersion>
+    <FileVersion>1.1.20.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
