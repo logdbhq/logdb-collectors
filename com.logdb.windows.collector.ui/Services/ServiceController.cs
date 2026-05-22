@@ -35,6 +35,46 @@ public static class ServiceController
         return RunSc("query " + ServiceName, out _) == 0;
     }
 
+    /// <summary>
+    /// Returns the path SCM has registered for the service binary (the exe portion of
+    /// BINARY_PATH_NAME, with any trailing CLI args stripped), or null if the service
+    /// isn't installed or sc.exe output couldn't be parsed.
+    ///
+    /// Used by the Velopack post-update flow to discover whether SCM points at a path
+    /// outside the Velopack-managed install dir — when it does (common when the service
+    /// was installed via a custom installer to e.g. C:\LogDB.Collector\service), the
+    /// fresh service binaries Velopack just dropped into &lt;install&gt;\current\service\
+    /// must be copied to that external location before the service is restarted.
+    /// </summary>
+    public static string? QueryBinaryPath()
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        if (RunSc("qc " + ServiceName, out var output) != 0) return null;
+
+        // sc qc output line we want:
+        //     BINARY_PATH_NAME   : "C:\path\to\svc.exe" --some-arg
+        // or unquoted:
+        //     BINARY_PATH_NAME   : C:\path\to\svc.exe
+        var line = output.Split('\n').FirstOrDefault(l =>
+            l.Contains("BINARY_PATH_NAME", StringComparison.OrdinalIgnoreCase));
+        if (line is null) return null;
+
+        var colon = line.IndexOf(':');
+        if (colon < 0 || colon >= line.Length - 1) return null;
+        var raw = line[(colon + 1)..].Trim();
+        if (raw.Length == 0) return null;
+
+        if (raw.StartsWith('"'))
+        {
+            var end = raw.IndexOf('"', 1);
+            return end > 1 ? raw[1..end] : null;
+        }
+
+        // Unquoted: stop at first whitespace so trailing CLI args don't bleed into the path.
+        var space = raw.IndexOfAny(new[] { ' ', '\t' });
+        return space > 0 ? raw[..space] : raw;
+    }
+
     public static bool Stop(TimeSpan? timeout = null)
     {
         if (!OperatingSystem.IsWindows()) return false;
