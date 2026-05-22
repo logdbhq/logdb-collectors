@@ -39,10 +39,9 @@ if (envOverrides.Count > 0)
 if (builder.Configuration.GetValue<bool>("LogDbExporter:Enabled"))
 {
     var configuredEndpoint = builder.Configuration["LogDbExporter:Endpoint"];
-    if (string.IsNullOrWhiteSpace(configuredEndpoint)
-        || configuredEndpoint.Contains("your-service.com", StringComparison.OrdinalIgnoreCase)
-        || configuredEndpoint.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+    if (ShouldDiscoverEndpoint(configuredEndpoint, out var reason))
     {
+        Console.WriteLine($"LogDB endpoint '{configuredEndpoint ?? "(empty)"}' triggers discovery: {reason}");
         var resolved = await DiscoverServiceUrlAsync(builder.Configuration);
         if (!string.IsNullOrWhiteSpace(resolved))
         {
@@ -369,6 +368,52 @@ spoolStore.Initialize();
 agentStatus.SetSpoolInitialized();
 
 app.Run();
+
+// Heuristic: should we ignore the configured endpoint and call discovery?
+// Triggers on empty, placeholder hostnames, loopback, and single-label hostnames
+// like "grpc-logger" — those resolve via Docker DNS to a sidecar that isn't the
+// real remote backend, which silently looks like success in the exporter console.
+static bool ShouldDiscoverEndpoint(string? endpoint, out string reason)
+{
+    if (string.IsNullOrWhiteSpace(endpoint))
+    {
+        reason = "endpoint is empty";
+        return true;
+    }
+
+    if (endpoint.Contains("your-service.com", StringComparison.OrdinalIgnoreCase)
+        || endpoint.Contains("your-logdb-instance", StringComparison.OrdinalIgnoreCase))
+    {
+        reason = "endpoint is a placeholder";
+        return true;
+    }
+
+    // Try to parse — if it isn't a well-formed absolute URI, also fall back to discovery.
+    if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
+    {
+        reason = "endpoint is not a valid absolute URI";
+        return true;
+    }
+
+    if (uri.IsLoopback || string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+    {
+        reason = "endpoint points at loopback";
+        return true;
+    }
+
+    // Single-label hostname like "grpc-logger" or "logdb" — only resolvable inside
+    // a Docker network. Not appropriate for a collector that's supposed to push to
+    // a remote LogDB instance.
+    var host = uri.Host;
+    if (uri.HostNameType == UriHostNameType.Dns && !host.Contains('.'))
+    {
+        reason = $"endpoint host '{host}' has no dot — looks like a Docker-internal name";
+        return true;
+    }
+
+    reason = "";
+    return false;
+}
 
 static async Task<string?> DiscoverServiceUrlAsync(IConfiguration configuration)
 {

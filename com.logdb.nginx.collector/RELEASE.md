@@ -6,7 +6,6 @@
 
 - .NET 10 SDK (preview)
 - Docker with BuildKit
-- GitHub token for NuGet package access (LogDB.Client)
 
 ### Build the Image
 
@@ -14,7 +13,6 @@
 cd LogDB.Exporters
 
 docker build -f com.logdb.nginx.collector/Dockerfile \
-  --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
   --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
   --build-arg COMMIT_HASH=$(git rev-parse --short HEAD) \
   -t logdb/nginx-collector:rc1 .

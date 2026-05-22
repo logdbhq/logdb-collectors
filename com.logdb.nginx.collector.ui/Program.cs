@@ -13,6 +13,12 @@ builder.Services.AddHttpClient("NginxCollectorApi", client =>
 
 var app = builder.Build();
 
+var pathBase = Environment.GetEnvironmentVariable("PathBase")?.TrimEnd('/');
+if (!string.IsNullOrEmpty(pathBase))
+{
+    app.UsePathBase(pathBase);
+}
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error");
