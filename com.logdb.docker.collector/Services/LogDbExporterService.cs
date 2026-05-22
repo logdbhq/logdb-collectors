@@ -11,9 +11,13 @@ namespace com.logdb.docker.collector.Services;
 public class LogDbExporterService : ILogDbExporter
 {
     private readonly ILogger<LogDbExporterService> _logger;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly LogDbExporterOptions _options;
-    private readonly ILogDBClient _client;
     private readonly string _settingsPath;
+    private readonly SemaphoreSlim _rediscoverGate = new(1, 1);
+
+    private ILogDBClient _client;
+    private string _currentEndpoint;
 
     private long _batchesSent;
     private long _recordsSent;
@@ -30,6 +34,7 @@ public class LogDbExporterService : ILogDbExporter
         IOptions<CheckpointOptions> checkpointOptions, ILoggerFactory loggerFactory)
     {
         _logger = logger;
+        _loggerFactory = loggerFactory;
         _options = options.Value;
 
         // Persist toggle state next to checkpoints (on the Docker volume)
@@ -37,6 +42,25 @@ public class LogDbExporterService : ILogDbExporter
         _settingsPath = Path.Combine(checkpointDir, "exporter-settings.json");
         LoadSettings();
 
+        _currentEndpoint = _options.Endpoint;
+        _client = BuildClient(_currentEndpoint);
+
+        if (EndpointDiscovery.IsPlaceholder(_currentEndpoint))
+        {
+            _logger.LogWarning(
+                "LogDB exporter endpoint is '{Endpoint}' — looks like a placeholder. Discovery will be retried when the exporter is enabled. Set LOGDB_EXPORTER_ENDPOINT to skip discovery.",
+                _currentEndpoint);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "LogDB exporter initialized: endpoint={Endpoint}, protocol={Protocol}, enabled={Enabled}",
+                _currentEndpoint, _options.Protocol, IsEnabled);
+        }
+    }
+
+    private ILogDBClient BuildClient(string endpoint)
+    {
         var protocol = Enum.TryParse<LogDBProtocol>(_options.Protocol, ignoreCase: true, out var parsedProtocol)
             ? parsedProtocol
             : LogDBProtocol.Native;
@@ -44,7 +68,7 @@ public class LogDbExporterService : ILogDbExporter
         var clientOptions = new LogDBLoggerOptions
         {
             ApiKey = _options.ApiKey,
-            ServiceUrl = _options.Endpoint,
+            ServiceUrl = endpoint,
             Protocol = protocol,
             EnableBatching = true,
             BatchSize = _options.MaxBatchRecords,
@@ -54,7 +78,39 @@ public class LogDbExporterService : ILogDbExporter
             EnableCircuitBreaker = true
         };
 
-        _client = new LogDBClient(Options.Create(clientOptions), loggerFactory.CreateLogger<LogDBClient>());
+        return new LogDBClient(Options.Create(clientOptions), _loggerFactory.CreateLogger<LogDBClient>());
+    }
+
+    private async Task RediscoverEndpointIfNeededAsync()
+    {
+        if (!EndpointDiscovery.IsPlaceholder(_currentEndpoint)) return;
+
+        if (!await _rediscoverGate.WaitAsync(0)) return;
+        try
+        {
+            if (!EndpointDiscovery.IsPlaceholder(_currentEndpoint)) return;
+
+            var resolved = await EndpointDiscovery.DiscoverGrpcLoggerUrlAsync(
+                _options.ApiKey,
+                msg => _logger.LogInformation("{Msg}", msg));
+
+            if (string.IsNullOrWhiteSpace(resolved) || EndpointDiscovery.IsPlaceholder(resolved))
+            {
+                _logger.LogWarning("Discovery did not return a usable endpoint; exporter will keep dialing '{Endpoint}'.", _currentEndpoint);
+                return;
+            }
+
+            var oldClient = _client;
+            _client = BuildClient(resolved);
+            _currentEndpoint = resolved;
+            _logger.LogInformation("LogDB exporter endpoint updated via discovery: {Endpoint}", resolved);
+
+            try { await oldClient.DisposeAsync(); } catch { /* old client already losing references */ }
+        }
+        finally
+        {
+            _rediscoverGate.Release();
+        }
     }
 
     private bool IsEnabled => _hasOverride ? _enabledOverride : _options.Enabled;
@@ -65,6 +121,15 @@ public class LogDbExporterService : ILogDbExporter
         _hasOverride = true;
         SaveSettings();
         _logger.LogInformation("Exporter {State} via UI", enabled ? "enabled" : "disabled");
+
+        if (enabled && EndpointDiscovery.IsPlaceholder(_currentEndpoint))
+        {
+            _ = Task.Run(async () =>
+            {
+                try { await RediscoverEndpointIfNeededAsync(); }
+                catch (Exception ex) { _logger.LogWarning("Endpoint rediscovery failed: {Msg}", ex.Message); }
+            });
+        }
     }
 
     public ExporterStatus GetStatus()
@@ -72,7 +137,7 @@ public class LogDbExporterService : ILogDbExporter
         return new ExporterStatus
         {
             Enabled = IsEnabled,
-            Endpoint = _options.Endpoint,
+            Endpoint = _currentEndpoint,
             Healthy = _healthy,
             BatchesSent = Interlocked.Read(ref _batchesSent),
             RecordsSent = Interlocked.Read(ref _recordsSent),
@@ -112,7 +177,10 @@ public class LogDbExporterService : ILogDbExporter
             Interlocked.Add(ref _recordsSent, batch.Count);
             _lastSendUtc = DateTime.UtcNow;
             _lastError = null;
+            var wasUnhealthy = !_healthy;
             _healthy = true;
+            if (wasUnhealthy)
+                _logger.LogInformation("LogDB exporter recovered: {Endpoint} reachable again", _currentEndpoint);
 
             _logger.LogDebug("Exported batch: {Raw} records -> {Aggregated} events", batch.Count, logs.Count);
             return true;
@@ -125,7 +193,10 @@ public class LogDbExporterService : ILogDbExporter
 
             if ((DateTime.UtcNow - _lastErrorLogUtc).TotalSeconds >= 30)
             {
-                _logger.LogError("Export failed ({Count} records): {Msg}", batch.Count, ex.Message);
+                _logger.LogError(
+                    "Export failed ({Count} records) to {Endpoint} [{Protocol}]: {Msg} (errors={SendErrors}, retries={RetryCount})",
+                    batch.Count, _currentEndpoint, _options.Protocol, ex.Message,
+                    Interlocked.Read(ref _sendErrors), Interlocked.Read(ref _retryCount));
                 _lastErrorLogUtc = DateTime.UtcNow;
             }
             return false;
@@ -227,7 +298,10 @@ public class LogDbExporterService : ILogDbExporter
             Interlocked.Add(ref _recordsSent, batch.Count);
             _lastSendUtc = DateTime.UtcNow;
             _lastError = null;
+            var wasUnhealthy = !_healthy;
             _healthy = true;
+            if (wasUnhealthy)
+                _logger.LogInformation("LogDB exporter recovered (metrics): {Endpoint} reachable again", _currentEndpoint);
             return true;
         }
         catch (Exception ex)
@@ -238,7 +312,10 @@ public class LogDbExporterService : ILogDbExporter
 
             if ((DateTime.UtcNow - _lastErrorLogUtc).TotalSeconds >= 30)
             {
-                _logger.LogError("Metrics export failed ({Count} records): {Msg}", batch.Count, ex.Message);
+                _logger.LogError(
+                    "Metrics export failed ({Count} records) to {Endpoint} [{Protocol}]: {Msg} (errors={SendErrors}, retries={RetryCount})",
+                    batch.Count, _currentEndpoint, _options.Protocol, ex.Message,
+                    Interlocked.Read(ref _sendErrors), Interlocked.Read(ref _retryCount));
                 _lastErrorLogUtc = DateTime.UtcNow;
             }
             return false;

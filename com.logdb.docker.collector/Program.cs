@@ -34,16 +34,14 @@ if (envOverrides.Count > 0)
     builder.Configuration.AddInMemoryCollection(envOverrides);
 
 // Resolve gRPC service URL via discovery when Endpoint is not explicitly configured.
-// Graceful: on failure, keep whatever Endpoint is set — the spool will absorb logs
-// until the operator fixes either discovery or the explicit endpoint.
-if (builder.Configuration.GetValue<bool>("LogDbExporter:Enabled"))
+// Runs regardless of Enabled so that toggling the exporter on later finds a real endpoint.
+// Graceful: on failure, the spool absorbs logs until the operator fixes discovery or the endpoint.
 {
     var configuredEndpoint = builder.Configuration["LogDbExporter:Endpoint"];
-    if (string.IsNullOrWhiteSpace(configuredEndpoint)
-        || configuredEndpoint.Contains("your-service.com", StringComparison.OrdinalIgnoreCase)
-        || configuredEndpoint.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+    if (EndpointDiscovery.IsPlaceholder(configuredEndpoint))
     {
-        var resolved = await DiscoverServiceUrlAsync(builder.Configuration);
+        var apiKey = builder.Configuration["LogDbExporter:ApiKey"];
+        var resolved = await EndpointDiscovery.DiscoverGrpcLoggerUrlAsync(apiKey, Console.WriteLine);
         if (!string.IsNullOrWhiteSpace(resolved))
         {
             builder.Configuration["LogDbExporter:Endpoint"] = resolved;
@@ -401,39 +399,3 @@ var spoolStore = app.Services.GetRequiredService<ISpoolStore>();
 spoolStore.Initialize();
 
 app.Run();
-
-static async Task<string?> DiscoverServiceUrlAsync(IConfiguration configuration)
-{
-    try
-    {
-        Console.WriteLine("Discovering LogDB service URL from discovery service...");
-        using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-
-        var apiKey = configuration["LogDbExporter:ApiKey"];
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://discovery.logdb.site/resolve/grpc-logger");
-        if (!string.IsNullOrWhiteSpace(apiKey))
-        {
-            request.Headers.TryAddWithoutValidation("X-API-Key", apiKey);
-        }
-
-        using var response = await httpClient.SendAsync(request);
-        response.EnsureSuccessStatusCode();
-        var json = await response.Content.ReadAsStringAsync();
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
-
-        if (doc.RootElement.TryGetProperty("serviceUrl", out var prop))
-        {
-            var discoveredUrl = prop.GetString()?.Trim();
-            if (!string.IsNullOrWhiteSpace(discoveredUrl))
-            {
-                Console.WriteLine($"Discovered LogDB service URL: {discoveredUrl}");
-                return discoveredUrl;
-            }
-        }
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"Discovery service failed: {ex.Message} (falling back to configured endpoint)");
-    }
-    return null;
-}

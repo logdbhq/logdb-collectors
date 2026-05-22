@@ -7,11 +7,18 @@ services:
       - "8080:8080"
     volumes:
       # Docker container logs.
-      # Pick the line that matches your host. Check with: docker info | grep "Docker Root Dir"
-      # - Standard install (apt/deb/rpm): /var/lib/docker
-      # - Snap install:                   /var/snap/docker/common/var-lib-docker
+      # Check your install with: docker info | grep "Docker Root Dir"
+      # IMPORTANT: source and destination MUST be the same path. Docker's inspect
+      # API returns the host LogPath verbatim, so the collector looks for that
+      # exact path inside its own filesystem. Bind-mount it at the same location.
+      #
+      # Uncomment ONE of the following based on your host's Docker install:
+      #
+      # Standard install (apt/deb/rpm):
       # - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
+      #
+      # Snap install:
+      - /var/snap/docker/common/var-lib-docker/containers:/var/snap/docker/common/var-lib-docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - logdb-collector:/var/lib/logdb-collector
     environment:

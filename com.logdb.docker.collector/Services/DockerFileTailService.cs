@@ -148,7 +148,7 @@ public class DockerFileTailService : IFileTailService
         {
             if (!File.Exists(target.LogPath))
             {
-                _logger.LogDebug("Log not found: {Container}", target.ContainerName);
+                _logger.LogWarning("Log file not found for {Container} at {LogPath} — check that the host's container log directory is bind-mounted at the same path inside this collector container (Docker's inspect API returns the host path verbatim).", target.ContainerName, target.LogPath);
                 return;
             }
 
