@@ -25,6 +25,14 @@ public class IISLogExportService : BackgroundService
     private readonly string _serverName;
     private readonly string _serverEnvironment;
 
+    // When batching is on, each read-chunk is sent via SendLogBatchAsync in
+    // sub-batches of _batchSize instead of one LogAsync per row. The file's
+    // byte-position checkpoint is advanced only after every sub-batch in the
+    // chunk has confirmed, so a send failure re-reads the chunk next cycle
+    // (the deterministic per-row Guid makes that re-delivery idempotent).
+    private readonly bool _enableBatching;
+    private readonly int _batchSize;
+
     // Command-line flags (set from Program.cs)
     public static DateTime? InitialStartDate { get; set; }
     public static bool ResetState { get; set; }
@@ -33,6 +41,11 @@ public class IISLogExportService : BackgroundService
 
     // Store field mappings per file (headers) to handle resuming/chunking correctly
     private readonly Dictionary<string, Dictionary<string, int>> _fileHeaderMaps = new();
+
+    // Max entries read per file per chunk. Bounds memory for very large log
+    // files (multi-hundred-MB historical logs) and keeps a single huge file
+    // from monopolizing the export cycle while other sites wait.
+    private const int ReadChunkSize = 5000;
 
     public IISLogExportService(
         ILogger<IISLogExportService> logger,
@@ -52,6 +65,9 @@ public class IISLogExportService : BackgroundService
 
         _serverName = configuration["Server:ServerName"] ?? Environment.MachineName;
         _serverEnvironment = configuration["Server:ServerEnvironment"] ?? "Production";
+
+        _enableBatching = configuration.GetValue("Batch:EnableBatching", false);
+        _batchSize = Math.Max(1, configuration.GetValue("Batch:Size", 100));
 
         // Bind IIS config section
         _config = new IISExportConfig();
@@ -198,14 +214,38 @@ public class IISLogExportService : BackgroundService
 
     private async Task<int> ProcessFilesAsync(List<string> logFiles, bool isAzureJson, CancellationToken stoppingToken)
     {
+        // Group files by their site folder (parent directory) and process the
+        // sites round-robin instead of strictly alphabetically. Without this, a
+        // site with a large historical backlog that sorts first (e.g. FTPSVC*)
+        // monopolizes the entire cycle and later sites (W3SVC*) are never
+        // reached, so their logs never leave the box. Files within a site keep
+        // their original (date) order, which IIS rotation relies on.
+        var siteQueues = logFiles
+            .GroupBy(f => Path.GetDirectoryName(f) ?? string.Empty)
+            .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new Queue<string>(g.OrderBy(f => f, StringComparer.OrdinalIgnoreCase)))
+            .ToList();
+
         var totalProcessed = 0;
 
-        foreach (var logFile in logFiles)
+        // Each round takes the next pending file from every site, so all sites
+        // advance together within a single cycle rather than one-site-at-a-time.
+        while (siteQueues.Any(q => q.Count > 0))
         {
             if (stoppingToken.IsCancellationRequested)
                 break;
 
-            totalProcessed += await ProcessLogFileAsync(logFile, isAzureJson, stoppingToken);
+            foreach (var queue in siteQueues)
+            {
+                if (stoppingToken.IsCancellationRequested)
+                    break;
+
+                if (queue.Count == 0)
+                    continue;
+
+                var logFile = queue.Dequeue();
+                totalProcessed += await ProcessLogFileAsync(logFile, isAzureJson, stoppingToken);
+            }
         }
 
         return totalProcessed;
@@ -231,68 +271,115 @@ public class IISLogExportService : BackgroundService
             Console.Write($" (resuming from byte {lastBytePosition:N0})");
         Console.WriteLine();
 
-        List<IISLogEntry> entries;
-        long newBytePosition;
+        long currentPosition = lastBytePosition;
+        var runningTimestamp = lastLogTimestamp;
+        var totalRead = 0;
+        var totalSent = 0;
 
-        if (isAzureJson)
+        // Read the file in bounded chunks. This caps memory for very large files
+        // (a 500 MB log no longer materializes as one giant list) and persists
+        // progress after every chunk, so a crash/restart resumes mid-file.
+        while (!stoppingToken.IsCancellationRequested)
         {
-            (entries, newBytePosition, _) = await _azureReader.ReadEntriesAsync(
-                logFile, lastBytePosition, int.MaxValue, null, stoppingToken);
+            List<IISLogEntry> entries;
+            long newBytePosition;
+
+            if (isAzureJson)
+            {
+                (entries, newBytePosition, _) = await _azureReader.ReadEntriesAsync(
+                    logFile, currentPosition, ReadChunkSize, null, stoppingToken);
+            }
+            else
+            {
+                _fileHeaderMaps.TryGetValue(logFile, out var fieldMap);
+
+                Dictionary<string, int> updatedFieldMap;
+                (entries, newBytePosition, updatedFieldMap) = await _logReader.ReadEntriesAsync(
+                    logFile, currentPosition, ReadChunkSize, fieldMap, stoppingToken);
+
+                if (updatedFieldMap != null && updatedFieldMap.Count > 0)
+                    _fileHeaderMaps[logFile] = updatedFieldMap;
+            }
+
+            var readCount = entries.Count;
+
+            if (readCount == 0)
+            {
+                // EOF with nothing new - persist position and stop.
+                _fileStateTracker.UpdateFileState(logFile, newBytePosition, runningTimestamp);
+                break;
+            }
+
+            // Track max timestamp over the raw (unfiltered) chunk for state.
+            var chunkMaxTimestamp = entries.Max(e => e.Timestamp);
+            if (!runningTimestamp.HasValue || chunkMaxTimestamp > runningTimestamp.Value)
+                runningTimestamp = chunkMaxTimestamp;
+
+            // Migration safety: only on the first chunk when resuming from byte 0.
+            if (currentPosition == 0 && lastLogTimestamp.HasValue)
+                entries = entries.Where(e => e.Timestamp > lastLogTimestamp.Value).ToList();
+
+            // InitialStartDate filter (first run only)
+            if (InitialStartDate.HasValue)
+                entries = entries.Where(e => e.Timestamp >= InitialStartDate.Value).ToList();
+
+            // Apply filters from config
+            var filteredEntries = _logFilter.FilterEntries(entries, _config);
+
+            if (filteredEntries.Count > 0)
+            {
+                Console.Write("  ");
+                var delivered = await SendToLogDBAsync(filteredEntries, stoppingToken);
+                Console.WriteLine();
+                if (!delivered)
+                {
+                    // Batched send failed — leave the byte position unadvanced
+                    // so this chunk is re-read next cycle. Deterministic per-row
+                    // Guids make the re-delivery idempotent.
+                    _logger.LogWarning(
+                        "IIS: deferring {File} — batch send failed; chunk will retry next cycle", fileName);
+                    break;
+                }
+            }
+
+            currentPosition = newBytePosition;
+            _fileStateTracker.UpdateFileState(logFile, currentPosition, runningTimestamp);
+
+            totalRead += readCount;
+            totalSent += filteredEntries.Count;
+
+            // A short read means we hit EOF; this file is drained for now.
+            if (readCount < ReadChunkSize)
+                break;
         }
-        else
+
+        if (totalRead > 0)
         {
-            _fileHeaderMaps.TryGetValue(logFile, out var fieldMap);
-
-            Dictionary<string, int> updatedFieldMap;
-            (entries, newBytePosition, updatedFieldMap) = await _logReader.ReadEntriesAsync(
-                logFile, lastBytePosition, int.MaxValue, fieldMap, stoppingToken);
-
-            if (updatedFieldMap != null && updatedFieldMap.Count > 0)
-                _fileHeaderMaps[logFile] = updatedFieldMap;
+            var siteFolder = Path.GetFileName(Path.GetDirectoryName(logFile)) ?? "?";
+            Console.WriteLine($"  Site {siteFolder} / {fileName}: read {totalRead} | sent {totalSent}");
+            _logger.LogInformation("Site {Site} file {File}: read {Read}, sent {Sent}",
+                siteFolder, fileName, totalRead, totalSent);
         }
 
-        if (entries.Count == 0)
-        {
-            _fileStateTracker.UpdateFileState(logFile, newBytePosition, lastLogTimestamp);
-            return 0;
-        }
-
-        // Migration safety: if resuming from byte 0 with an existing timestamp
-        if (lastBytePosition == 0 && lastLogTimestamp.HasValue)
-        {
-            entries = entries.Where(e => e.Timestamp > lastLogTimestamp.Value).ToList();
-        }
-
-        // InitialStartDate filter (first run only)
-        if (InitialStartDate.HasValue)
-        {
-            entries = entries.Where(e => e.Timestamp >= InitialStartDate.Value).ToList();
-        }
-
-        // Apply filters from config
-        var filteredEntries = _logFilter.FilterEntries(entries, _config);
-
-        Console.WriteLine($"  Read: {entries.Count} | After filters: {filteredEntries.Count}");
-
-        if (filteredEntries.Count > 0)
-        {
-            Console.Write("  ");
-            await SendToLogDBAsync(filteredEntries, stoppingToken);
-            Console.WriteLine();
-        }
-
-        // Update state with new byte position and max timestamp
-        var maxTimestamp = entries.Count > 0
-            ? entries.Max(e => e.Timestamp)
-            : lastLogTimestamp;
-        _fileStateTracker.UpdateFileState(logFile, newBytePosition, maxTimestamp);
-
-        return filteredEntries.Count;
+        return totalSent;
     }
 
-    private async Task SendToLogDBAsync(List<IISLogEntry> entries, CancellationToken stoppingToken)
+    /// <summary>
+    /// Sends a chunk of filtered IIS entries to LogDB. Returns <c>true</c> when
+    /// the caller may advance the file's byte-position checkpoint. The per-row
+    /// path always returns <c>true</c> (best-effort, matches historical
+    /// behavior); the batched path returns <c>false</c> if a sub-batch failed so
+    /// the chunk is re-read next cycle.
+    /// </summary>
+    private async Task<bool> SendToLogDBAsync(List<IISLogEntry> entries, CancellationToken stoppingToken)
     {
         using var md5 = System.Security.Cryptography.MD5.Create();
+
+        if (_enableBatching)
+        {
+            return await SendBatchedAsync(entries, md5, stoppingToken);
+        }
+
         int sent = 0;
 
         foreach (var entry in entries)
@@ -302,76 +389,12 @@ public class IISLogExportService : BackgroundService
 
             try
             {
-                var iisEvent = new LogIISEvent
-                {
-                    Guid = GenerateDeterministicId(entry, md5),
-                    Timestamp = entry.Timestamp,
-                    Collection = GetCollectionName(entry),
-                    Method = entry.Method,
-                    UriStem = entry.UriStem,
-                    UriQuery = entry.UriQuery,
-                    Port = entry.ServerPort > 0 ? entry.ServerPort : null,
-                    Username = entry.Username,
-                    Host = entry.Host,
-                    ClientIp = entry.ClientIp,
-                    ServerIp = entry.ServerIp,
-                    UserAgent = entry.UserAgent,
-                    Referer = entry.Referer,
-                    Status = entry.StatusCode,
-                    SubStatus = entry.SubStatus > 0 ? entry.SubStatus : null,
-                    Win32Status = entry.Win32Status > 0 ? entry.Win32Status : null,
-                    TimeTaken = entry.TimeTaken > 0 ? (int)entry.TimeTaken : null,
-                    BytesSent = entry.BytesSent > 0 ? entry.BytesSent : null,
-                    BytesReceived = entry.BytesReceived > 0 ? entry.BytesReceived : null,
-                    SiteName = entry.SiteName,
-                    // LogIISEvent.ServerName always carries the configured Server:ServerName —
-                    // matches the working Metrics pattern. The mapper rewrites the key when
-                    // the user typed any per-module override, so the override flows here
-                    // without needing a separate signal key. In the no-override case the
-                    // value defaults to Environment.MachineName, which equals the W3C
-                    // log's s-computername for local IIS — bit-for-bit identical to the
-                    // pre-1.1.15 path.
-                    ServerName = _serverName,
-                };
-
-                var log = iisEvent.ToLog();
-
-                // Override fields not handled by the typed model
-                log.Application = _config.ApplicationName;
-                log.Environment = _serverEnvironment;
-                log.Level = MapStatusToLogLevel(entry.StatusCode);
-                log.Message = FormatLogMessage(entry);
-                log.Source = entry.SiteName ?? "IIS";
-                foreach (var lbl in _config.Labels)
-                    if (!log.Label.Contains(lbl)) log.Label.Add(lbl);
-
-                // Extra attributes not covered by LogIISEvent
-                if (!string.IsNullOrEmpty(entry.ProtocolVersion))
-                    log.AttributesS["protocol"] = entry.ProtocolVersion;
-                if (!string.IsNullOrEmpty(entry.SourceFile))
-                    log.AttributesS["sourceFile"] = Path.GetFileName(entry.SourceFile);
-                if (entry.LineNumber > 0)
-                    log.AttributesN["lineNumber"] = entry.LineNumber;
-
-                // Preserve the raw W3C s-computername on the row whenever it
-                // differs from the configured ServerName — keeps it queryable
-                // after an override (or in UNC-path multi-server collection).
-                if (!string.IsNullOrEmpty(entry.ServerName)
-                    && !string.Equals(entry.ServerName, _serverName, StringComparison.OrdinalIgnoreCase))
-                {
-                    log.AttributesS["original_server_name"] = entry.ServerName;
-                }
-
-                foreach (var kvp in entry.AdditionalFields)
-                {
-                    log.AttributesS[kvp.Key] = kvp.Value;
-                }
+                var log = BuildLog(entry, md5);
 
                 await _logDBClient.LogAsync(log);
                 sent++;
 
-                _logger.LogInformation("► [IIS] {Method} {Uri} -> {Status} ({TimeTaken}ms)",
-                    entry.Method, entry.UriStem, entry.StatusCode, entry.TimeTaken);
+                LogRowDiagnostic(entry);
 
                 if (sent % 10 == 0)
                 {
@@ -390,6 +413,159 @@ public class IISLogExportService : BackgroundService
         }
 
         await _logDBClient.FlushAsync();
+        return true;
+    }
+
+    /// <summary>
+    /// Batched send: groups the chunk into _batchSize sub-batches and ships each
+    /// via a single SendLogBatchAsync call. Returns false on the first failed
+    /// sub-batch (already-sent sub-batches are idempotent thanks to the
+    /// deterministic per-row Guid, so re-reading the chunk next cycle is safe).
+    /// </summary>
+    private async Task<bool> SendBatchedAsync(
+        List<IISLogEntry> entries,
+        System.Security.Cryptography.MD5 md5,
+        CancellationToken stoppingToken)
+    {
+        var pairs = new List<(IISLogEntry Entry, global::LogDB.Client.Models.Log Log)>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (stoppingToken.IsCancellationRequested)
+                return false;
+            pairs.Add((entry, BuildLog(entry, md5)));
+        }
+
+        foreach (var chunk in pairs.Chunk(_batchSize))
+        {
+            if (stoppingToken.IsCancellationRequested)
+                return false;
+
+            var logs = chunk.Select(p => p.Log).ToList();
+
+            try
+            {
+                var status = await _logDBClient.SendLogBatchAsync(logs, stoppingToken);
+                if (status != LogResponseStatus.Success)
+                {
+                    _logger.LogWarning(
+                        "IIS batch send returned {Status} for {Count} row(s) — chunk will retry next cycle",
+                        status, logs.Count);
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "IIS batch send threw for {Count} row(s) — chunk will retry next cycle", logs.Count);
+                return false;
+            }
+
+            // Batch confirmed: emit the per-row Online Console lines now, so a
+            // logged "► [IIS]" line still means the row was actually delivered.
+            foreach (var (entry, _) in chunk)
+            {
+                LogRowDiagnostic(entry);
+            }
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.Write("X");
+            Console.ResetColor();
+        }
+
+        return true;
+    }
+
+    private global::LogDB.Client.Models.Log BuildLog(IISLogEntry entry, System.Security.Cryptography.MD5 md5)
+    {
+        var iisEvent = new LogIISEvent
+        {
+            Guid = GenerateDeterministicId(entry, md5),
+            Timestamp = entry.Timestamp,
+            Collection = GetCollectionName(entry),
+            Method = entry.Method,
+            UriStem = entry.UriStem,
+            UriQuery = entry.UriQuery,
+            Port = entry.ServerPort > 0 ? entry.ServerPort : null,
+            Username = entry.Username,
+            Host = entry.Host,
+            ClientIp = entry.ClientIp,
+            ServerIp = entry.ServerIp,
+            UserAgent = entry.UserAgent,
+            Referer = entry.Referer,
+            Status = entry.StatusCode,
+            SubStatus = entry.SubStatus > 0 ? entry.SubStatus : null,
+            Win32Status = entry.Win32Status > 0 ? entry.Win32Status : null,
+            TimeTaken = entry.TimeTaken > 0 ? (int)entry.TimeTaken : null,
+            BytesSent = entry.BytesSent > 0 ? entry.BytesSent : null,
+            BytesReceived = entry.BytesReceived > 0 ? entry.BytesReceived : null,
+            SiteName = entry.SiteName,
+            // LogIISEvent.ServerName always carries the configured Server:ServerName —
+            // matches the working Metrics pattern. The mapper rewrites the key when
+            // the user typed any per-module override, so the override flows here
+            // without needing a separate signal key. In the no-override case the
+            // value defaults to Environment.MachineName, which equals the W3C
+            // log's s-computername for local IIS — bit-for-bit identical to the
+            // pre-1.1.15 path.
+            ServerName = _serverName,
+        };
+
+        var log = iisEvent.ToLog();
+
+        // Override fields not handled by the typed model
+        log.Application = _config.ApplicationName;
+        log.Environment = _serverEnvironment;
+        log.Level = MapStatusToLogLevel(entry.StatusCode);
+        log.Message = FormatLogMessage(entry);
+        log.Source = entry.SiteName ?? "IIS";
+        foreach (var lbl in _config.Labels)
+            if (!log.Label.Contains(lbl)) log.Label.Add(lbl);
+
+        // Extra attributes not covered by LogIISEvent
+        if (!string.IsNullOrEmpty(entry.ProtocolVersion))
+            log.AttributesS["protocol"] = entry.ProtocolVersion;
+        if (!string.IsNullOrEmpty(entry.SourceFile))
+            log.AttributesS["sourceFile"] = Path.GetFileName(entry.SourceFile);
+        if (entry.LineNumber > 0)
+            log.AttributesN["lineNumber"] = entry.LineNumber;
+
+        // Preserve the raw W3C s-computername on the row whenever it
+        // differs from the configured ServerName — keeps it queryable
+        // after an override (or in UNC-path multi-server collection).
+        if (!string.IsNullOrEmpty(entry.ServerName)
+            && !string.Equals(entry.ServerName, _serverName, StringComparison.OrdinalIgnoreCase))
+        {
+            log.AttributesS["original_server_name"] = entry.ServerName;
+        }
+
+        foreach (var kvp in entry.AdditionalFields)
+        {
+            log.AttributesS[kvp.Key] = kvp.Value;
+        }
+
+        return log;
+    }
+
+    private void LogRowDiagnostic(IISLogEntry entry)
+    {
+        // "LogEventTimestamp" is a well-known scope key the LogDB collector
+        // reads to surface the record's own timestamp in the Online Console
+        // (separate from when this line is logged). Only attach it when the
+        // W3C date/time actually parsed.
+        IDisposable? eventTimeScope = entry.Timestamp != default
+            ? _logger.BeginScope(new Dictionary<string, object>
+            {
+                ["LogEventTimestamp"] = entry.Timestamp
+            })
+            : null;
+        try
+        {
+            _logger.LogInformation("► [IIS] {Method} {Uri} -> {Status} ({TimeTaken}ms)",
+                entry.Method, entry.UriStem, entry.StatusCode, entry.TimeTaken);
+        }
+        finally
+        {
+            eventTimeScope?.Dispose();
+        }
     }
 
     private global::LogDB.Client.Models.LogLevel MapStatusToLogLevel(int statusCode)
@@ -579,7 +755,26 @@ public class IISLogExportService : BackgroundService
 
     private static string GenerateDeterministicId(IISLogEntry entry, System.Security.Cryptography.MD5 md5)
     {
-        var input = $"{entry.SourceFile}_{entry.LineNumber}";
+        // Derive the ID from the entry's stable content rather than its line
+        // number. LineNumber is relative to each (chunked/resumed) read, so it
+        // repeats across chunks - making the "deterministic" ID neither unique
+        // per row nor stable across re-processing. A content hash is both.
+        //  (unit separator) avoids accidental collisions between adjacent
+        // fields (e.g. "a" + "bc" vs "ab" + "c").
+        const char sep = '';
+        var input = string.Join(sep,
+            entry.SourceFile,
+            entry.Timestamp.Ticks,
+            entry.Method,
+            entry.UriStem,
+            entry.UriQuery,
+            entry.ClientIp,
+            entry.Username,
+            entry.StatusCode,
+            entry.SubStatus,
+            entry.TimeTaken,
+            entry.BytesSent,
+            entry.BytesReceived);
         var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
         return new Guid(hash).ToString();
     }

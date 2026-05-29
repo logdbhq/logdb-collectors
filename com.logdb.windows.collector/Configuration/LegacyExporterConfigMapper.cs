@@ -285,7 +285,15 @@ internal static class LegacyExporterConfigMapper
                 : config.Server.ServerName,
             ["Server:ServerEnvironment"] = string.IsNullOrWhiteSpace(config.Server.ServerEnvironment)
                 ? "Production"
-                : config.Server.ServerEnvironment
+                : config.Server.ServerEnvironment,
+
+            // Batching is honored only by the high-volume exporters (IIS,
+            // EventViewer). When enabled they accumulate a read-chunk and send
+            // it via a single SendLogBatchAsync call instead of one LogAsync
+            // per row, advancing their state checkpoint only after the batch
+            // confirms. Low-volume modules (Metrics, Heartbeat) ignore these.
+            ["Batch:EnableBatching"] = config.LogDB.Batch.EnableBatching.ToString(),
+            ["Batch:Size"] = Math.Max(1, config.LogDB.Batch.BatchSize).ToString()
         };
     }
 

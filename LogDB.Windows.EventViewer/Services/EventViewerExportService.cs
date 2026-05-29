@@ -16,6 +16,14 @@ public class EventViewerExportService : BackgroundService
     private readonly EventStateTracker _stateTracker;
     private readonly EventViewerExportConfig _config;
 
+    // When batching is on, events are accumulated and shipped via
+    // SendLogBatchAsync in groups of _batchSize instead of one LogAsync per
+    // event. The source state checkpoint is advanced only after each sub-batch
+    // confirms, so a send failure re-reads from the last confirmed event next
+    // cycle (bounded re-delivery; see ExportLogSourceStreamingAsync).
+    private readonly bool _enableBatching;
+    private readonly int _batchSize;
+
     // Command-line flags (set from Program.cs)
     public static DateTime? InitialStartDate { get; set; }
     public static bool ResetState { get; set; }
@@ -39,6 +47,9 @@ public class EventViewerExportService : BackgroundService
 
         _config = new EventViewerExportConfig();
         configuration.GetSection("EventViewer").Bind(_config);
+
+        _enableBatching = configuration.GetValue("Batch:EnableBatching", false);
+        _batchSize = Math.Max(1, configuration.GetValue("Batch:Size", 100));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -162,13 +173,99 @@ public class EventViewerExportService : BackgroundService
         int filteredOut = 0;
         var sw = Stopwatch.StartNew();
 
+        // Batched send state. `pending` accumulates filtered events; once a
+        // sub-batch confirms, the checkpoint (latestProcessed) advances. On the
+        // first failed sub-batch `aborted` stops further work so the unconfirmed
+        // events are re-read next cycle.
+        var pending = new List<(EventLogEntryModel Entry, Log Log)>();
+        var aborted = false;
+
+        // Logs the per-row Online Console line + advances success bookkeeping
+        // for one confirmed event.
+        void RecordConfirmed(EventLogEntryModel eventEntry)
+        {
+            successCount++;
+            latestProcessed = eventEntry;
+
+            // "LogEventTimestamp" is a well-known scope key the LogDB collector
+            // reads to surface the record's own timestamp in the Online Console
+            // (separate from when this line is logged).
+            using (_logger.BeginScope(new Dictionary<string, object>
+                   {
+                       ["LogEventTimestamp"] = eventEntry.TimeGenerated
+                   }))
+            {
+                _logger.LogInformation("► [{LogSource}] EventID {EventId} from {Source} at {Time:HH:mm:ss}",
+                    logSource, eventEntry.EventID, eventEntry.Source, eventEntry.TimeGenerated);
+            }
+
+            // Save state every 500 successful sends for crash resilience
+            if (successCount % 500 == 0)
+            {
+                SaveSourceState(logSource, latestProcessed, sourceTotalExported + successCount);
+                _logger.LogInformation(
+                    "Progress {LogSource}: {Success} sent, {Failed} failed, {Filtered} filtered ({Elapsed:F1}s)",
+                    logSource, successCount, failCount, filteredOut, sw.Elapsed.TotalSeconds);
+            }
+        }
+
+        // Ships the accumulated `pending` events as a single batch. On success
+        // each event is checkpointed in read (ascending-time) order; on failure
+        // nothing in the batch is checkpointed and `aborted` is set.
+        async Task FlushPendingAsync()
+        {
+            if (pending.Count == 0)
+                return;
+
+            var logs = pending.Select(p => p.Log).ToList();
+            try
+            {
+                var status = await _logDBClient.SendLogBatchAsync(logs, cancellationToken);
+                if (status != LogResponseStatus.Success)
+                {
+                    aborted = true;
+                    failCount += pending.Count;
+                    _logger.LogWarning(
+                        "Batch send returned {Status} for {Count} event(s) in {LogSource} — deferring; will retry from last checkpoint next cycle",
+                        status, pending.Count, logSource);
+                    pending.Clear();
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                aborted = true;
+                failCount += pending.Count;
+                _logger.LogError(ex,
+                    "Batch send threw for {Count} event(s) in {LogSource} — deferring; will retry from last checkpoint next cycle",
+                    pending.Count, logSource);
+                pending.Clear();
+                return;
+            }
+
+            foreach (var (entry, _) in pending)
+                RecordConfirmed(entry);
+            pending.Clear();
+        }
+
         // Callback: called for each event as it's read from the Event Log
         async Task ProcessEvent(EventLogEntryModel eventEntry)
         {
+            if (aborted)
+                return;
+
             // Apply filter
             if (!_eventLogFilter.MatchesFilter(eventEntry, _config.FilterConditions))
             {
                 filteredOut++;
+                return;
+            }
+
+            if (_enableBatching)
+            {
+                pending.Add((eventEntry, ConvertToLogDto(eventEntry, logSource)));
+                if (pending.Count >= _batchSize)
+                    await FlushPendingAsync();
                 return;
             }
 
@@ -179,41 +276,39 @@ public class EventViewerExportService : BackgroundService
 
                 if (result == LogResponseStatus.Success)
                 {
-                    successCount++;
-                    latestProcessed = eventEntry;
-
-                    _logger.LogInformation("► [{LogSource}] EventID {EventId} from {Source} at {Time:HH:mm:ss}",
-                        logSource, eventEntry.EventID, eventEntry.Source, eventEntry.TimeGenerated);
-
-                    // Save state every 500 successful sends for crash resilience
-                    if (successCount % 500 == 0)
-                    {
-                        SaveSourceState(logSource, latestProcessed, sourceTotalExported + successCount);
-                        _logger.LogInformation(
-                            "Progress {LogSource}: {Success} sent, {Failed} failed, {Filtered} filtered ({Elapsed:F1}s)",
-                            logSource, successCount, failCount, filteredOut, sw.Elapsed.TotalSeconds);
-                    }
+                    RecordConfirmed(eventEntry);
                 }
                 else
                 {
+                    // Freeze the watermark: stop here so this event is re-read
+                    // next cycle instead of being skipped by a later success.
+                    aborted = true;
                     failCount++;
-                    if (failCount <= 10 || failCount % 100 == 0)
-                    {
-                        _logger.LogWarning(
-                            "Failed to send event (EventID: {EventId}, Time: {Time}): {Status}",
-                            eventEntry.EventID, eventEntry.TimeGenerated, result);
-                    }
+                    _logger.LogWarning(
+                        "Send failed for {LogSource} (EventID: {EventId}, Time: {Time}): {Status}. " +
+                        "Freezing watermark; will retry from this event next cycle.",
+                        logSource, eventEntry.EventID, eventEntry.TimeGenerated, result);
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Service stopping / module reloading - expected, not an error.
+                // Freeze so in-flight events are re-read on the next start.
+                aborted = true;
+                _logger.LogDebug(
+                    "Send cancelled during shutdown for {LogSource} (EventID: {EventId})",
+                    logSource, eventEntry.EventID);
             }
             catch (Exception ex)
             {
+                // Includes a send *timeout* (TaskCanceledException with the token
+                // NOT cancelled) - a real failure, so freeze and retry next cycle.
+                aborted = true;
                 failCount++;
-                if (failCount <= 10 || failCount % 100 == 0)
-                {
-                    _logger.LogError(ex,
-                        "Exception sending event (EventID: {EventId}, Time: {Time})",
-                        eventEntry.EventID, eventEntry.TimeGenerated);
-                }
+                _logger.LogError(ex,
+                    "Exception sending event for {LogSource} (EventID: {EventId}, Time: {Time}). " +
+                    "Freezing watermark; will retry from this event next cycle.",
+                    logSource, eventEntry.EventID, eventEntry.TimeGenerated);
             }
         }
 
@@ -242,6 +337,10 @@ public class EventViewerExportService : BackgroundService
                 _config.MaxEventsPerExport, ProcessEvent);
         }
 
+        // Flush the final partial batch (no-op when batching is off or aborted).
+        if (_enableBatching && !aborted)
+            await FlushPendingAsync();
+
         sw.Stop();
 
         // Final state save
@@ -255,6 +354,28 @@ public class EventViewerExportService : BackgroundService
             logSource, successCount, failCount, filteredOut, sw.Elapsed.TotalSeconds);
 
         return successCount;
+    }
+
+    /// <summary>
+    /// Stable, content-derived row id so a re-read event (after a frozen
+    /// watermark) maps to the same Guid instead of creating a duplicate.
+    /// EventRecordId (Index) is unique per record within a machine's log;
+    /// the other fields guard the rare case where Index is 0/unavailable.
+    /// </summary>
+    private static string GenerateDeterministicId(string logSource, EventLogEntryModel e)
+    {
+        const char sep = '';
+        var input = string.Join(sep,
+            e.MachineName ?? string.Empty,
+            logSource,
+            e.Index,
+            e.EventID,
+            e.Source ?? string.Empty,
+            e.TimeGenerated.Ticks);
+
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(input));
+        return new Guid(hash).ToString();
     }
 
     private void SaveSourceState(string logSource, EventLogEntryModel latestEvent, long totalExported)
@@ -324,7 +445,7 @@ public class EventViewerExportService : BackgroundService
 
         var windowsEvent = new LogWindowsEvent
         {
-            Guid = Guid.NewGuid().ToString(),
+            Guid = GenerateDeterministicId(logSource, eventEntry),
             Timestamp = eventEntry.TimeGenerated.Kind == DateTimeKind.Utc
                 ? eventEntry.TimeGenerated
                 : eventEntry.TimeGenerated.ToUniversalTime(),
