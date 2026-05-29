@@ -14,7 +14,27 @@ public sealed class MainWindowViewModel : ObservableObject
     private readonly Func<string, Task> _copyToClipboardAsync;
     private readonly Action<bool> _applyThemeAction;
 
-    public string AppVersion { get; } = $"v{typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.0.0"}";
+    // Prefer the version Velopack wrote to sq.version (always matches the package
+    // tag this install was built from) and fall back to the compiled assembly's
+    // version only when not running inside a Velopack-managed install (dev builds).
+    // Without the Velopack-first path, a stale <Version> in the csproj would freeze
+    // the displayed version even though the deployed package is newer.
+    public string AppVersion { get; } = $"v{ResolveDisplayVersion()}";
+
+    private static string ResolveDisplayVersion()
+    {
+        try
+        {
+            var velopack = new UpdaterService().CurrentVersion;
+            if (!string.IsNullOrWhiteSpace(velopack)) return velopack;
+        }
+        catch
+        {
+            // UpdaterService constructor can throw on non-Windows or when Velopack
+            // metadata is unreadable — fall through to assembly version.
+        }
+        return typeof(MainWindowViewModel).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+    }
 
     private NavigationItemViewModel? _selectedNavigationItem;
     private PageViewModelBase? _currentPage;
@@ -49,6 +69,7 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _toastMessage = string.Empty;
     private string _toastColor = "#9ED29E";
     private CancellationTokenSource? _toastCts;
+    private string _serviceVersion = "—";
 
     public MainWindowViewModel(
         Func<string, string, Task<bool>> exportTextAsync,
@@ -127,6 +148,35 @@ public sealed class MainWindowViewModel : ObservableObject
         ExitFromApiKeyModalCommand = new RelayCommand(ExitFromApiKeyModal);
         CloseTestReportCommand = new RelayCommand(CloseTestReport);
         CopyTestReportCommand = new AsyncRelayCommand(CopyTestReportAsync);
+
+        // Fire-and-forget: query SCM for the installed service exe's FileVersion so
+        // the status bar can show 'UI vX  ·  Svc vY'. Refreshing once at startup is
+        // enough — Velopack restarts the UI after applying an update, so the next
+        // value the user sees is naturally re-read from the freshly-swapped service
+        // binary. ServiceQueryResult.BinaryVersion is the same field the Service
+        // Management page already binds to, so this stays consistent across views.
+        _ = RefreshServiceVersionAsync();
+    }
+
+    private async Task RefreshServiceVersionAsync()
+    {
+        try
+        {
+            var query = await ServiceControl.QueryAsync();
+            ServiceVersion = query.Installed
+                && !string.IsNullOrWhiteSpace(query.BinaryVersion)
+                && !string.Equals(query.BinaryVersion, "Unknown", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(query.BinaryVersion, "NotInstalled", StringComparison.OrdinalIgnoreCase)
+                    ? $"v{query.BinaryVersion}"
+                    : "—";
+        }
+        catch
+        {
+            // QueryAsync shells out to sc.exe and FileVersionInfo.GetVersionInfo —
+            // both can fail on non-Windows / locked-down hosts. Don't crash the
+            // status bar; leave the placeholder.
+            ServiceVersion = "—";
+        }
     }
 
     public OverviewPageViewModel OverviewPage { get; }
@@ -188,6 +238,17 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         get => _instanceSummary;
         set => SetProperty(ref _instanceSummary, value);
+    }
+
+    /// <summary>
+    /// FileVersion of the SCM-registered service exe, prefixed with 'v', or "—" when
+    /// the service is not installed / query failed. Refreshed once at startup; the UI
+    /// gets restarted by Velopack after an update so we never need to poll.
+    /// </summary>
+    public string ServiceVersion
+    {
+        get => _serviceVersion;
+        private set => SetProperty(ref _serviceVersion, value);
     }
 
     public string StatusMessage

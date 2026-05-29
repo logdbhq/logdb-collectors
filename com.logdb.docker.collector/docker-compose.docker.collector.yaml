@@ -1,14 +1,24 @@
-version: "3.8"
-
 services:
   logdb-docker-collector:
-    image: logdb/docker-collector:0.1
+    image: logdb/docker-collector:latest
     container_name: logdb-docker-collector
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Docker container logs.
+      # Check your install with: docker info | grep "Docker Root Dir"
+      # IMPORTANT: source and destination MUST be the same path. Docker's inspect
+      # API returns the host LogPath verbatim, so the collector looks for that
+      # exact path inside its own filesystem. Bind-mount it at the same location.
+      #
+      # Uncomment ONE of the following based on your host's Docker install:
+      #
+      # Standard install (apt/deb/rpm):
+      # - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      #
+      # Snap install:
+      - /var/snap/docker/common/var-lib-docker/containers:/var/snap/docker/common/var-lib-docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - logdb-collector:/var/lib/logdb-collector
     environment:
@@ -24,19 +34,21 @@ services:
       - backend
 
   logdb-docker-collector-ui:
-    image: logdb/docker-collector-ui:0.1
+    image: logdb/docker-collector-ui:latest
     container_name: logdb-docker-collector-ui
     restart: unless-stopped
     ports:
       - "5010:8080"
     environment:
       - COLLECTOR_API_URL=http://logdb-docker-collector:8080
+      # Sub-path under which the UI is served, must match the nginx location prefix.
+      # Leave unset to serve at "/".
+      - PathBase=/docker-collector
     networks:
       - backend
 
 networks:
   backend:
-    external: true
     name: logdb-net
 
 volumes:

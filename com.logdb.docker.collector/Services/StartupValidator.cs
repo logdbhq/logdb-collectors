@@ -55,10 +55,24 @@ public class StartupValidator
             // Windows named pipe - can't easily test, just note it
         }
 
-        // Docker log directory (Linux container typical path)
-        var dockerLogDir = "/var/lib/docker/containers";
-        if (OperatingSystem.IsLinux() && !Directory.Exists(dockerLogDir))
-            _warnings.Add($"Docker log directory not found at {dockerLogDir} - ensure it is mounted read-only");
+        // Docker log directory. We can't know which one applies until Docker
+        // discovery returns each container's LogPath, but we can warn if NONE
+        // of the well-known host paths are visible inside this container.
+        if (OperatingSystem.IsLinux())
+        {
+            string[] knownDockerLogDirs =
+            {
+                "/var/lib/docker/containers",                          // standard apt/deb/rpm install
+                "/var/snap/docker/common/var-lib-docker/containers",   // Snap install
+            };
+
+            if (!knownDockerLogDirs.Any(Directory.Exists))
+                _warnings.Add(
+                    "No Docker container log directory is visible inside this collector. " +
+                    "Bind-mount the host's container log dir at the SAME path inside the container " +
+                    "(Docker's inspect API returns the host LogPath verbatim). " +
+                    $"Tried: {string.Join(", ", knownDockerLogDirs)}.");
+        }
 
         // Checkpoint path
         if (checkpoint.Enabled)

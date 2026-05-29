@@ -5,20 +5,20 @@
 #   2. Adjust the Nginx log volume path to match your host
 #   3. Run: docker compose up -d
 #
-# Ports:
-#   8080  Collector API + health check
-#   8081  Operator dashboard
+# Ports (host:container):
+#   18080:8080  Collector API + health check
+#   18081:8081  Operator dashboard
 #
 # Health check:
-#   curl http://localhost:8080/health/ready
+#   curl http://localhost:18080/health/ready
 
 services:
   logdb-nginx-collector:
     image: logdb/nginx-collector:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"   # API + health
-      - "8081:8081"   # Operator UI
+      - "18080:8080"   # API + health
+      - "18081:8081"   # Operator UI
     volumes:
       # Mount your Nginx log directory (read-only)
       - /var/log/nginx:/var/log/nginx:ro
@@ -29,6 +29,10 @@ services:
       - LOGDB_EXPORTER_ENABLED=true
       - LOGDB_EXPORTER_ENDPOINT=https://your-logdb-instance.example.com
       - LOGDB_EXPORTER_APIKEY=your-api-key-here
+
+      # Mount the operator UI under this path prefix (matches the nginx reverse
+      # proxy location block at /nginx-collector/). Leave unset to serve at /.
+      - PathBase=/nginx-collector
 
       # Optional overrides
       # - LOGDB_EXPORTER_PROTOCOL=Native          # Native (gRPC) or REST

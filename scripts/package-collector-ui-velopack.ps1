@@ -62,6 +62,13 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = $v
 }
 
+# Stamp the resolved version into the compiled assemblies (UI + bundled service).
+# Without -p:Version, MSBuild uses the hardcoded <Version> in each csproj, so
+# Assembly.GetName().Version returns the csproj baseline (e.g. 1.1.20) instead of
+# the tag-derived value passed in via $Version (e.g. 1.1.21). That's what made the
+# UI's lower-right corner show a stale version after Velopack updates.
+$versionArgs = @("-p:Version=$Version", "-p:AssemblyVersion=$Version.0", "-p:FileVersion=$Version.0")
+
 Assert-CommandAvailable -CommandName "vpk" -InstallHint "Install Velopack CLI with: dotnet tool install -g vpk"
 
 $publishDir = Join-Path $repoRoot "artifacts\collector-ui-velopack\publish\$Runtime"
@@ -87,6 +94,7 @@ Invoke-CheckedCommand -Description "UI publish" -Command {
         -r $Runtime `
         --self-contained:$SelfContained `
         -p:PublishSingleFile=false `
+        @versionArgs `
         -o $publishDir
 }
 
@@ -97,6 +105,7 @@ Invoke-CheckedCommand -Description "Service publish" -Command {
         -r $Runtime `
         --self-contained:$SelfContained `
         -p:PublishSingleFile=false `
+        @versionArgs `
         -o $serviceSubDir
 }
 

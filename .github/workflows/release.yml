@@ -91,20 +91,6 @@ jobs:
         dotnet-version: '10.0.x'
         dotnet-quality: 'preview'
 
-    # The repo's NuGet.Config declares the logdbhq GitHub Packages feed by source
-    # name "github" but ships without credentials. Inject the auto-issued
-    # GITHUB_TOKEN into that source so restore can pull LogDB.Client (and any
-    # other LogDB.* package) from logdbhq. The runner is destroyed after the
-    # job, so the modified NuGet.Config is throwaway — no secret leaks into git.
-    - name: Authenticate GitHub Packages source
-      shell: pwsh
-      run: |
-        dotnet nuget update source github `
-          --configfile ./NuGet.Config `
-          --username "${{ github.actor }}" `
-          --password "${{ secrets.GITHUB_TOKEN }}" `
-          --store-password-in-clear-text
-
     - name: Install Velopack CLI
       if: steps.check.outputs.build_collector == 'True'
       shell: pwsh
@@ -159,6 +145,7 @@ jobs:
         ./scripts/publish-windows-collector.ps1 `
           -Configuration Release `
           -Runtime win-x64 `
+          -Version "${{ steps.check.outputs.version_number }}" `
           -SelfContained:$true `
           -CreateZip:$true
 

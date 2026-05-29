@@ -2,6 +2,7 @@ param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$OutputRoot = "",
+    [string]$Version = "",  # Optional: when set, overrides csproj <Version> via -p:Version=...
     [switch]$SelfContained = $true,
     [switch]$CreateZip = $true
 )
@@ -36,17 +37,29 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repoRoot "releases\windows-collector"
 }
 
-$uiVersion = "1.0.0"
-try {
-    [xml]$uiXml = Get-Content -Path $uiProject
-    $v = $uiXml.Project.PropertyGroup.Version | Select-Object -First 1
-    if (-not [string]::IsNullOrWhiteSpace($v)) {
-        $uiVersion = $v
+# Resolve the version we'll stamp into both the bundle name AND the compiled
+# assemblies. Caller-supplied -Version wins (CI uses this so the assembly version
+# matches the git tag exactly). Fall back to csproj <Version> for local builds.
+$uiVersion = $Version
+if ([string]::IsNullOrWhiteSpace($uiVersion)) {
+    $uiVersion = "1.0.0"
+    try {
+        [xml]$uiXml = Get-Content -Path $uiProject
+        $v = $uiXml.Project.PropertyGroup.Version | Select-Object -First 1
+        if (-not [string]::IsNullOrWhiteSpace($v)) {
+            $uiVersion = $v
+        }
+    }
+    catch {
+        Write-Warning "Unable to parse UI version from csproj. Using $uiVersion"
     }
 }
-catch {
-    Write-Warning "Unable to parse UI version from csproj. Using $uiVersion"
-}
+Write-Host "Stamping assemblies with version $uiVersion"
+
+# Build the -p:Version=... fragment as an arg array so callers can splat it into
+# dotnet publish below; MSBuild also picks this up as AssemblyVersion / FileVersion
+# (defaults derived from <Version>) unless those are explicitly overridden.
+$versionArgs = @("-p:Version=$uiVersion", "-p:AssemblyVersion=$uiVersion.0", "-p:FileVersion=$uiVersion.0")
 
 $bundleName = "LogDB-Windows-Collector-v$uiVersion-$Runtime"
 $bundleDir = Join-Path $OutputRoot $bundleName
@@ -68,6 +81,7 @@ Invoke-CheckedCommand -Description "Service publish" -Command {
         -r $Runtime `
         --self-contained:$SelfContained `
         -p:PublishSingleFile=false `
+        @versionArgs `
         -o $serviceOut
 }
 
@@ -78,6 +92,7 @@ Invoke-CheckedCommand -Description "UI publish" -Command {
         -r $Runtime `
         --self-contained:$SelfContained `
         -p:PublishSingleFile=false `
+        @versionArgs `
         -o $uiOut
 }
 

@@ -437,8 +437,13 @@ public sealed class NamedPipeControlServer : BackgroundService
                 config.Firewall.Enabled = enabled;
                 return true;
 
+            case "heartbeat":
+                normalizedName = "Heartbeat";
+                config.Modules.Heartbeat.Enabled = enabled;
+                return true;
+
             default:
-                error = $"Unknown module '{moduleName}'. Valid modules: EventLog, IIS, Metrics, Firewall.";
+                error = $"Unknown module '{moduleName}'. Valid modules: EventLog, IIS, Metrics, Firewall, Heartbeat.";
                 return false;
         }
     }

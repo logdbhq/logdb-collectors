@@ -36,10 +36,13 @@ class Program
             })
             .OnBeforeUpdateFastCallback(version =>
             {
-                // File swap is about to happen — the service exe living at
-                // <install>\current\service\com.logdb.windows.collector.exe is
-                // currently locked by the running LogDBWindowsCollector service.
-                // Stop it so Velopack can replace the files.
+                // Stop the LogDBWindowsCollector service before Velopack swaps files.
+                // Wherever SCM has the service registered (Velopack-managed
+                // <install>\current\service\, or a custom path like
+                // C:\LogDB.Collector\service\), the running service holds file locks
+                // that prevent overwrite. Stopping it now lets BOTH the Velopack swap
+                // AND the ServiceBundleSync.SyncFromCurrentBundle() copy in OnAfter
+                // succeed.
                 Console.WriteLine($"Velopack pre-update hook: stopping {ServiceController.ServiceName} before swap to {version}");
                 var stopped = ServiceController.Stop();
                 Console.WriteLine(stopped
@@ -48,7 +51,18 @@ class Program
             })
             .OnAfterUpdateFastCallback(version =>
             {
-                // Files are now the new version; bring the service back up.
+                // Velopack has swapped <install>\current\ to the new version. The
+                // service binaries inside <install>\current\service\ are now also new,
+                // but if SCM points at a path OUTSIDE that dir (e.g. a custom-installer
+                // location like C:\LogDB.Collector\service), Velopack's swap never
+                // reached the actually-running service. ServiceBundleSync overlays the
+                // fresh in-bundle binaries onto the SCM-registered location while the
+                // service is still stopped, so the restart below picks up the new bits.
+                // No-op when SCM already points inside the bundle.
+                Console.WriteLine($"Velopack post-update hook: syncing service binaries for {version}");
+                var sync = ServiceBundleSync.SyncFromCurrentBundle(msg => Console.WriteLine($"  {msg}"));
+                Console.WriteLine($"  -> [{sync.Outcome}] {sync.Message}");
+
                 Console.WriteLine($"Velopack post-update hook: starting {ServiceController.ServiceName} on {version}");
                 var started = ServiceController.Start();
                 Console.WriteLine(started
