@@ -16,6 +16,7 @@ public sealed class OnlineDiagnosticRowViewModel
     private static readonly IBrush HeartbeatBrush = new SolidColorBrush(Color.Parse("#BA68C8"));
 
     public string TimeLocal { get; set; } = string.Empty;
+    public string EventTimeLocal { get; set; } = string.Empty;
     public string Level { get; set; } = string.Empty;
     public string Module { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
@@ -221,6 +222,9 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
                     var row = new OnlineDiagnosticRowViewModel
                     {
                         TimeLocal = line.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                        EventTimeLocal = line.EventTimestampUtc.HasValue
+                            ? line.EventTimestampUtc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                            : string.Empty,
                         Level = line.Level,
                         Module = module,
                         Message = line.Message,

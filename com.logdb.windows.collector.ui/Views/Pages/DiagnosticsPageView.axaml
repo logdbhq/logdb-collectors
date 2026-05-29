@@ -67,6 +67,7 @@
                             PointerReleased="OnlineConsoleDataGrid_OnPointerReleased">
                 <dgrid:DataGrid.Columns>
                     <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
+                    <dgrid:DataGridTextColumn Header="Event Time" Binding="{Binding EventTimeLocal}" Width="170" />
                     <dgrid:DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="90" />
                     <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="90" />
                     <dgrid:DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />

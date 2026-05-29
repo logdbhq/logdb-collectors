@@ -30,4 +30,13 @@ public class DiagnosticEntryDto
     public string Level { get; set; } = "Information";
     public string Category { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The timestamp carried by the underlying log record (e.g. the EventLog
+    /// record time or the IIS log-line time), as distinct from
+    /// <see cref="TimestampUtc"/>, which is when the collector emitted this
+    /// diagnostic line. Null for diagnostics that aren't about a specific
+    /// collected record.
+    /// </summary>
+    public DateTime? EventTimestampUtc { get; set; }
 }
