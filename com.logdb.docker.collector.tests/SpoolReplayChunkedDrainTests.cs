@@ -69,7 +69,8 @@ public class SpoolReplayChunkedDrainTests : IDisposable
             });
 
         var exporter = new ChunkRecordingExporter(failAfterChunks: 2); // 3rd send fails
-        var worker = new SpoolReplayWorker(spool, exporter, NullLogger<SpoolReplayWorker>.Instance, spoolOpts);
+        var worker = new SpoolReplayWorker(spool, exporter, NullLogger<SpoolReplayWorker>.Instance, spoolOpts,
+            new SpoolReplayState(), new SpoolReplayTrigger());
 
         var batch = spool.ReadBatch(spoolOpts.Value.ReplayBatchSize);
         Assert.Equal(12, batch.Count);

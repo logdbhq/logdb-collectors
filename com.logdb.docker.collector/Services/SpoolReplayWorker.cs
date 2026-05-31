@@ -10,18 +10,24 @@ public class SpoolReplayWorker : BackgroundService
     private readonly ILogDbExporter _exporter;
     private readonly ILogger<SpoolReplayWorker> _logger;
     private readonly SpoolOptions _spoolOptions;
+    private readonly SpoolReplayState _state;
+    private readonly SpoolReplayTrigger _trigger;
     private DateTime _lastErrorLogUtc;
 
     public SpoolReplayWorker(
         ISpoolStore spool,
         ILogDbExporter exporter,
         ILogger<SpoolReplayWorker> logger,
-        IOptions<SpoolOptions> spoolOptions)
+        IOptions<SpoolOptions> spoolOptions,
+        SpoolReplayState state,
+        SpoolReplayTrigger trigger)
     {
         _spool = spool;
         _exporter = exporter;
         _logger = logger;
         _spoolOptions = spoolOptions.Value;
+        _state = state;
+        _trigger = trigger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -33,16 +39,17 @@ public class SpoolReplayWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var lastBatchCount = 0;
             try
             {
                 var batch = _spool.ReadBatch(_spoolOptions.ReplayBatchSize);
 
                 if (batch.Count > 0)
                 {
-                    var committed = await DrainChunkedAsync(batch, stoppingToken);
+                    lastBatchCount = await DrainChunkedAsync(batch, stoppingToken);
 
                     // If we drained a full read, yield briefly then loop - more data likely waiting
-                    if (committed >= _spoolOptions.ReplayBatchSize)
+                    if (lastBatchCount >= _spoolOptions.ReplayBatchSize)
                     {
                         await Task.Delay(250, stoppingToken);
                         continue;
@@ -63,7 +70,15 @@ public class SpoolReplayWorker : BackgroundService
                 }
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(_spoolOptions.FlushIntervalSeconds), stoppingToken);
+            var intervalSeconds = Math.Max(1, _spoolOptions.FlushIntervalSeconds);
+            _state.RecordCycle(intervalSeconds, lastBatchCount);
+
+            // Sleep until the interval elapses OR a manual "send now" is requested via the UI.
+            try
+            {
+                await _trigger.WaitAsync(TimeSpan.FromSeconds(intervalSeconds), stoppingToken);
+            }
+            catch (OperationCanceledException) { break; }
         }
 
         // Final replay attempt on shutdown

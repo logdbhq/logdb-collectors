@@ -5,6 +5,9 @@
 <div class="d-flex justify-content-between align-items-center mb-2">
     <h4 class="page-title mb-0"><i class="bi bi-send-check me-2"></i>Sent Records</h4>
     <div class="d-flex align-items-center gap-2">
+        <span class="badge @CountdownClass" title="@CountdownTitle">
+            <i class="bi bi-stopwatch me-1"></i>@CountdownText
+        </span>
         @if (_snapshot is not null)
         {
             <span class="badge bg-secondary" title="Records sent to grpc-logger since start">@_snapshot.TotalSent.ToString("N0") sent</span>
@@ -34,6 +37,12 @@
             <option value="500">500</option>
             <option value="1000">1000</option>
         </select>
+        <button class="btn btn-sm btn-primary" @onclick="FlushNowAsync" disabled="@_flushing"
+                title="Send the spooled log batch to grpc-logger now, without waiting for the interval. (Metrics flush on their own collection cycle.)">
+            @if (_flushing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            else { <i class="bi bi-send-fill me-1"></i> }
+            Send now
+        </button>
         <div class="btn-group btn-group-sm">
             <button class="btn @(_paused ? "btn-warning" : "btn-outline-secondary")" @onclick="TogglePause" title="@(_paused ? "Resume" : "Pause")">
                 <i class="bi @(_paused ? "bi-play-fill" : "bi-pause-fill")"></i>
@@ -215,6 +224,11 @@
     private int _maxCount = 200;
     private readonly HashSet<long> _expanded = new();
 
+    private ReplayDto? _replay;
+    private double? _secondsUntilNext;
+    private Timer? _ticker;
+    private bool _flushing;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadAsync();
@@ -226,7 +240,33 @@
                 await InvokeAsync(StateHasChanged);
             }
         }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+
+        // Local 1s ticker: counts the cached value down between server re-syncs
+        // so the countdown is smooth without polling every second.
+        _ticker = new Timer(async _ =>
+        {
+            if (_secondsUntilNext is > 0)
+            {
+                _secondsUntilNext = Math.Max(0, _secondsUntilNext.Value - 1);
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
+
+    private string CountdownText => _replay switch
+    {
+        null => "next send —",
+        { IntervalSeconds: <= 0 } => "next send —",
+        _ when _secondsUntilNext is null => "next send —",
+        _ when _secondsUntilNext <= 0.5 => "sending…",
+        _ => $"next send in {Math.Ceiling(_secondsUntilNext!.Value):0}s"
+    };
+
+    private string CountdownClass => _secondsUntilNext is <= 0.5 && _replay is not null ? "bg-success" : "bg-primary";
+
+    private string CountdownTitle => _replay is null
+        ? "Spool replay schedule unavailable"
+        : $"Log batches flush every {_replay.IntervalSeconds}s. Metrics flush on their own collection cycle.";
 
     private async Task LoadAsync()
     {
@@ -244,6 +284,11 @@
             _snapshot = await client.GetFromJsonAsync<SnapshotDto>(url);
             if (_snapshot is not null)
                 _records = _snapshot.Records;
+
+            // Re-sync the countdown from the worker's actual schedule.
+            _replay = await client.GetFromJsonAsync<ReplayDto>("/api/exporter/replay-status");
+            _secondsUntilNext = _replay?.SecondsUntilNext;
+
             _connectError = null;
         }
         catch (Exception ex) { _connectError = ex.Message; }
@@ -256,6 +301,22 @@
 
     private void TogglePause() => _paused = !_paused;
 
+    private async Task FlushNowAsync()
+    {
+        _flushing = true;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            await client.PostAsync("/api/exporter/flush-now", null);
+            // Give the worker a moment to run the cycle, then refresh.
+            await Task.Delay(600);
+            await LoadAsync();
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _flushing = false; StateHasChanged(); }
+    }
+
     private static string LevelClass(RecordDto r) => (r.Level ?? "").ToLowerInvariant() switch
     {
         "error" or "critical" or "crit" or "fail" => "level-error",
@@ -264,7 +325,20 @@
         _ => ""
     };
 
-    public void Dispose() => _timer?.Dispose();
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _ticker?.Dispose();
+    }
+
+    private class ReplayDto
+    {
+        public int IntervalSeconds { get; set; }
+        public double? SecondsUntilNext { get; set; }
+        public DateTime? NextCycleUtc { get; set; }
+        public DateTime? LastCycleUtc { get; set; }
+        public int LastBatchCount { get; set; }
+    }
 
     private class SnapshotDto
     {

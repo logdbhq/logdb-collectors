@@ -74,6 +74,8 @@ builder.Services.AddSingleton<FilterRuleService>();
 builder.Services.AddSingleton<LiveConsoleBuffer>();
 builder.Services.AddSingleton<DeliveryConsoleBuffer>();
 builder.Services.AddSingleton<DeliveryActivityTracker>();
+builder.Services.AddSingleton<SpoolReplayState>();
+builder.Services.AddSingleton<SpoolReplayTrigger>();
 builder.Services.AddSingleton<ICheckpointStore, FileCheckpointStore>();
 builder.Services.AddSingleton<IDockerDiscoveryService, DockerDiscoveryService>();
 builder.Services.AddSingleton<ISpoolStore, FileSpoolStore>();
@@ -232,6 +234,16 @@ app.MapGet("/api/exporter/sent/recent", (DeliveryConsoleBuffer buffer, int? coun
 // Time-series of records sent to grpc-logger (delivered/failed + batches, plus metrics), for the Activity chart.
 app.MapGet("/api/exporter/activity", (DeliveryActivityTracker activity, int? minutes) =>
     activity.GetActivity(minutes ?? 60, DateTime.UtcNow));
+
+// Countdown to the next spool replay (log batch send) cycle.
+app.MapGet("/api/exporter/replay-status", (SpoolReplayState state) => state.GetSnapshot());
+
+// Manually trigger an immediate replay cycle (send now) instead of waiting for the interval.
+app.MapPost("/api/exporter/flush-now", (SpoolReplayTrigger trigger) =>
+{
+    trigger.RequestFlush();
+    return Results.Ok(new { requested = true });
+});
 
 app.MapPost("/api/exporter/toggle", (ILogDbExporter exporter) =>
 {
