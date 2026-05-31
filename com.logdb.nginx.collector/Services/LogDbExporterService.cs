@@ -14,7 +14,11 @@ public class LogDbExporterService : ILogDbExporter
     private readonly LogDbExporterOptions _options;
     private readonly ILogDBClient _client;
     private readonly ExporterConsoleBuffer _console;
+    private readonly DeliveryConsoleBuffer _delivery;
+    private readonly DeliveryActivityTracker _activity;
     private readonly string _settingsPath;
+
+    private const int MaxSentMessageLength = 512;
 
     private long _batchesSent;
     private long _recordsSent;
@@ -47,11 +51,13 @@ public class LogDbExporterService : ILogDbExporter
 
     public LogDbExporterService(ILogger<LogDbExporterService> logger, IOptions<LogDbExporterOptions> options,
         IOptions<CheckpointOptions> checkpointOptions, ILoggerFactory loggerFactory,
-        ExporterConsoleBuffer console)
+        ExporterConsoleBuffer console, DeliveryConsoleBuffer delivery, DeliveryActivityTracker activity)
     {
         _logger = logger;
         _options = options.Value;
         _console = console;
+        _delivery = delivery;
+        _activity = activity;
 
         var checkpointDir = Path.GetDirectoryName(Path.GetFullPath(checkpointOptions.Value.FilePath)) ?? ".";
         _settingsPath = Path.Combine(checkpointDir, "exporter-settings.json");
@@ -155,18 +161,33 @@ public class LogDbExporterService : ILogDbExporter
                 Status = "api-key-invalid",
                 Error = msg
             });
+            foreach (var a in AggregateBatch(batch))
+                _delivery.Record(BuildSentEntry(a.Record, a.Count, guid: "", "skipped", startUtc, apiKeyPrefix, "api-key-invalid", msg));
+            _activity.Record(startUtc, batch.Count, "skipped");
             return false;
         }
 
+        // Built before the try so the catch block can mark the same records as failed.
+        var prepared = new List<(NginxLogRecord Record, int Count, Log Log)>();
+
+        // Hard deadline on the whole send. Without this, a hung/unresponsive
+        // grpc-logger makes FlushAsync block forever and wedges the replay worker,
+        // so capture keeps running but nothing is ever delivered. On timeout we
+        // fail the batch (recorded below) and the worker retries next cycle.
+        var timeoutSeconds = Math.Max(10, _options.RequestTimeoutSeconds);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        var sendCt = timeoutCts.Token;
+
         try
         {
-            var aggregated = AggregateBatch(batch);
-            var logs = aggregated.Select(a => MapToLogDbEvent(a.Record, a.Count)).ToList();
+            foreach (var a in AggregateBatch(batch))
+                prepared.Add((a.Record, a.Count, MapToLogDbEvent(a.Record, a.Count)));
 
             int retries = 0;
-            foreach (var log in logs)
+            foreach (var item in prepared)
             {
-                var result = await _client.LogAsync(log, ct);
+                var result = await _client.LogAsync(item.Log, sendCt);
                 if (result != LogResponseStatus.Success)
                 {
                     Interlocked.Increment(ref _retryCount);
@@ -174,7 +195,7 @@ public class LogDbExporterService : ILogDbExporter
                 }
             }
 
-            await _client.FlushAsync();
+            await _client.FlushAsync(sendCt);
 
             Interlocked.Increment(ref _batchesSent);
             Interlocked.Add(ref _recordsSent, batch.Count);
@@ -182,30 +203,49 @@ public class LogDbExporterService : ILogDbExporter
             _lastError = null;
             _healthy = true;
 
-            _logger.LogDebug("Exported batch: {Raw} records -> {Aggregated} events", batch.Count, logs.Count);
+            _logger.LogDebug("Exported batch: {Raw} records -> {Aggregated} events", batch.Count, prepared.Count);
 
+            var status = retries > 0 ? $"ok ({retries} retried)" : "ok";
             _console.Record(new ExporterCallEntry
             {
                 Timestamp = startUtc,
                 Outcome = "success",
                 RecordCount = batch.Count,
-                EventCount = logs.Count,
+                EventCount = prepared.Count,
                 Endpoint = _options.Endpoint,
                 ApiKeyPrefix = apiKeyPrefix,
                 DurationMs = Environment.TickCount64 - swStart,
-                Status = retries > 0 ? $"ok ({retries} retried)" : "ok"
+                Status = status
             });
+            foreach (var item in prepared)
+                _delivery.Record(BuildSentEntry(item.Record, item.Count, item.Log.Guid ?? "", "delivered", startUtc, apiKeyPrefix, status, error: null));
+            _activity.Record(startUtc, batch.Count, "delivered");
             return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Genuine shutdown (not our timeout) — let the worker exit quietly,
+            // leave the batch uncommitted so it's retried on next start.
+            throw;
         }
         catch (Exception ex)
         {
             Interlocked.Increment(ref _sendErrors);
-            _lastError = ex.Message;
+
+            // Distinguish "grpc-logger didn't respond in time" from other errors so
+            // the operator can see the pipeline isn't wedged — it's the backend.
+            var isTimeout = ex is OperationCanceledException && timeoutCts.IsCancellationRequested;
+            var statusLabel = isTimeout ? "Timeout" : ex.GetType().Name;
+            var errorMsg = isTimeout
+                ? $"Send timed out after {timeoutSeconds}s — grpc-logger unreachable or unresponsive ({_options.Endpoint})"
+                : ex.Message;
+
+            _lastError = errorMsg;
             _healthy = false;
 
             if ((DateTime.UtcNow - _lastErrorLogUtc).TotalSeconds >= 30)
             {
-                _logger.LogError("Export failed ({Count} records): {Msg}", batch.Count, ex.Message);
+                _logger.LogError("Export failed ({Count} records): {Msg}", batch.Count, errorMsg);
                 _lastErrorLogUtc = DateTime.UtcNow;
             }
             _console.Record(new ExporterCallEntry
@@ -217,11 +257,56 @@ public class LogDbExporterService : ILogDbExporter
                 Endpoint = _options.Endpoint,
                 ApiKeyPrefix = apiKeyPrefix,
                 DurationMs = Environment.TickCount64 - swStart,
-                Status = ex.GetType().Name,
-                Error = ex.Message
+                Status = statusLabel,
+                Error = errorMsg
             });
+
+            // If mapping failed before any record was prepared, fall back to the raw batch
+            // so the operator still sees what was lost.
+            var failedRecords = prepared.Count > 0
+                ? prepared.Select(p => (p.Record, p.Count, Guid: p.Log.Guid ?? ""))
+                : batch.Select(r => (Record: r, Count: 1, Guid: ""));
+            foreach (var (record, count, guid) in failedRecords)
+                _delivery.Record(BuildSentEntry(record, count, guid, "failed", startUtc, apiKeyPrefix, statusLabel, errorMsg));
+            _activity.Record(startUtc, batch.Count, "failed");
             return false;
         }
+    }
+
+    private SentRecordEntry BuildSentEntry(NginxLogRecord r, int count, string guid, string outcome,
+        DateTime sentUtc, string apiKeyPrefix, string? status, string? error)
+    {
+        var message = r.Message;
+        if (message is not null && message.Length > MaxSentMessageLength)
+            message = message[..MaxSentMessageLength] + "...";
+
+        return new SentRecordEntry
+        {
+            SentUtc = sentUtc,
+            RecordTimestamp = r.Timestamp,
+            Outcome = outcome,
+            AggregatedCount = count,
+            LogType = r.LogType.ToString().ToLowerInvariant(),
+            Target = r.TargetName,
+            Host = r.HostName,
+            SourceFile = r.SourceFile,
+            Method = r.Method,
+            Path = r.Path,
+            Protocol = r.Protocol,
+            StatusCode = r.StatusCode,
+            ResponseBytes = r.ResponseBytes,
+            RemoteAddress = r.RemoteAddress,
+            Referer = r.Referer,
+            UserAgent = r.UserAgent,
+            RequestTime = r.RequestTime,
+            Severity = r.Severity,
+            Message = message,
+            Guid = guid,
+            Endpoint = _options.Endpoint,
+            ApiKeyPrefix = apiKeyPrefix,
+            Status = status,
+            Error = error
+        };
     }
 
     private static string ApiKeyPrefix(string? apiKey)

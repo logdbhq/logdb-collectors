@@ -30,6 +30,15 @@ services:
       - LOGDB_EXPORTER_ENDPOINT=https://your-logdb-instance.example.com
       - LOGDB_EXPORTER_APIKEY=your-api-key-here
 
+      # Operator-console authentication (the UI is publicly reachable on :18081).
+      # Leave LOGDB_UI_PASSWORD unset to disable the login gate (NOT recommended).
+      # LOGDB_API_KEY protects the backend API and is also forwarded by the UI; the
+      # same value must be set for both the API and UI processes (one container here,
+      # so it is shared automatically). Always serve this behind an HTTPS proxy.
+      - LOGDB_UI_USERNAME=admin
+      - LOGDB_UI_PASSWORD=change-me-please
+      - LOGDB_API_KEY=generate-a-long-random-key
+
       # Mount the operator UI under this path prefix (matches the nginx reverse
       # proxy location block at /nginx-collector/). Leave unset to serve at /.
       - PathBase=/nginx-collector

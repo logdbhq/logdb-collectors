@@ -1,5 +1,6 @@
 using com.logdb.nginx.collector.Configuration;
 using com.logdb.nginx.collector.Models;
+using com.logdb.nginx.collector.Security;
 using com.logdb.nginx.collector.Services;
 using Microsoft.Extensions.Options;
 
@@ -29,6 +30,7 @@ MapEnv("LOGDB_NGINX_DENY_FILE", "NginxBlock:DenyFilePath");
 MapEnv("LOGDB_NGINX_RELOAD_CMD", "NginxBlock:ReloadCommand");
 MapEnv("LOGDB_TAIL_ACTIVE_INTERVAL", "Tail:ActiveIntervalSeconds");
 MapEnv("LOGDB_TAIL_IDLE_INTERVAL", "Tail:IdleIntervalSeconds");
+MapEnv("LOGDB_API_KEY", "Auth:ApiKey");
 
 if (envOverrides.Count > 0)
     builder.Configuration.AddInMemoryCollection(envOverrides);
@@ -62,12 +64,19 @@ builder.Services.Configure<TailOptions>(
     builder.Configuration.GetSection(TailOptions.Section));
 builder.Services.Configure<NginxBlockOptions>(
     builder.Configuration.GetSection(NginxBlockOptions.Section));
+builder.Services.Configure<DiscoveryOptions>(
+    builder.Configuration.GetSection(DiscoveryOptions.Section));
 
 builder.Services.AddSingleton<NginxIpBlockService>();
 builder.Services.AddSingleton<TargetToggleService>();
+builder.Services.AddSingleton<TargetDiscoveryService>();
 builder.Services.AddSingleton<FilterRuleService>();
 builder.Services.AddSingleton<LiveConsoleBuffer>();
 builder.Services.AddSingleton<ExporterConsoleBuffer>();
+builder.Services.AddSingleton<DeliveryConsoleBuffer>();
+builder.Services.AddSingleton<DeliveryActivityTracker>();
+builder.Services.AddSingleton<SpoolReplayState>();
+builder.Services.AddSingleton<SpoolReplayTrigger>();
 builder.Services.AddSingleton<StartupValidator>();
 builder.Services.AddSingleton<AgentStatusService>();
 builder.Services.AddSingleton<ICheckpointStore, FileCheckpointStore>();
@@ -88,6 +97,12 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors();
+
+if (string.IsNullOrEmpty(app.Configuration["Auth:ApiKey"]))
+    app.Logger.LogWarning("LOGDB_API_KEY not set — collector API is unauthenticated.");
+
+// Require the shared API key on every endpoint except health probes.
+app.UseApiKeyAuth();
 
 // Health endpoints
 app.MapGet("/health", () => new { status = "ok" });
@@ -146,6 +161,41 @@ app.MapPost("/api/targets/{name}/toggle", (string name, ToggleRequest request, T
 app.MapGet("/api/pipeline/targets", (IFileTailService tail) => tail.GetTargets());
 app.MapGet("/api/pipeline/status", (IFileTailService tail) => tail.GetPipelineStatus());
 
+// Auto-discovery of log files + start-at-end (skip backfill) setting
+app.MapGet("/api/discovery", (TargetDiscoveryService disc, IOptions<NginxTargetOptions> opts, TargetToggleService toggle) =>
+    BuildDiscoveryPayload(disc, opts, toggle));
+app.MapPost("/api/discovery", (DiscoveryOptions request, TargetDiscoveryService disc, IOptions<NginxTargetOptions> opts, TargetToggleService toggle) =>
+{
+    disc.UpdateSettings(request);
+    return BuildDiscoveryPayload(disc, opts, toggle);
+});
+
+static object BuildDiscoveryPayload(TargetDiscoveryService disc, IOptions<NginxTargetOptions> opts, TargetToggleService toggle)
+{
+    static string SafeFull(string p) { try { return Path.GetFullPath(p); } catch { return p; } }
+
+    var tracked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var t in opts.Value.Targets)
+    {
+        if (!string.IsNullOrEmpty(t.AccessLogPath)) tracked.Add(SafeFull(t.AccessLogPath));
+        if (!string.IsNullOrEmpty(t.ErrorLogPath)) tracked.Add(SafeFull(t.ErrorLogPath));
+    }
+
+    var matched = disc.Preview().Select(f => new
+    {
+        f.Name,
+        f.Path,
+        f.Type,
+        f.Exists,
+        // True when this file is already covered by an explicit config target
+        // (toggled on the Pipeline page, not here).
+        Explicit = tracked.Contains(SafeFull(f.Path)),
+        Enabled = f.Type == "error" ? toggle.IsErrorLogEnabled(f.Name) : toggle.IsAccessLogEnabled(f.Name)
+    }).ToList();
+
+    return new { settings = disc.GetSettings(), matched };
+}
+
 // Checkpoints
 app.MapGet("/api/checkpoints", (ICheckpointStore store) => store.GetCheckpoints());
 app.MapGet("/api/checkpoints/status", (ICheckpointStore store) => store.GetStatus());
@@ -154,6 +204,25 @@ app.MapGet("/api/checkpoints/status", (ICheckpointStore store) => store.GetStatu
 app.MapGet("/api/exporter/status", (ILogDbExporter exporter) => exporter.GetStatus());
 app.MapGet("/api/exporter/console/recent", (ExporterConsoleBuffer buffer, int? count, string? outcome) =>
     buffer.GetRecent(count ?? 200, outcome));
+
+// Per-record delivery console: every record the exporter handed to grpc-logger, with full detail.
+app.MapGet("/api/exporter/sent/recent", (DeliveryConsoleBuffer buffer, int? count, string? outcome, string? filter) =>
+    buffer.GetRecent(count ?? 200, string.IsNullOrWhiteSpace(outcome) ? null : outcome,
+        string.IsNullOrWhiteSpace(filter) ? null : filter));
+
+// Time-series of records sent to grpc-logger (delivered/failed/skipped + batches), for the Activity chart.
+app.MapGet("/api/exporter/activity", (DeliveryActivityTracker activity, int? minutes) =>
+    activity.GetActivity(minutes ?? 60, DateTime.UtcNow));
+
+// Countdown to the next spool replay (batch send) cycle.
+app.MapGet("/api/exporter/replay-status", (SpoolReplayState state) => state.GetSnapshot());
+
+// Manually trigger an immediate replay cycle (send now) instead of waiting for the interval.
+app.MapPost("/api/exporter/flush-now", (SpoolReplayTrigger trigger) =>
+{
+    trigger.RequestFlush();
+    return Results.Ok(new { requested = true });
+});
 
 // Live console
 app.MapGet("/api/console/recent", (LiveConsoleBuffer buffer, int? count, string? filter) =>

@@ -7,6 +7,10 @@
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="com.logdb.nginx.collector.tests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <HasLocalLoggerProject>false</HasLocalLoggerProject>
     <HasLocalLoggerProject Condition="Exists('..\..\LogDB.SDK\LogDB.Client\com.logdb.logger.csproj')">true</HasLocalLoggerProject>

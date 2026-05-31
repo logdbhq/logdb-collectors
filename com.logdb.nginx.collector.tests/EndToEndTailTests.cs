@@ -64,13 +64,18 @@ public class EndToEndTailTests : IDisposable
         var toggleService = new TargetToggleService(NullLogger<TargetToggleService>.Instance, checkpointOpts);
         var filterService = new FilterRuleService(NullLogger<FilterRuleService>.Instance, targetOpts, checkpointOpts);
 
+        // Discovery disabled and StartAtEnd off: these tests assert backfill (read from byte 0).
+        var discoveryOpts = Options.Create(new DiscoveryOptions { Enabled = false, StartAtEnd = false });
+        var discovery = new TargetDiscoveryService(NullLogger<TargetDiscoveryService>.Instance, discoveryOpts, checkpointOpts);
+
         var tail = new NginxFileTailService(
             NullLogger<NginxFileTailService>.Instance,
             targetOpts,
             checkpoint,
             sink,
             toggleService,
-            filterService);
+            filterService,
+            discovery);
 
         return (tail, checkpoint, spool, sink);
     }
@@ -312,6 +317,38 @@ public class EndToEndTailTests : IDisposable
     }
 
     [Fact]
+    public void SpoolStore_ReadBatch_ReturnsRecentRecordsBeforeSegmentFills()
+    {
+        // Regression: records ingested into the active segment must be sendable on
+        // the very next ReadBatch, not held hostage until the segment reaches
+        // MaxSegmentBytes. This is the "live but never sent" bug.
+        var (_, _, spool, _) = CreateServices();
+
+        var record = new NginxLogRecord
+        {
+            Timestamp = DateTime.UtcNow,
+            Message = "recent line",
+            LogType = NginxLogType.Access,
+            TargetName = "test",
+            Method = "GET",
+            Path = "/recent",
+            StatusCode = 200
+        };
+
+        // A handful of records — nowhere near MaxSegmentBytes (1 MB in tests).
+        spool.Append(record);
+        spool.Append(record);
+        spool.Append(record);
+
+        var batch = spool.ReadBatch(100);
+        Assert.Equal(3, batch.Count);
+
+        spool.CommitBatch(batch.Count);
+        Assert.Equal(0, spool.GetStatus().QueuedRecords);
+        Assert.Empty(spool.ReadBatch(100));
+    }
+
+    [Fact]
     public async Task CheckpointStore_FlushAndReload()
     {
         var opts = Options.Create(new CheckpointOptions
@@ -348,5 +385,70 @@ public class EndToEndTailTests : IDisposable
         {
             lock (Records) Records.AddRange(records);
         }
+    }
+
+    // Records the size of each send and starts failing after a configured number
+    // of successful sends, so a test can prove the worker commits the slices that
+    // landed and leaves the rest spooled.
+    private sealed class ChunkRecordingExporter : ILogDbExporter
+    {
+        private readonly int _failAfterChunks;
+        public List<int> ChunkSizes { get; } = new();
+        public ChunkRecordingExporter(int failAfterChunks) => _failAfterChunks = failAfterChunks;
+
+        public Task<bool> SendBatchAsync(List<NginxLogRecord> batch, CancellationToken ct = default)
+        {
+            if (ChunkSizes.Count >= _failAfterChunks) return Task.FromResult(false);
+            ChunkSizes.Add(batch.Count);
+            return Task.FromResult(true);
+        }
+
+        public ExporterStatus GetStatus() => new();
+        public void SetEnabled(bool enabled) { }
+        public int FlushIntervalSeconds => 1;
+        public void SetFlushIntervalSeconds(int seconds) { }
+    }
+
+    [Fact]
+    public async Task SpoolReplay_ChunkedDrain_CommitsLandedChunksWhenLaterSendFails()
+    {
+        // A backlog must drain in bounded slices, committing each as it lands, so a
+        // single failed/slow send (e.g. the 30s timeout under an error storm) can't
+        // discard work that already succeeded or wedge forward progress.
+        var spoolOpts = Options.Create(new SpoolOptions
+        {
+            Enabled = true,
+            DirectoryPath = _spoolDir,
+            MaxDiskBytes = 10_485_760,
+            MaxSegmentBytes = 1_048_576,
+            ReplayBatchSize = 50_000,
+            SendChunkSize = 5
+        });
+        var spool = new FileSpoolStore(NullLogger<FileSpoolStore>.Instance, spoolOpts);
+        spool.Initialize();
+
+        var record = new NginxLogRecord
+        {
+            Timestamp = DateTime.UtcNow,
+            Message = "storm line",
+            LogType = NginxLogType.Error,
+            Severity = "error",
+            TargetName = "test"
+        };
+        for (int i = 0; i < 12; i++) spool.Append(record);
+
+        var exporter = new ChunkRecordingExporter(failAfterChunks: 2); // 3rd send fails
+        var worker = new SpoolReplayWorker(
+            NullLogger<SpoolReplayWorker>.Instance, spool, exporter, spoolOpts,
+            new SpoolReplayState(), new SpoolReplayTrigger());
+
+        var batch = spool.ReadBatch(spoolOpts.Value.ReplayBatchSize);
+        Assert.Equal(12, batch.Count);
+
+        var committed = await worker.DrainChunkedAsync(batch, CancellationToken.None);
+
+        Assert.Equal(10, committed);                            // first two 5-record slices landed
+        Assert.Equal(new[] { 5, 5 }, exporter.ChunkSizes);      // bounded to SendChunkSize; stopped on failure
+        Assert.Equal(2, spool.GetStatus().QueuedRecords);       // remainder kept for next cycle
     }
 }

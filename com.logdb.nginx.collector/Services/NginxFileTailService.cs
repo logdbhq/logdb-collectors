@@ -14,6 +14,7 @@ public class NginxFileTailService : IFileTailService
     private readonly ILogRecordSink _sink;
     private readonly TargetToggleService _toggleService;
     private readonly FilterRuleService _filterService;
+    private readonly TargetDiscoveryService _discovery;
     private readonly string _hostName;
 
     private long _accessRecordsRead;
@@ -32,7 +33,8 @@ public class NginxFileTailService : IFileTailService
         ICheckpointStore checkpointStore,
         ILogRecordSink sink,
         TargetToggleService toggleService,
-        FilterRuleService filterService)
+        FilterRuleService filterService,
+        TargetDiscoveryService discovery)
     {
         _logger = logger;
         _targetOptions = targetOptions.Value;
@@ -40,13 +42,41 @@ public class NginxFileTailService : IFileTailService
         _sink = sink;
         _toggleService = toggleService;
         _filterService = filterService;
+        _discovery = discovery;
         _hostName = Environment.MachineName;
+    }
+
+    /// <summary>
+    /// Explicit (config) targets merged with auto-discovered ones. Discovered
+    /// files already covered by an explicit target are skipped to avoid
+    /// double-tailing the same file.
+    /// </summary>
+    private List<NginxTarget> GetConfiguredTargets()
+    {
+        var configured = _targetOptions.Targets;
+        if (!_discovery.Enabled)
+            return configured.ToList();
+
+        var tracked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in configured)
+        {
+            if (!string.IsNullOrEmpty(t.AccessLogPath)) tracked.Add(SafeFullPath(t.AccessLogPath));
+            if (!string.IsNullOrEmpty(t.ErrorLogPath)) tracked.Add(SafeFullPath(t.ErrorLogPath));
+        }
+
+        return configured.Concat(_discovery.DiscoverTargets(tracked)).ToList();
+    }
+
+    private static string SafeFullPath(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch { return path; }
     }
 
     public IReadOnlyList<TailTarget> GetTargets()
     {
         var targets = new List<TailTarget>();
-        foreach (var t in _targetOptions.Targets.Where(t => t.Enabled))
+        foreach (var t in GetConfiguredTargets().Where(t => t.Enabled))
         {
             if (!string.IsNullOrEmpty(t.AccessLogPath) && _toggleService.IsAccessLogEnabled(t.Name))
                 targets.Add(new TailTarget { TargetName = t.Name, FilePath = t.AccessLogPath, LogType = NginxLogType.Access, Enabled = true });
@@ -61,7 +91,7 @@ public class NginxFileTailService : IFileTailService
         var targets = GetTargets();
         return new PipelineStatus
         {
-            ActiveTargets = _targetOptions.Targets.Count(t => t.Enabled),
+            ActiveTargets = GetConfiguredTargets().Count(t => t.Enabled),
             ActiveFiles = targets.Count(t => File.Exists(t.FilePath)),
             AccessRecordsRead = Interlocked.Read(ref _accessRecordsRead),
             ErrorRecordsRead = Interlocked.Read(ref _errorRecordsRead),
@@ -204,7 +234,17 @@ public class NginxFileTailService : IFileTailService
     {
         var cp = _checkpointStore.GetCheckpoint(target.FilePath);
         if (cp is null)
+        {
+            // First time we've seen this file. Start at the end when configured
+            // so we don't backfill the whole existing file (only new lines ship).
+            if (_discovery.StartAtEnd && fileInfo.Length > 0)
+            {
+                _logger.LogInformation("New file {Path}: starting at end (offset {Offset}) — backfill skipped",
+                    target.FilePath, fileInfo.Length);
+                return fileInfo.Length;
+            }
             return 0;
+        }
 
         var offset = cp.Offset;
 
@@ -290,7 +330,7 @@ public class NginxFileTailService : IFileTailService
     private IReadOnlyList<TailTarget> GetAllTargets()
     {
         var targets = new List<TailTarget>();
-        foreach (var t in _targetOptions.Targets.Where(t => t.Enabled))
+        foreach (var t in GetConfiguredTargets().Where(t => t.Enabled))
         {
             if (!string.IsNullOrEmpty(t.AccessLogPath))
                 targets.Add(new TailTarget { TargetName = t.Name, FilePath = t.AccessLogPath, LogType = NginxLogType.Access, Enabled = true });

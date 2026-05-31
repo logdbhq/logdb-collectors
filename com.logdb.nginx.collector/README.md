@@ -55,8 +55,28 @@ Configured under `NginxTargets:Targets` in `appsettings*.json`.
 | `LOGDB_EXPORTER_COMPRESSION` | `LogDbExporter:EnableCompression` |
 | `LOGDB_CHECKPOINT_FLUSH_INTERVAL` | `Checkpoint:FlushIntervalSeconds` |
 | `LOGDB_SPOOL_MAX_DISK_MB` | `Spool:MaxDiskBytes` (MB to bytes) |
+| `LOGDB_API_KEY` | `Auth:ApiKey` (protects the backend API) |
+| `LOGDB_UI_USERNAME` | Operator login username (default `admin`) |
+| `LOGDB_UI_PASSWORD` | Operator login password (unset ⇒ UI auth disabled) |
 | `LOGDB_BUILD_DATE` | Build metadata only |
 | `LOGDB_COMMIT_HASH` | Build metadata only |
+
+## Authentication
+
+Both the operator UI (`:8081`) and the backend API (`:8080`) are publicly reachable in
+the default compose mapping, so authentication is built in:
+
+- **UI** — a single shared-password login. Set `LOGDB_UI_PASSWORD` (and optionally
+  `LOGDB_UI_USERNAME`) to require sign-in; the session is a cookie. If `LOGDB_UI_PASSWORD`
+  is unset, the UI stays open and logs a startup warning (backward compatible).
+- **API** — a shared key in the `X-Api-Key` header. Set `LOGDB_API_KEY` to require it on
+  all `/api/*` endpoints; `/health*` stays open for container probes. The UI forwards the
+  same key automatically, so set the **same value** for both (in the unified image they
+  share one environment). Unset ⇒ API open + startup warning.
+
+The cookie key-ring is persisted to the state volume so logins survive restarts.
+Serve this behind a reverse proxy that terminates **HTTPS** — the shared password and
+key are only as safe as the transport.
 
 ## API Endpoints
 

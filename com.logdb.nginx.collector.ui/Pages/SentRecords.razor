@@ -1,0 +1,393 @@
+@page "/sent-records"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h4 class="page-title mb-0"><i class="bi bi-send-check me-2"></i>Sent Records</h4>
+    <div class="d-flex align-items-center gap-2">
+        <span class="badge @CountdownClass" title="@CountdownTitle">
+            <i class="bi bi-stopwatch me-1"></i>@CountdownText
+        </span>
+        @if (_snapshot is not null)
+        {
+            <span class="badge bg-secondary" title="Records sent to grpc-logger since start">@_snapshot.TotalSent.ToString("N0") sent</span>
+            <span class="badge bg-success" title="Records whose batch flushed to grpc-logger without error">@_snapshot.TotalDelivered.ToString("N0") delivered</span>
+            @if (_snapshot.TotalFailed > 0)
+            {
+                <span class="badge bg-danger" title="Records whose batch failed to send">@_snapshot.TotalFailed.ToString("N0") failed</span>
+            }
+        }
+        <input class="form-control form-control-sm" style="width: 170px;" placeholder="filter path/ip/status…"
+               @bind="_filter" @bind:event="oninput" />
+        <select class="form-select form-select-sm" style="width: 130px;" @bind="_outcomeFilter">
+            <option value="">All outcomes</option>
+            <option value="delivered">Delivered only</option>
+            <option value="failed">Failed only</option>
+            <option value="skipped">Skipped only</option>
+        </select>
+        <select class="form-select form-select-sm" style="width: 90px;" @bind="_maxCount">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+        </select>
+        <button class="btn btn-sm btn-primary" @onclick="FlushNowAsync" disabled="@_flushing" title="Send the spooled batch to grpc-logger now, without waiting for the interval">
+            @if (_flushing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+            else { <i class="bi bi-send-fill me-1"></i> }
+            Send now
+        </button>
+        <div class="btn-group btn-group-sm">
+            <button class="btn @(_paused ? "btn-warning" : "btn-outline-secondary")" @onclick="TogglePause" title="@(_paused ? "Resume" : "Pause")">
+                <i class="bi @(_paused ? "bi-play-fill" : "bi-pause-fill")"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : "2s")</span>
+    </div>
+</div>
+
+<div class="alert alert-info py-2 px-3 mb-3" style="font-size: 0.8rem;">
+    <i class="bi bi-info-circle me-1"></i>
+    These are the records the exporter handed to <strong>grpc-logger</strong> (after same-second aggregation).
+    <strong>Delivered</strong> means the batch flushed without error — i.e. the record left this box.
+    It does <em>not</em> guarantee the record was persisted downstream (Kafka → consumer → database). Click a row for full detail.
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Unable to connect: @_connectError</div>
+}
+
+<div class="console-wrapper">
+    <div class="console-output">
+        @if (_records.Count == 0 && _connectError is null)
+        {
+            <div class="console-empty">
+                <i class="bi bi-send" style="font-size: 2rem; opacity: 0.3;"></i>
+                <div class="mt-2" style="opacity: 0.5;">No records sent yet. Each record appears here the moment the exporter pushes its batch to grpc-logger.</div>
+            </div>
+        }
+        else
+        {
+            @foreach (var r in _records.AsEnumerable().Reverse())
+            {
+                var rowClass = r.Outcome switch
+                {
+                    "delivered" => "",
+                    "skipped" => "console-warn",
+                    "failed" => "console-error",
+                    _ => ""
+                };
+                var expanded = _expanded.Contains(r.Id);
+                <div class="console-line @rowClass" @onclick="() => ToggleExpand(r.Id)" style="cursor: pointer;">
+                    <span class="console-caret"><i class="bi @(expanded ? "bi-caret-down-fill" : "bi-caret-right-fill")"></i></span>
+                    <span class="console-time" title="Sent to grpc-logger at">@r.SentUtc.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                    <span class="console-outcome outcome-@r.Outcome">@r.Outcome.ToUpperInvariant()</span>
+                    @if (r.AggregatedCount > 1)
+                    {
+                        <span class="console-agg" title="@r.AggregatedCount raw records collapsed into this one event (same second/method/path/status/IP)">x@r.AggregatedCount</span>
+                    }
+                    else
+                    {
+                        <span class="console-agg"></span>
+                    }
+                    <span class="console-method">@(r.Method ?? r.LogType)</span>
+                    <span class="console-status-code status-@StatusClass(r.StatusCode)">@(r.StatusCode?.ToString() ?? r.Severity ?? "")</span>
+                    <span class="console-path" title="@r.Path">@(string.IsNullOrEmpty(r.Path) ? r.Message : r.Path)</span>
+                    <span class="console-bytes">@(r.ResponseBytes.HasValue ? FormatBytes(r.ResponseBytes.Value) : "")</span>
+                    <span class="console-ip">@r.RemoteAddress</span>
+                    <span class="console-target" title="target">@r.Target</span>
+                </div>
+                @if (expanded)
+                {
+                    <div class="console-detail">
+                        <div class="detail-grid">
+                            <div><span class="dk">GUID</span><span class="dv">@r.Guid</span></div>
+                            <div><span class="dk">Outcome</span><span class="dv">@r.Outcome @(string.IsNullOrEmpty(r.Status) ? "" : $"({r.Status})")</span></div>
+                            <div><span class="dk">Record time</span><span class="dv">@r.RecordTimestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</span></div>
+                            <div><span class="dk">Sent time</span><span class="dv">@r.SentUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</span></div>
+                            <div><span class="dk">Log type</span><span class="dv">@r.LogType</span></div>
+                            <div><span class="dk">Aggregated</span><span class="dv">x@r.AggregatedCount</span></div>
+                            <div><span class="dk">Method</span><span class="dv">@r.Method</span></div>
+                            <div><span class="dk">Status</span><span class="dv">@r.StatusCode</span></div>
+                            <div><span class="dk">Protocol</span><span class="dv">@r.Protocol</span></div>
+                            <div><span class="dk">Response bytes</span><span class="dv">@r.ResponseBytes</span></div>
+                            <div><span class="dk">Request time</span><span class="dv">@(r.RequestTime?.ToString("0.000") ?? "")</span></div>
+                            <div><span class="dk">Remote addr</span><span class="dv">@r.RemoteAddress</span></div>
+                            <div><span class="dk">Severity</span><span class="dv">@r.Severity</span></div>
+                            <div><span class="dk">Target</span><span class="dv">@r.Target</span></div>
+                            <div><span class="dk">Host</span><span class="dv">@r.Host</span></div>
+                            <div><span class="dk">Endpoint</span><span class="dv">@r.Endpoint</span></div>
+                            <div><span class="dk">API key</span><span class="dv">@r.ApiKeyPrefix</span></div>
+                            <div class="detail-wide"><span class="dk">Path</span><span class="dv">@r.Path</span></div>
+                            <div class="detail-wide"><span class="dk">Source file</span><span class="dv">@r.SourceFile</span></div>
+                            <div class="detail-wide"><span class="dk">Referer</span><span class="dv">@r.Referer</span></div>
+                            <div class="detail-wide"><span class="dk">User agent</span><span class="dv">@r.UserAgent</span></div>
+                            <div class="detail-wide"><span class="dk">Message</span><span class="dv">@r.Message</span></div>
+                            @if (!string.IsNullOrEmpty(r.Error))
+                            {
+                                <div class="detail-wide"><span class="dk">Error</span><span class="dv text-danger">@r.Error</span></div>
+                            }
+                        </div>
+                    </div>
+                }
+            }
+        }
+    </div>
+</div>
+
+<style>
+    .console-wrapper {
+        background: var(--console-bg, #0d1117);
+        border: 1px solid var(--console-border, #21262d);
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 240px);
+    }
+
+    .console-output {
+        overflow-y: auto;
+        padding: 8px 12px;
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        flex: 1;
+    }
+
+    .console-empty {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        height: 100%; color: var(--text-muted, #8b949e); text-align: center; padding: 0 20%;
+    }
+
+    .console-line {
+        white-space: pre-wrap; padding: 1px 0; display: flex; gap: 10px; align-items: baseline;
+    }
+    .console-line:hover { background: rgba(255, 255, 255, 0.04); }
+
+    .console-error { color: var(--console-err, #f85149); }
+    .console-warn { color: var(--console-wrn, #d29922); }
+
+    .console-caret { color: #6e7681; width: 12px; flex-shrink: 0; user-select: none; }
+    .console-time { color: var(--console-time, #6e7681); flex-shrink: 0; user-select: none; }
+
+    .console-outcome { width: 78px; flex-shrink: 0; font-weight: 600; text-align: center; }
+    .outcome-delivered { color: #3fb950; }
+    .outcome-skipped { color: #d29922; }
+    .outcome-failed { color: #f85149; }
+
+    .console-agg { color: #d29922; width: 42px; flex-shrink: 0; text-align: right; font-weight: 600; }
+    .console-method { color: var(--console-method, #58a6ff); width: 56px; flex-shrink: 0; font-weight: 600; }
+    .console-status-code { width: 38px; flex-shrink: 0; text-align: right; font-weight: 600; }
+    .status-2 { color: #3fb950; }
+    .status-3 { color: #58a6ff; }
+    .status-4 { color: #d29922; }
+    .status-5 { color: #f85149; }
+    .status-0 { color: #8b949e; }
+
+    .console-path { color: var(--console-msg, #c9d1d9); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .console-bytes { color: var(--console-bytes, #8b949e); width: 70px; flex-shrink: 0; text-align: right; }
+    .console-ip { color: var(--console-ip, #8b949e); width: 120px; flex-shrink: 0; }
+    .console-target { color: #6e7681; width: 120px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+
+    .console-detail {
+        background: rgba(255, 255, 255, 0.03);
+        border-left: 2px solid #30363d;
+        margin: 2px 0 6px 22px;
+        padding: 8px 12px;
+        border-radius: 4px;
+    }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 2px 18px; }
+    .detail-grid > div { display: flex; gap: 8px; overflow: hidden; }
+    .detail-grid .detail-wide { grid-column: 1 / -1; }
+    .dk { color: #6e7681; min-width: 100px; flex-shrink: 0; user-select: none; }
+    .dv { color: #c9d1d9; word-break: break-all; }
+
+    .refresh-dot.paused { background: #d29922 !important; animation: none !important; }
+
+    [data-bs-theme="light"] .console-wrapper { --console-bg: #f6f8fa; --console-border: #d0d7de; }
+    [data-bs-theme="light"] .console-time { --console-time: #8c959f; }
+    [data-bs-theme="light"] .console-method { --console-method: #0969da; }
+    [data-bs-theme="light"] .console-msg { --console-msg: #1f2328; }
+    [data-bs-theme="light"] .console-ip { --console-ip: #656d76; }
+    [data-bs-theme="light"] .console-bytes { --console-bytes: #656d76; }
+    [data-bs-theme="light"] .console-line:hover { background: rgba(0, 0, 0, 0.04); }
+    [data-bs-theme="light"] .outcome-delivered { color: #1a7f37; }
+    [data-bs-theme="light"] .console-detail { background: rgba(0, 0, 0, 0.03); border-left-color: #d0d7de; }
+    [data-bs-theme="light"] .dv { color: #1f2328; }
+</style>
+
+@code {
+    private List<RecordDto> _records = new();
+    private SnapshotDto? _snapshot;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _paused;
+    private string _outcomeFilter = "";
+    private string _filter = "";
+    private int _maxCount = 200;
+    private readonly HashSet<long> _expanded = new();
+
+    private ReplayDto? _replay;
+    private double? _secondsUntilNext;
+    private Timer? _ticker;
+    private bool _flushing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            if (!_paused)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+
+        // Local 1s ticker: counts the cached value down between server re-syncs
+        // so the countdown is smooth without polling every second.
+        _ticker = new Timer(async _ =>
+        {
+            if (_secondsUntilNext is > 0)
+            {
+                _secondsUntilNext = Math.Max(0, _secondsUntilNext.Value - 1);
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    private string CountdownText => _replay switch
+    {
+        null => "next send —",
+        { IntervalSeconds: <= 0 } => "next send —",
+        _ when _secondsUntilNext is null => "next send —",
+        _ when _secondsUntilNext <= 0.5 => "sending…",
+        _ => $"next send in {Math.Ceiling(_secondsUntilNext!.Value):0}s"
+    };
+
+    private string CountdownClass => _secondsUntilNext is <= 0.5 && _replay is not null ? "bg-success" : "bg-primary";
+
+    private string CountdownTitle => _replay is null
+        ? "Spool replay schedule unavailable"
+        : $"Batches flush every {_replay.IntervalSeconds}s. Change the interval on the Exporter Console page.";
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var url = $"/api/exporter/sent/recent?count={_maxCount}";
+            if (!string.IsNullOrWhiteSpace(_outcomeFilter))
+                url += $"&outcome={Uri.EscapeDataString(_outcomeFilter)}";
+            if (!string.IsNullOrWhiteSpace(_filter))
+                url += $"&filter={Uri.EscapeDataString(_filter)}";
+
+            _snapshot = await client.GetFromJsonAsync<SnapshotDto>(url);
+            if (_snapshot is not null)
+                _records = _snapshot.Records;
+
+            // Re-sync the countdown from the worker's actual schedule.
+            _replay = await client.GetFromJsonAsync<ReplayDto>("/api/exporter/replay-status");
+            _secondsUntilNext = _replay?.SecondsUntilNext;
+
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private void ToggleExpand(long id)
+    {
+        if (!_expanded.Remove(id)) _expanded.Add(id);
+    }
+
+    private void TogglePause() => _paused = !_paused;
+
+    private async Task FlushNowAsync()
+    {
+        _flushing = true;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            await client.PostAsync("/api/exporter/flush-now", null);
+            // Give the worker a moment to run the cycle, then refresh.
+            await Task.Delay(600);
+            await LoadAsync();
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _flushing = false; StateHasChanged(); }
+    }
+
+    private static string StatusClass(int? code) => code switch
+    {
+        null => "0",
+        >= 500 => "5",
+        >= 400 => "4",
+        >= 300 => "3",
+        >= 200 => "2",
+        _ => "0"
+    };
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes}B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:0.#}KB";
+        return $"{bytes / (1024.0 * 1024.0):0.#}MB";
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _ticker?.Dispose();
+    }
+
+    private class ReplayDto
+    {
+        public int IntervalSeconds { get; set; }
+        public double? SecondsUntilNext { get; set; }
+        public DateTime? NextCycleUtc { get; set; }
+        public DateTime? LastCycleUtc { get; set; }
+        public int LastBatchCount { get; set; }
+    }
+
+    private class SnapshotDto
+    {
+        public List<RecordDto> Records { get; set; } = new();
+        public long TotalSent { get; set; }
+        public long TotalDelivered { get; set; }
+        public long TotalFailed { get; set; }
+        public int BufferSize { get; set; }
+        public int BufferUsed { get; set; }
+    }
+
+    private class RecordDto
+    {
+        public long Id { get; set; }
+        public DateTime SentUtc { get; set; }
+        public DateTime RecordTimestamp { get; set; }
+        public string Outcome { get; set; } = "";
+        public int AggregatedCount { get; set; } = 1;
+        public string LogType { get; set; } = "";
+        public string Target { get; set; } = "";
+        public string? Host { get; set; }
+        public string? SourceFile { get; set; }
+        public string? Method { get; set; }
+        public string? Path { get; set; }
+        public string? Protocol { get; set; }
+        public int? StatusCode { get; set; }
+        public long? ResponseBytes { get; set; }
+        public string? RemoteAddress { get; set; }
+        public string? Referer { get; set; }
+        public string? UserAgent { get; set; }
+        public double? RequestTime { get; set; }
+        public string? Severity { get; set; }
+        public string? Message { get; set; }
+        public string Guid { get; set; } = "";
+        public string Endpoint { get; set; } = "";
+        public string ApiKeyPrefix { get; set; } = "";
+        public string? Status { get; set; }
+        public string? Error { get; set; }
+    }
+}

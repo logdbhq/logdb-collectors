@@ -108,6 +108,14 @@ public class FileSpoolStore : ISpoolStore
         {
             try
             {
+                // Seal the active segment so records ingested since the last cycle
+                // become part of THIS batch. Without this, recent low-volume logs
+                // would wait until the segment hit MaxSegmentBytes (10 MB) to ever
+                // ship — i.e. "live but never sent". Guarded so an idle spool with
+                // an empty active segment doesn't churn out empty files.
+                if (_activeSegmentBytes > 0)
+                    RotateSegment();
+
                 var segments = GetCompletedSegments();
                 foreach (var seg in segments)
                 {

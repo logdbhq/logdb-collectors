@@ -1,0 +1,304 @@
+@page "/targets"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="page-title mb-0"><i class="bi bi-collection me-2"></i>Targets &amp; Discovery</h4>
+    <span class="refresh-indicator"><span class="refresh-dot"></span> Auto-refresh 5s</span>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>@_connectError</div>
+}
+else if (_form is null)
+{
+    <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+}
+else
+{
+    <div class="card mb-4">
+        <div class="card-header py-2 px-3 d-flex justify-content-between align-items-center">
+            <span class="card-title-label"><i class="bi bi-search me-1"></i> Auto-discovery</span>
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="discEnabled" @bind="_form.Enabled" />
+                <label class="form-check-label" for="discEnabled">@(_form.Enabled ? "Enabled" : "Disabled")</label>
+            </div>
+        </div>
+        <div class="card-body">
+            <p class="text-muted" style="font-size: 0.85rem;">
+                Scan a directory and automatically tail every log file matching the patterns below — one target per file, including new vhosts as they appear.
+                Files already listed as explicit targets are skipped (no double-tailing).
+            </p>
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label mb-1">Directory</label>
+                    <input class="form-control form-control-sm" @bind="_form.Directory" placeholder="/var/log/nginx" />
+                </div>
+                <div class="col-md-6 d-flex align-items-end">
+                    <div class="form-check form-switch mb-1">
+                        <input class="form-check-input" type="checkbox" id="startAtEnd" @bind="_form.StartAtEnd" />
+                        <label class="form-check-label" for="startAtEnd">
+                            <strong>Start new files at end</strong> (skip backfill)
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-1">Access-log patterns</label>
+                    <input class="form-control form-control-sm" @bind="_form.AccessPatterns" placeholder="*access*.log" />
+                    <div class="form-text">Comma-separated globs (<code>*</code>, <code>?</code>).</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-1">Error-log patterns</label>
+                    <input class="form-control form-control-sm" @bind="_form.ErrorPatterns" placeholder="*error*.log" />
+                    <div class="form-text">Matched after access patterns.</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-1">Exclude patterns</label>
+                    <input class="form-control form-control-sm" @bind="_form.ExcludePatterns" placeholder="*.gz, *.[0-9]" />
+                    <div class="form-text">Skip rotated/compressed logs.</div>
+                </div>
+            </div>
+
+            @if (!_form.StartAtEnd)
+            {
+                <div class="alert alert-warning py-2 px-3 mt-3 mb-0" style="font-size: 0.82rem;">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    <strong>Backfill is on.</strong> Each newly watched file (no checkpoint yet) will be read from the
+                    beginning — the entire existing file gets shipped. On busy servers this can be a large burst.
+                    Turn on <em>Start new files at end</em> to ship only new lines.
+                </div>
+            }
+
+            <div class="d-flex align-items-center gap-2 mt-3">
+                <button class="btn btn-primary btn-sm" @onclick="SaveAsync" disabled="@_saving">
+                    @if (_saving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Save
+                </button>
+                @if (_savedAt is not null)
+                {
+                    <span class="text-success" style="font-size: 0.82rem;"><i class="bi bi-check-circle me-1"></i>Saved</span>
+                }
+                <span class="text-muted ms-auto" style="font-size: 0.82rem;">
+                    @_matched.Count file(s) match @(_form.Enabled ? "(being watched)" : "(preview — discovery off)")
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header py-2 px-3">
+            <span class="card-title-label"><i class="bi bi-file-earmark-text me-1"></i> Matched files</span>
+        </div>
+        <div class="card-body p-0">
+            @if (_matched.Count == 0)
+            {
+                <div class="p-3 text-muted" style="font-size: 0.85rem;">
+                    No files match the current patterns in <code>@_form.Directory</code>.
+                </div>
+            }
+            else
+            {
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr><th>File</th><th>Type</th><th>Path</th><th>Status</th><th class="text-center">Collect</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var f in _matched)
+                        {
+                            <tr>
+                                <td>@f.Name</td>
+                                <td><span class="badge @(f.Type == "access" ? "bg-info" : "bg-warning")">@f.Type</span></td>
+                                <td><code class="text-truncate-path">@f.Path</code></td>
+                                <td>
+                                    @if (f.Exists)
+                                    {
+                                        <span class="badge bg-success">present</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-secondary">missing</span>
+                                    }
+                                </td>
+                                <td class="text-center">
+                                    @if (f.Explicit)
+                                    {
+                                        <a href="pipeline" class="badge bg-secondary text-decoration-none" title="This file is an explicit config target — toggle it on the Pipeline page">config target</a>
+                                    }
+                                    else if (!_form!.Enabled)
+                                    {
+                                        <span class="text-muted" style="font-size: 0.78rem;" title="Enable discovery to collect this file">—</span>
+                                    }
+                                    else
+                                    {
+                                        <div class="form-check form-switch d-inline-block mb-0">
+                                            <input class="form-check-input" type="checkbox"
+                                                   checked="@f.Enabled"
+                                                   disabled="@_toggling.Contains(f.Name + ":" + f.Type)"
+                                                   @onchange="() => ToggleAsync(f.Name, f.Type, !f.Enabled)" />
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    <div class="alert alert-info py-2 px-3 mt-3" style="font-size: 0.8rem;">
+        <i class="bi bi-info-circle me-1"></i>
+        Explicit targets from config are listed (with enable/disable and offsets) on the
+        <a href="pipeline">Pipeline</a> page. Discovered files appear there too once discovery is enabled.
+    </div>
+}
+
+@code {
+    private DiscoveryForm? _form;
+    private List<MatchedFile> _matched = new();
+    private string? _connectError;
+    private bool _saving;
+    private DateTime? _savedAt;
+    private Timer? _timer;
+    private readonly HashSet<string> _toggling = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            // Refresh the matched-files preview, but don't clobber edits in progress.
+            if (!_saving) { await LoadMatchedAsync(); await InvokeAsync(StateHasChanged); }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var resp = await client.GetFromJsonAsync<DiscoveryResponse>("/api/discovery");
+            if (resp?.Settings is not null)
+            {
+                _form = DiscoveryForm.From(resp.Settings);
+                _matched = resp.Matched ?? new();
+            }
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private async Task LoadMatchedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var resp = await client.GetFromJsonAsync<DiscoveryResponse>("/api/discovery");
+            if (resp?.Matched is not null) _matched = resp.Matched;
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_form is null) return;
+        _saving = true;
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var resp = await client.PostAsJsonAsync("/api/discovery", _form.ToSettings());
+            var result = await resp.Content.ReadFromJsonAsync<DiscoveryResponse>();
+            if (result?.Settings is not null)
+            {
+                _form = DiscoveryForm.From(result.Settings);
+                _matched = result.Matched ?? new();
+            }
+            _savedAt = DateTime.UtcNow;
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _saving = false; StateHasChanged(); }
+    }
+
+    private async Task ToggleAsync(string name, string type, bool enabled)
+    {
+        var key = name + ":" + type;
+        _toggling.Add(key);
+        StateHasChanged();
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            var endpoint = type == "error" ? "error-log" : "access-log";
+            await client.PostAsJsonAsync($"/api/targets/{Uri.EscapeDataString(name)}/{endpoint}", new { enabled });
+            await LoadAsync();
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+        finally { _toggling.Remove(key); StateHasChanged(); }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class DiscoveryResponse
+    {
+        public SettingsDto? Settings { get; set; }
+        public List<MatchedFile>? Matched { get; set; }
+    }
+
+    private class SettingsDto
+    {
+        public bool Enabled { get; set; }
+        public string Directory { get; set; } = "";
+        public List<string> AccessLogPatterns { get; set; } = new();
+        public List<string> ErrorLogPatterns { get; set; } = new();
+        public List<string> ExcludePatterns { get; set; } = new();
+        public bool StartAtEnd { get; set; }
+    }
+
+    private class MatchedFile
+    {
+        public string Name { get; set; } = "";
+        public string Path { get; set; } = "";
+        public string Type { get; set; } = "access";
+        public bool Exists { get; set; }
+        public bool Enabled { get; set; } = true;
+        public bool Explicit { get; set; }
+    }
+
+    private class DiscoveryForm
+    {
+        public bool Enabled { get; set; }
+        public string Directory { get; set; } = "/var/log/nginx";
+        public string AccessPatterns { get; set; } = "";
+        public string ErrorPatterns { get; set; } = "";
+        public string ExcludePatterns { get; set; } = "";
+        public bool StartAtEnd { get; set; } = true;
+
+        public static DiscoveryForm From(SettingsDto s) => new()
+        {
+            Enabled = s.Enabled,
+            Directory = s.Directory,
+            AccessPatterns = string.Join(", ", s.AccessLogPatterns),
+            ErrorPatterns = string.Join(", ", s.ErrorLogPatterns),
+            ExcludePatterns = string.Join(", ", s.ExcludePatterns),
+            StartAtEnd = s.StartAtEnd
+        };
+
+        public SettingsDto ToSettings() => new()
+        {
+            Enabled = Enabled,
+            Directory = Directory,
+            AccessLogPatterns = Split(AccessPatterns),
+            ErrorLogPatterns = Split(ErrorPatterns),
+            ExcludePatterns = Split(ExcludePatterns),
+            StartAtEnd = StartAtEnd
+        };
+
+        private static List<string> Split(string csv) =>
+            (csv ?? "").Split(new[] { ',', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                       .ToList();
+    }
+}

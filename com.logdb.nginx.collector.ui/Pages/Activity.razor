@@ -1,0 +1,390 @@
+@page "/activity"
+@using System.Globalization
+@using System.Text
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+    <h4 class="page-title mb-0"><i class="bi bi-bar-chart-line me-2"></i>Delivery Activity</h4>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+        @if (_snapshot is not null)
+        {
+            <span class="badge bg-secondary" title="Records sent to grpc-logger since start">@FormatNum(_snapshot.TotalDelivered + _snapshot.TotalFailed + _snapshot.TotalSkipped) total</span>
+        }
+        <div class="btn-group btn-group-sm" role="group" title="Time range">
+            @foreach (var r in Ranges)
+            {
+                <button class="btn @(r.Minutes == _rangeMinutes ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick="() => SetRange(r.Minutes)">@r.Label</button>
+            }
+        </div>
+        <div class="btn-group btn-group-sm" role="group" title="Series">
+            <button class="btn @(_mode == "records" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetMode("records")'>Records</button>
+            <button class="btn @(_mode == "batches" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetMode("batches")'>Batches</button>
+        </div>
+        <div class="btn-group btn-group-sm">
+            <button class="btn @(_paused ? "btn-warning" : "btn-outline-secondary")" @onclick="TogglePause" title="@(_paused ? "Resume" : "Pause")">
+                <i class="bi @(_paused ? "bi-play-fill" : "bi-pause-fill")"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : "5s")</span>
+    </div>
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Unable to connect: @_connectError</div>
+}
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="card stat-card h-100"><div class="card-body p-3 text-center">
+            <div class="stat-value text-success">@FormatNum(_winDelivered)</div>
+            <div class="stat-label">Delivered (@RangeLabel)</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card h-100"><div class="card-body p-3 text-center">
+            <div class="stat-value @(_winFailed > 0 ? "text-danger" : "")">@FormatNum(_winFailed)</div>
+            <div class="stat-label">Failed (@RangeLabel)</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card h-100"><div class="card-body p-3 text-center">
+            <div class="stat-value @(_winSkipped > 0 ? "text-warning" : "")">@FormatNum(_winSkipped)</div>
+            <div class="stat-label">Skipped (@RangeLabel)</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card h-100"><div class="card-body p-3 text-center">
+            <div class="stat-value text-info">@SuccessRate</div>
+            <div class="stat-label">Success rate</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center py-2 px-3">
+        <span class="card-title-label"><i class="bi bi-graph-up me-1"></i> @ChartTitle</span>
+        <span class="chart-legend">
+            @foreach (var s in LegendItems)
+            {
+                <span class="legend-item"><span class="legend-dot" style="background:@s.Color"></span>@s.Label</span>
+            }
+        </span>
+    </div>
+    <div class="card-body p-3">
+        @if (_snapshot is null)
+        {
+            <div class="text-center py-5"><div class="spinner-border" role="status"></div></div>
+        }
+        else
+        {
+            <svg viewBox="0 0 1000 340" style="width:100%;height:auto;display:block;" role="img" aria-label="@ChartTitle">
+                <!-- gridlines -->
+                @foreach (var g in _gridLines)
+                {
+                    <line x1="@N(PlotX0)" y1="@N(g.Y)" x2="@N(PlotX0 + PlotW)" y2="@N(g.Y)" style="stroke:var(--border-color);stroke-width:1" />
+                }
+
+                <!-- bars -->
+                @foreach (var bar in _bars)
+                {
+                    @foreach (var seg in bar.Segments)
+                    {
+                        <rect x="@N(bar.X)" y="@N(seg.Y)" width="@N(bar.W)" height="@N(seg.H)" rx="1" style="fill:@seg.Color" />
+                    }
+                    <rect x="@N(bar.SlotX)" y="@N(PlotY0)" width="@N(bar.SlotW)" height="@N(PlotH)" fill="transparent">
+                        <title>@bar.Tooltip</title>
+                    </rect>
+                }
+
+                <!-- axis labels: built as raw SVG because Razor reserves the <text> tag -->
+                @((MarkupString)_axisSvg)
+
+                <!-- baseline -->
+                <line x1="@N(PlotX0)" y1="@N(PlotBottom)" x2="@N(PlotX0 + PlotW)" y2="@N(PlotBottom)" style="stroke:var(--border-color);stroke-width:1.5" />
+            </svg>
+
+            @if (_peak == 0)
+            {
+                <div class="text-center text-muted py-2" style="font-size:0.85rem;">
+                    <i class="bi bi-graph-up me-1"></i>No @( _mode == "batches" ? "send" : "delivery") activity in the last @RangeLabel.
+                </div>
+            }
+            else
+            {
+                <div class="d-flex justify-content-between text-muted mt-1" style="font-size:0.75rem;">
+                    <span>Each bar = @BucketLabel · peak @FormatNum(_peak)/bar</span>
+                    <span>Now ~@FormatRate(_currentRate)</span>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+<div class="alert alert-info py-2 px-3" style="font-size: 0.8rem;">
+    <i class="bi bi-info-circle me-1"></i>
+    Counts the records the exporter handed to <strong>grpc-logger</strong> per time bucket.
+    <strong>Delivered</strong> means the batch flushed without error — the record left this box; it does
+    <em>not</em> guarantee downstream persistence. Hover a bar for its exact breakdown.
+</div>
+
+<style>
+    .chart-legend { display: inline-flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    .legend-item { font-size: 0.72rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 5px; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+    .refresh-dot.paused { background: var(--warning-color) !important; animation: none !important; }
+    svg rect[fill="transparent"]:hover { fill: rgba(127,127,127,0.12); }
+</style>
+
+@code {
+    private record RangeOption(string Label, int Minutes);
+    private static readonly RangeOption[] Ranges =
+    {
+        new("15m", 15), new("1h", 60), new("6h", 360), new("24h", 1440)
+    };
+
+    // Plot geometry (viewBox units)
+    private const double PlotX0 = 52, PlotY0 = 14, PlotW = 934, PlotH = 292;
+    private const double PlotBottom = PlotY0 + PlotH;
+
+    private ActivityDto? _snapshot;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _paused;
+    private int _rangeMinutes = 60;
+    private string _mode = "records";
+
+    // Derived chart state
+    private readonly List<ChartBar> _bars = new();
+    private readonly List<GridLine> _gridLines = new();
+    private readonly List<AxisLabel> _xLabels = new();
+    private string _axisSvg = "";
+    private double _peak;
+    private long _winDelivered, _winFailed, _winSkipped, _winBatches;
+    private double _currentRate;
+
+    private string RangeLabel => Ranges.First(r => r.Minutes == _rangeMinutes).Label;
+    private string ChartTitle => _mode == "batches" ? "Send batches over time" : "Records sent over time";
+    private string BucketLabel => _snapshot is null ? "" : FormatDuration(_snapshot.BucketSeconds);
+
+    private string SuccessRate
+    {
+        get
+        {
+            var attempted = _winDelivered + _winFailed;
+            if (attempted == 0) return "—";
+            return (100.0 * _winDelivered / attempted).ToString("0.#") + "%";
+        }
+    }
+
+    private record LegendEntry(string Label, string Color);
+    private IEnumerable<LegendEntry> LegendItems => _mode == "batches"
+        ? new[] { new LegendEntry("Batches", "var(--accent-blue)") }
+        : new[]
+        {
+            new LegendEntry("Delivered", "var(--success-color)"),
+            new LegendEntry("Failed", "var(--danger-color)"),
+            new LegendEntry("Skipped", "var(--warning-color)")
+        };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            if (!_paused)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task SetRange(int minutes) { _rangeMinutes = minutes; await LoadAsync(); }
+    private void SetMode(string mode) { _mode = mode; BuildChart(); }
+    private void TogglePause() => _paused = !_paused;
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("NginxCollectorApi");
+            _snapshot = await client.GetFromJsonAsync<ActivityDto>($"/api/exporter/activity?minutes={_rangeMinutes}");
+            _connectError = null;
+            BuildChart();
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private void BuildChart()
+    {
+        _bars.Clear();
+        _gridLines.Clear();
+        _xLabels.Clear();
+        _axisSvg = "";
+        _winDelivered = _winFailed = _winSkipped = _winBatches = 0;
+        _peak = 0;
+        _currentRate = 0;
+
+        if (_snapshot is null || _snapshot.Buckets.Count == 0) return;
+
+        var buckets = _snapshot.Buckets;
+        var n = buckets.Count;
+
+        foreach (var b in buckets)
+        {
+            _winDelivered += b.Delivered;
+            _winFailed += b.Failed;
+            _winSkipped += b.Skipped;
+            _winBatches += b.Batches;
+            var total = _mode == "batches" ? b.Batches : (b.Delivered + b.Failed + b.Skipped);
+            if (total > _peak) _peak = total;
+        }
+
+        var last = buckets[^1];
+        var lastVal = _mode == "batches" ? last.Batches : (last.Delivered + last.Failed + last.Skipped);
+        _currentRate = _snapshot.BucketSeconds > 0 ? (double)lastVal / _snapshot.BucketSeconds : 0;
+
+        var yMax = NiceMax((long)_peak);
+
+        // Gridlines (0, 1/4, 1/2, 3/4, 1)
+        for (int i = 0; i <= 4; i++)
+        {
+            var frac = i / 4.0;
+            _gridLines.Add(new GridLine(PlotBottom - frac * PlotH, FormatNum(frac * yMax)));
+        }
+
+        var slot = PlotW / n;
+        var barW = slot * 0.72;
+
+        for (int i = 0; i < n; i++)
+        {
+            var b = buckets[i];
+            var slotX = PlotX0 + i * slot;
+            var x = slotX + (slot - barW) / 2.0;
+            var bar = new ChartBar
+            {
+                X = x, W = barW, SlotX = slotX, SlotW = slot,
+                Tooltip = BuildTooltip(b)
+            };
+
+            double cursor = PlotBottom;
+            if (_mode == "batches")
+            {
+                AddSegment(bar, ref cursor, b.Batches, yMax, "var(--accent-blue)");
+            }
+            else
+            {
+                AddSegment(bar, ref cursor, b.Delivered, yMax, "var(--success-color)");
+                AddSegment(bar, ref cursor, b.Failed, yMax, "var(--danger-color)");
+                AddSegment(bar, ref cursor, b.Skipped, yMax, "var(--warning-color)");
+            }
+
+            _bars.Add(bar);
+        }
+
+        // X labels at ~5 evenly spaced buckets
+        var step = Math.Max(1, n / 5);
+        for (int i = 0; i < n; i += step)
+        {
+            var cx = PlotX0 + i * slot + slot / 2.0;
+            _xLabels.Add(new AxisLabel(cx, buckets[i].StartUtc.ToLocalTime().ToString("HH:mm")));
+        }
+
+        _axisSvg = BuildAxisSvg();
+    }
+
+    private string BuildAxisSvg()
+    {
+        var sb = new StringBuilder();
+        foreach (var g in _gridLines)
+            sb.Append($"<text x=\"{N(PlotX0 - 8)}\" y=\"{N(g.Y + 4)}\" text-anchor=\"end\" style=\"fill:var(--text-muted);font-size:12px\">{g.Label}</text>");
+        foreach (var xl in _xLabels)
+            sb.Append($"<text x=\"{N(xl.X)}\" y=\"332\" text-anchor=\"middle\" style=\"fill:var(--text-muted);font-size:12px\">{xl.Label}</text>");
+        return sb.ToString();
+    }
+
+    private static void AddSegment(ChartBar bar, ref double cursor, long value, double yMax, string color)
+    {
+        if (value <= 0 || yMax <= 0) return;
+        var h = value / yMax * PlotH;
+        cursor -= h;
+        bar.Segments.Add(new Seg(cursor, h, color));
+    }
+
+    private string BuildTooltip(BucketDto b)
+    {
+        var t = b.StartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+        if (_mode == "batches")
+            return $"{t}\nBatches: {b.Batches:N0}";
+        return $"{t}\nDelivered: {b.Delivered:N0}\nFailed: {b.Failed:N0}\nSkipped: {b.Skipped:N0}\nBatches: {b.Batches:N0}";
+    }
+
+    private static long NiceMax(long peak)
+    {
+        if (peak <= 5) return 5;
+        var mag = (long)Math.Pow(10, Math.Floor(Math.Log10(peak)));
+        var norm = peak / (double)mag;
+        double nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+        return (long)(nice * mag);
+    }
+
+    private static string FormatNum(double v)
+    {
+        if (v >= 1_000_000) return (v / 1_000_000d).ToString("0.#") + "M";
+        if (v >= 1_000) return (v / 1_000d).ToString("0.#") + "k";
+        return ((long)Math.Round(v)).ToString();
+    }
+
+    private static string FormatRate(double perSec)
+    {
+        if (perSec >= 1) return $"{perSec.ToString("0.#")} rec/s";
+        if (perSec <= 0) return "0 rec/s";
+        return $"{(perSec * 60).ToString("0.#")} rec/min";
+    }
+
+    private static string FormatDuration(int seconds) => seconds switch
+    {
+        < 60 => $"{seconds}s",
+        < 3600 => $"{seconds / 60}m",
+        _ => $"{seconds / 3600}h"
+    };
+
+    // Invariant coordinate formatting so SVG stays valid regardless of locale.
+    private static string N(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    public void Dispose() => _timer?.Dispose();
+
+    private sealed class ChartBar
+    {
+        public double X, W, SlotX, SlotW;
+        public string Tooltip = "";
+        public List<Seg> Segments = new();
+    }
+    private readonly record struct Seg(double Y, double H, string Color);
+    private readonly record struct GridLine(double Y, string Label);
+    private readonly record struct AxisLabel(double X, string Label);
+
+    private class ActivityDto
+    {
+        public List<BucketDto> Buckets { get; set; } = new();
+        public int BucketSeconds { get; set; }
+        public int RangeMinutes { get; set; }
+        public long TotalDelivered { get; set; }
+        public long TotalFailed { get; set; }
+        public long TotalSkipped { get; set; }
+        public long TotalBatches { get; set; }
+        public DateTime GeneratedUtc { get; set; }
+    }
+
+    private class BucketDto
+    {
+        public DateTime StartUtc { get; set; }
+        public long Delivered { get; set; }
+        public long Failed { get; set; }
+        public long Skipped { get; set; }
+        public long Batches { get; set; }
+    }
+}
