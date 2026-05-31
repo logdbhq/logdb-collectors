@@ -1,0 +1,305 @@
+@page "/sent-records"
+@inject IHttpClientFactory HttpClientFactory
+@implements IDisposable
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h4 class="page-title mb-0"><i class="bi bi-send-check me-2"></i>Sent Records</h4>
+    <div class="d-flex align-items-center gap-2">
+        @if (_snapshot is not null)
+        {
+            <span class="badge bg-secondary" title="Records sent to grpc-logger since start">@_snapshot.TotalSent.ToString("N0") sent</span>
+            <span class="badge bg-success" title="Records whose batch flushed without error">@_snapshot.TotalDelivered.ToString("N0") delivered</span>
+            @if (_snapshot.TotalFailed > 0)
+            {
+                <span class="badge bg-danger" title="Records whose batch failed to send">@_snapshot.TotalFailed.ToString("N0") failed</span>
+            }
+            <span class="badge bg-info" title="Log vs metric records sent">@_snapshot.TotalLogs.ToString("N0") log / @_snapshot.TotalMetrics.ToString("N0") metric</span>
+        }
+        <input class="form-control form-control-sm" style="width: 170px;" placeholder="filter container/msg…"
+               @bind="_filter" @bind:event="oninput" />
+        <select class="form-select form-select-sm" style="width: 120px;" @bind="_kindFilter">
+            <option value="">All kinds</option>
+            <option value="log">Logs only</option>
+            <option value="metric">Metrics only</option>
+        </select>
+        <select class="form-select form-select-sm" style="width: 130px;" @bind="_outcomeFilter">
+            <option value="">All outcomes</option>
+            <option value="delivered">Delivered only</option>
+            <option value="failed">Failed only</option>
+        </select>
+        <select class="form-select form-select-sm" style="width: 90px;" @bind="_maxCount">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+            <option value="1000">1000</option>
+        </select>
+        <div class="btn-group btn-group-sm">
+            <button class="btn @(_paused ? "btn-warning" : "btn-outline-secondary")" @onclick="TogglePause" title="@(_paused ? "Resume" : "Pause")">
+                <i class="bi @(_paused ? "bi-play-fill" : "bi-pause-fill")"></i>
+            </button>
+        </div>
+        <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : "2s")</span>
+    </div>
+</div>
+
+<div class="alert alert-info py-2 px-3 mb-3" style="font-size: 0.8rem;">
+    <i class="bi bi-info-circle me-1"></i>
+    These are the records the exporter handed to <strong>grpc-logger</strong> — both container <strong>logs</strong> (after same-second
+    aggregation) and container <strong>metrics</strong>. <strong>Delivered</strong> means the batch flushed without error, i.e. the record
+    left this box. It does <em>not</em> guarantee it was persisted downstream (Kafka → consumer → database). Click a row for full detail.
+</div>
+
+@if (_connectError is not null)
+{
+    <div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>Unable to connect: @_connectError</div>
+}
+
+<div class="console-wrapper">
+    <div class="console-output">
+        @if (_records.Count == 0 && _connectError is null)
+        {
+            <div class="console-empty">
+                <i class="bi bi-send" style="font-size: 2rem; opacity: 0.3;"></i>
+                <div class="mt-2" style="opacity: 0.5;">No records sent yet. Each record appears here the moment the exporter pushes its batch to grpc-logger.</div>
+            </div>
+        }
+        else
+        {
+            @foreach (var r in _records.AsEnumerable().Reverse())
+            {
+                var rowClass = r.Outcome == "failed" ? "console-error" : "";
+                var expanded = _expanded.Contains(r.Id);
+                <div class="console-line @rowClass" @onclick="() => ToggleExpand(r.Id)" style="cursor: pointer;">
+                    <span class="console-caret"><i class="bi @(expanded ? "bi-caret-down-fill" : "bi-caret-right-fill")"></i></span>
+                    <span class="console-time" title="Sent to grpc-logger at">@r.SentUtc.ToLocalTime().ToString("HH:mm:ss.fff")</span>
+                    <span class="console-outcome outcome-@r.Outcome">@r.Outcome.ToUpperInvariant()</span>
+                    <span class="console-kind kind-@r.Kind" title="@(r.Kind == "metric" ? "Container metric record" : "Container log record")">@r.Kind.ToUpperInvariant()</span>
+                    @if (r.AggregatedCount > 1)
+                    {
+                        <span class="console-agg" title="@r.AggregatedCount raw records collapsed into this one event">x@r.AggregatedCount</span>
+                    }
+                    else
+                    {
+                        <span class="console-agg"></span>
+                    }
+                    <span class="console-level @LevelClass(r)">@(r.Kind == "metric" ? "" : (r.Level ?? r.Stream))</span>
+                    <span class="console-msg" title="@r.Message">@r.Message</span>
+                    <span class="console-container" title="@r.Container">@(r.ComposeService ?? r.Container)</span>
+                </div>
+                @if (expanded)
+                {
+                    <div class="console-detail">
+                        <div class="detail-grid">
+                            <div><span class="dk">GUID</span><span class="dv">@r.Guid</span></div>
+                            <div><span class="dk">Outcome</span><span class="dv">@r.Outcome @(string.IsNullOrEmpty(r.Status) ? "" : $"({r.Status})")</span></div>
+                            <div><span class="dk">Kind</span><span class="dv">@r.Kind</span></div>
+                            <div><span class="dk">Record time</span><span class="dv">@r.RecordTimestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</span></div>
+                            <div><span class="dk">Sent time</span><span class="dv">@r.SentUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")</span></div>
+                            <div><span class="dk">Aggregated</span><span class="dv">x@r.AggregatedCount</span></div>
+                            <div><span class="dk">Container</span><span class="dv">@r.Container</span></div>
+                            <div><span class="dk">Compose</span><span class="dv">@(r.ComposeProject is null ? "" : $"{r.ComposeProject} / ")@r.ComposeService</span></div>
+                            <div><span class="dk">Image</span><span class="dv">@r.Image</span></div>
+                            <div><span class="dk">Container ID</span><span class="dv">@r.ContainerId</span></div>
+                            @if (r.Kind == "log")
+                            {
+                                <div><span class="dk">Stream</span><span class="dv">@r.Stream</span></div>
+                                <div><span class="dk">Level</span><span class="dv">@r.Level</span></div>
+                                <div><span class="dk">Category</span><span class="dv">@r.Category</span></div>
+                            }
+                            else
+                            {
+                                <div><span class="dk">CPU %</span><span class="dv">@r.CpuPercent?.ToString("F1")</span></div>
+                                <div><span class="dk">Memory %</span><span class="dv">@r.MemoryPercent?.ToString("F1")</span></div>
+                                <div><span class="dk">Health</span><span class="dv">@r.Level</span></div>
+                            }
+                            <div><span class="dk">Endpoint</span><span class="dv">@r.Endpoint</span></div>
+                            <div class="detail-wide"><span class="dk">Message</span><span class="dv">@r.Message</span></div>
+                            @if (!string.IsNullOrEmpty(r.Error))
+                            {
+                                <div class="detail-wide"><span class="dk">Error</span><span class="dv text-danger">@r.Error</span></div>
+                            }
+                        </div>
+                    </div>
+                }
+            }
+        }
+    </div>
+</div>
+
+<style>
+    .console-wrapper {
+        background: var(--console-bg, #0d1117);
+        border: 1px solid var(--console-border, #21262d);
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - 240px);
+    }
+
+    .console-output {
+        overflow-y: auto;
+        padding: 8px 12px;
+        font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        flex: 1;
+    }
+
+    .console-empty {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        height: 100%; color: var(--text-muted, #8b949e); text-align: center; padding: 0 20%;
+    }
+
+    .console-line {
+        white-space: pre-wrap; padding: 1px 0; display: flex; gap: 10px; align-items: baseline;
+    }
+    .console-line:hover { background: rgba(255, 255, 255, 0.04); }
+
+    .console-error { color: var(--console-err, #f85149); }
+
+    .console-caret { color: #6e7681; width: 12px; flex-shrink: 0; user-select: none; }
+    .console-time { color: var(--console-time, #6e7681); flex-shrink: 0; user-select: none; }
+
+    .console-outcome { width: 78px; flex-shrink: 0; font-weight: 600; text-align: center; }
+    .outcome-delivered { color: #3fb950; }
+    .outcome-failed { color: #f85149; }
+
+    .console-kind { width: 56px; flex-shrink: 0; font-weight: 600; text-align: center; font-size: 0.7rem; }
+    .kind-log { color: #58a6ff; }
+    .kind-metric { color: #d2a8ff; }
+
+    .console-agg { color: #d29922; width: 42px; flex-shrink: 0; text-align: right; font-weight: 600; }
+    .console-level { width: 64px; flex-shrink: 0; font-weight: 600; }
+    .level-error { color: #f85149; }
+    .level-warn { color: #d29922; }
+    .level-info { color: #58a6ff; }
+
+    .console-msg { color: var(--console-msg, #c9d1d9); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .console-container { color: #6e7681; width: 150px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+
+    .console-detail {
+        background: rgba(255, 255, 255, 0.03);
+        border-left: 2px solid #30363d;
+        margin: 2px 0 6px 22px;
+        padding: 8px 12px;
+        border-radius: 4px;
+    }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 2px 18px; }
+    .detail-grid > div { display: flex; gap: 8px; overflow: hidden; }
+    .detail-grid .detail-wide { grid-column: 1 / -1; }
+    .dk { color: #6e7681; min-width: 100px; flex-shrink: 0; user-select: none; }
+    .dv { color: #c9d1d9; word-break: break-all; }
+
+    .refresh-dot.paused { background: #d29922 !important; animation: none !important; }
+
+    [data-bs-theme="light"] .console-wrapper { --console-bg: #f6f8fa; --console-border: #d0d7de; }
+    [data-bs-theme="light"] .console-time { --console-time: #8c959f; }
+    [data-bs-theme="light"] .console-msg { --console-msg: #1f2328; }
+    [data-bs-theme="light"] .console-line:hover { background: rgba(0, 0, 0, 0.04); }
+    [data-bs-theme="light"] .outcome-delivered { color: #1a7f37; }
+    [data-bs-theme="light"] .console-detail { background: rgba(0, 0, 0, 0.03); border-left-color: #d0d7de; }
+    [data-bs-theme="light"] .dv { color: #1f2328; }
+</style>
+
+@code {
+    private List<RecordDto> _records = new();
+    private SnapshotDto? _snapshot;
+    private string? _connectError;
+    private Timer? _timer;
+    private bool _paused;
+    private string _outcomeFilter = "";
+    private string _kindFilter = "";
+    private string _filter = "";
+    private int _maxCount = 200;
+    private readonly HashSet<long> _expanded = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _timer = new Timer(async _ =>
+        {
+            if (!_paused)
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var url = $"/api/exporter/sent/recent?count={_maxCount}";
+            if (!string.IsNullOrWhiteSpace(_outcomeFilter))
+                url += $"&outcome={Uri.EscapeDataString(_outcomeFilter)}";
+            if (!string.IsNullOrWhiteSpace(_kindFilter))
+                url += $"&kind={Uri.EscapeDataString(_kindFilter)}";
+            if (!string.IsNullOrWhiteSpace(_filter))
+                url += $"&filter={Uri.EscapeDataString(_filter)}";
+
+            _snapshot = await client.GetFromJsonAsync<SnapshotDto>(url);
+            if (_snapshot is not null)
+                _records = _snapshot.Records;
+            _connectError = null;
+        }
+        catch (Exception ex) { _connectError = ex.Message; }
+    }
+
+    private void ToggleExpand(long id)
+    {
+        if (!_expanded.Remove(id)) _expanded.Add(id);
+    }
+
+    private void TogglePause() => _paused = !_paused;
+
+    private static string LevelClass(RecordDto r) => (r.Level ?? "").ToLowerInvariant() switch
+    {
+        "error" or "critical" or "crit" or "fail" => "level-error",
+        "warning" or "warn" => "level-warn",
+        "information" or "info" => "level-info",
+        _ => ""
+    };
+
+    public void Dispose() => _timer?.Dispose();
+
+    private class SnapshotDto
+    {
+        public List<RecordDto> Records { get; set; } = new();
+        public long TotalSent { get; set; }
+        public long TotalDelivered { get; set; }
+        public long TotalFailed { get; set; }
+        public long TotalLogs { get; set; }
+        public long TotalMetrics { get; set; }
+        public int BufferSize { get; set; }
+        public int BufferUsed { get; set; }
+    }
+
+    private class RecordDto
+    {
+        public long Id { get; set; }
+        public DateTime SentUtc { get; set; }
+        public DateTime RecordTimestamp { get; set; }
+        public string Outcome { get; set; } = "";
+        public string Kind { get; set; } = "log";
+        public int AggregatedCount { get; set; } = 1;
+        public string ContainerId { get; set; } = "";
+        public string Container { get; set; } = "";
+        public string? Image { get; set; }
+        public string? ComposeProject { get; set; }
+        public string? ComposeService { get; set; }
+        public string? Stream { get; set; }
+        public string? Level { get; set; }
+        public string? Category { get; set; }
+        public string? Message { get; set; }
+        public double? CpuPercent { get; set; }
+        public double? MemoryPercent { get; set; }
+        public string Guid { get; set; } = "";
+        public string Endpoint { get; set; } = "";
+        public string? Status { get; set; }
+        public string? Error { get; set; }
+    }
+}

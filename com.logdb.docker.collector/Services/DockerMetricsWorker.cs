@@ -10,6 +10,8 @@ public class DockerMetricsWorker : BackgroundService
     private readonly ILogger<DockerMetricsWorker> _logger;
     private readonly DockerMetricsOptions _options;
     private readonly MetricsSettingsService _settings;
+    private readonly MetricsSpoolStore _spool;
+    private readonly SpoolOptions _spoolOptions;
     private DateTime _lastErrorLogUtc;
 
     public DockerMetricsWorker(
@@ -17,13 +19,17 @@ public class DockerMetricsWorker : BackgroundService
         ILogDbExporter exporter,
         ILogger<DockerMetricsWorker> logger,
         IOptions<DockerMetricsOptions> options,
-        MetricsSettingsService settings)
+        MetricsSettingsService settings,
+        MetricsSpoolStore spool,
+        IOptions<SpoolOptions> spoolOptions)
     {
         _collector = collector;
         _exporter = exporter;
         _logger = logger;
         _options = options.Value;
         _settings = settings;
+        _spool = spool;
+        _spoolOptions = spoolOptions.Value;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -56,11 +62,12 @@ public class DockerMetricsWorker : BackgroundService
                 {
                     var metrics = await _collector.CollectAsync(stoppingToken);
 
+                    // Persist before sending so a LogDB outage (or a crash mid-cycle)
+                    // doesn't lose metrics — they survive a restart and retry next cycle.
                     if (metrics.Count > 0)
-                    {
-                        await _exporter.SendMetricsBatchAsync(metrics, stoppingToken);
-                        _logger.LogDebug("Exported {Count} container metrics", metrics.Count);
-                    }
+                        _spool.Append(metrics);
+
+                    await DrainMetricsAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -85,5 +92,29 @@ public class DockerMetricsWorker : BackgroundService
         }
 
         _logger.LogInformation("Docker metrics worker stopped");
+    }
+
+    /// <summary>
+    /// Drains the metrics spool in bounded slices, committing each as it lands. Stops on
+    /// the first failed send (exporter down or disabled) and leaves the rest queued for
+    /// the next cycle — at-least-once delivery for metrics, matching the log path.
+    /// </summary>
+    private async Task DrainMetricsAsync(CancellationToken ct)
+    {
+        var chunkSize = Math.Max(1, _spoolOptions.SendChunkSize);
+
+        while (!ct.IsCancellationRequested)
+        {
+            var batch = _spool.ReadBatch(chunkSize);
+            if (batch.Count == 0) break;
+
+            if (!await _exporter.SendMetricsBatchAsync(batch, ct))
+                break;
+
+            _spool.CommitBatch(batch.Count);
+            _logger.LogDebug("Exported {Count} container metrics", batch.Count);
+
+            if (batch.Count < chunkSize) break;
+        }
     }
 }

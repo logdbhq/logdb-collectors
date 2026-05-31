@@ -9,6 +9,10 @@
         {
             <span class="badge bg-info">@_data.ContainerCount containers</span>
             <span class="badge bg-secondary" title="Total collection cycles">@_data.TotalCollections cycles</span>
+            <span class="badge @FreshnessClass"
+                  title="Metrics only change when the collector runs a collection cycle (every @FormatInterval(_intervalSeconds)) — not on the page's @_refreshInterval s poll. This is the age of the data on screen.">
+                <i class="bi bi-clock-history me-1"></i>collected @FormatTime(_data.LastCollectionUtc)
+            </span>
         }
         <div class="btn-group btn-group-sm">
             <button class="btn @(_sortField == "cpu" ? "btn-primary" : "btn-outline-secondary")" @onclick='() => SetSort("cpu")' title="Sort by CPU">CPU</button>
@@ -33,7 +37,9 @@
                 }
             </select>
         </div>
-        <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : $"{_refreshInterval}s")</span>
+        <span class="refresh-indicator" title="How often this page re-fetches from the backend. The underlying metrics still only change once per collection cycle.">
+            <span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : $"poll {_refreshInterval}s")
+        </span>
     </div>
 </div>
 
@@ -288,6 +294,20 @@ else
     // Export/collection interval (distinct from the page's UI refresh rate above)
     private int _intervalSeconds = 300;
     private bool _savingInterval;
+
+    // Colour the data-age badge by how overdue a collection is: green while fresh,
+    // amber once we're past the interval, red once a cycle looks missed.
+    private string FreshnessClass
+    {
+        get
+        {
+            if (_data?.LastCollectionUtc is null) return "bg-secondary";
+            var age = (DateTime.UtcNow - _data.LastCollectionUtc.Value).TotalSeconds;
+            if (age > _intervalSeconds * 1.5 + 10) return "bg-danger";
+            if (age > _intervalSeconds + 5) return "bg-warning text-dark";
+            return "bg-success";
+        }
+    }
 
     private List<ContainerMetricDto> SortedContainers
     {

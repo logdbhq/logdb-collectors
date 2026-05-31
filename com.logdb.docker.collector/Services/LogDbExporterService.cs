@@ -14,8 +14,11 @@ public class LogDbExporterService : ILogDbExporter
     private readonly ILoggerFactory _loggerFactory;
     private readonly LogDbExporterOptions _options;
     private readonly DeliveryActivityTracker _activity;
+    private readonly DeliveryConsoleBuffer _delivery;
     private readonly string _settingsPath;
     private readonly SemaphoreSlim _rediscoverGate = new(1, 1);
+
+    private const int MaxSentMessageLength = 512;
 
     private ILogDBClient _client;
     private string _currentEndpoint;
@@ -34,12 +37,14 @@ public class LogDbExporterService : ILogDbExporter
     private DateTime _lastErrorLogUtc;
 
     public LogDbExporterService(ILogger<LogDbExporterService> logger, IOptions<LogDbExporterOptions> options,
-        IOptions<CheckpointOptions> checkpointOptions, ILoggerFactory loggerFactory, DeliveryActivityTracker activity)
+        IOptions<CheckpointOptions> checkpointOptions, ILoggerFactory loggerFactory, DeliveryActivityTracker activity,
+        DeliveryConsoleBuffer delivery)
     {
         _logger = logger;
         _loggerFactory = loggerFactory;
         _options = options.Value;
         _activity = activity;
+        _delivery = delivery;
 
         // Persist toggle state next to checkpoints (on the Docker volume)
         var checkpointDir = Path.GetDirectoryName(Path.GetFullPath(checkpointOptions.Value.FilePath)) ?? ".";
@@ -159,15 +164,18 @@ public class LogDbExporterService : ILogDbExporter
         if (!IsEnabled || batch.Count == 0) return false;
 
         var startUtc = DateTime.UtcNow;
+
+        // Built before the try so the catch block can mark the same records as failed.
+        var prepared = new List<(LogRecord Record, int Count, Log Log)>();
         try
         {
-            var aggregated = AggregateBatch(batch);
-            var logs = aggregated.Select(a => MapToLogDbEvent(a.Record, a.Count)).ToList();
+            foreach (var a in AggregateBatch(batch))
+                prepared.Add((a.Record, a.Count, MapToLogDbEvent(a.Record, a.Count)));
 
             var failCount = 0;
-            foreach (var log in logs)
+            foreach (var item in prepared)
             {
-                var result = await _client.LogAsync(log, ct);
+                var result = await _client.LogAsync(item.Log, ct);
                 if (result != LogResponseStatus.Success)
                 {
                     Interlocked.Increment(ref _retryCount);
@@ -176,7 +184,7 @@ public class LogDbExporterService : ILogDbExporter
             }
 
             if (failCount > 0)
-                _logger.LogWarning("gRPC batch: {FailCount}/{Total} returned non-Success", failCount, logs.Count);
+                _logger.LogWarning("gRPC batch: {FailCount}/{Total} returned non-Success", failCount, prepared.Count);
 
             await _client.FlushAsync();
 
@@ -190,7 +198,10 @@ public class LogDbExporterService : ILogDbExporter
                 _logger.LogInformation("LogDB exporter recovered: {Endpoint} reachable again", _currentEndpoint);
 
             _activity.Record(startUtc, batch.Count, "delivered", metrics: false);
-            _logger.LogDebug("Exported batch: {Raw} records -> {Aggregated} events", batch.Count, logs.Count);
+            var status = failCount > 0 ? $"ok ({failCount} retried)" : "ok";
+            foreach (var item in prepared)
+                _delivery.Record(BuildLogSentEntry(item.Record, item.Count, item.Log.Guid ?? "", "delivered", startUtc, status, error: null));
+            _logger.LogDebug("Exported batch: {Raw} records -> {Aggregated} events", batch.Count, prepared.Count);
             return true;
         }
         catch (Exception ex)
@@ -199,6 +210,14 @@ public class LogDbExporterService : ILogDbExporter
             _lastError = ex.Message;
             _healthy = false;
             _activity.Record(startUtc, batch.Count, "failed", metrics: false);
+
+            // If mapping failed before any record was prepared, fall back to the raw
+            // batch so the operator still sees what was lost.
+            var failedRecords = prepared.Count > 0
+                ? prepared.Select(p => (p.Record, p.Count, Guid: p.Log.Guid ?? ""))
+                : batch.Select(r => (Record: r, Count: 1, Guid: ""));
+            foreach (var (record, count, guid) in failedRecords)
+                _delivery.Record(BuildLogSentEntry(record, count, guid, "failed", startUtc, ex.GetType().Name, ex.Message));
 
             if ((DateTime.UtcNow - _lastErrorLogUtc).TotalSeconds >= 30)
             {
@@ -238,6 +257,71 @@ public class LogDbExporterService : ILogDbExporter
     {
         public LogRecord Record { get; set; } = null!;
         public int Count { get; set; }
+    }
+
+    private SentRecordEntry BuildLogSentEntry(LogRecord r, int count, string guid, string outcome,
+        DateTime sentUtc, string? status, string? error)
+    {
+        var message = r.Message;
+        if (message.Length > MaxSentMessageLength)
+            message = message[..MaxSentMessageLength] + "...";
+
+        return new SentRecordEntry
+        {
+            SentUtc = sentUtc,
+            RecordTimestamp = r.Timestamp,
+            Outcome = outcome,
+            Kind = "log",
+            AggregatedCount = count,
+            ContainerId = r.ContainerId,
+            Container = r.ContainerName,
+            Image = r.Image,
+            ComposeProject = r.ComposeProject,
+            ComposeService = r.ComposeService,
+            Stream = r.Stream,
+            Level = r.ParsedLevel ?? (r.Stream == "stderr" ? "Error" : "Info"),
+            Category = r.Category,
+            Message = message,
+            Guid = guid,
+            Endpoint = _currentEndpoint,
+            Status = status,
+            Error = error
+        };
+    }
+
+    private SentRecordEntry BuildMetricSentEntry(DockerMetricsRecord m, string guid, string outcome,
+        DateTime sentUtc, string? status, string? error)
+    {
+        return new SentRecordEntry
+        {
+            SentUtc = sentUtc,
+            RecordTimestamp = m.Timestamp,
+            Outcome = outcome,
+            Kind = "metric",
+            AggregatedCount = 1,
+            ContainerId = m.ContainerId,
+            Container = m.ContainerName,
+            Image = m.Image,
+            ComposeProject = m.ComposeProject,
+            ComposeService = m.ComposeService,
+            Level = m.HealthStatus,
+            Message = $"cpu {m.CpuUsagePercent:F1}% · mem {m.MemoryUsagePercent:F1}% ({FormatBytesShort(m.MemoryUsageBytes)})" +
+                      $" · net rx {FormatBytesShort(m.NetworkRxBytes)} tx {FormatBytesShort(m.NetworkTxBytes)}",
+            CpuPercent = m.CpuUsagePercent,
+            MemoryPercent = m.MemoryUsagePercent,
+            Guid = guid,
+            Endpoint = _currentEndpoint,
+            Status = status,
+            Error = error
+        };
+    }
+
+    private static string FormatBytesShort(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes}B";
+        if (bytes < 1_048_576) return $"{bytes / 1024.0:0.#}KB";
+        if (bytes < 1_073_741_824) return $"{bytes / 1_048_576.0:0.#}MB";
+        return $"{bytes / 1_073_741_824.0:0.#}GB";
     }
 
     private void LoadSettings()
@@ -284,14 +368,18 @@ public class LogDbExporterService : ILogDbExporter
         if (!IsEnabled || batch.Count == 0) return false;
 
         var startUtc = DateTime.UtcNow;
+
+        // Built before the try so the catch block can mark the same records as failed.
+        var prepared = new List<(DockerMetricsRecord Record, Log Log)>();
         try
         {
-            var logs = batch.Select(MapMetricToLogDbEvent).ToList();
+            foreach (var m in batch)
+                prepared.Add((m, MapMetricToLogDbEvent(m)));
 
             var failCount = 0;
-            foreach (var log in logs)
+            foreach (var item in prepared)
             {
-                var result = await _client.LogAsync(log, ct);
+                var result = await _client.LogAsync(item.Log, ct);
                 if (result != LogResponseStatus.Success)
                 {
                     Interlocked.Increment(ref _retryCount);
@@ -300,7 +388,7 @@ public class LogDbExporterService : ILogDbExporter
             }
 
             if (failCount > 0)
-                _logger.LogWarning("gRPC metrics batch: {FailCount}/{Total} returned non-Success", failCount, logs.Count);
+                _logger.LogWarning("gRPC metrics batch: {FailCount}/{Total} returned non-Success", failCount, prepared.Count);
 
             await _client.FlushAsync();
 
@@ -316,6 +404,9 @@ public class LogDbExporterService : ILogDbExporter
                 _logger.LogInformation("LogDB exporter recovered (metrics): {Endpoint} reachable again", _currentEndpoint);
 
             _activity.Record(startUtc, batch.Count, "delivered", metrics: true);
+            var status = failCount > 0 ? $"ok ({failCount} retried)" : "ok";
+            foreach (var item in prepared)
+                _delivery.Record(BuildMetricSentEntry(item.Record, item.Log.Guid ?? "", "delivered", startUtc, status, error: null));
             return true;
         }
         catch (Exception ex)
@@ -324,6 +415,12 @@ public class LogDbExporterService : ILogDbExporter
             _lastError = ex.Message;
             _healthy = false;
             _activity.Record(startUtc, batch.Count, "failed", metrics: true);
+
+            var failedRecords = prepared.Count > 0
+                ? prepared.Select(p => (p.Record, Guid: p.Log.Guid ?? ""))
+                : batch.Select(m => (Record: m, Guid: ""));
+            foreach (var (record, guid) in failedRecords)
+                _delivery.Record(BuildMetricSentEntry(record, guid, "failed", startUtc, ex.GetType().Name, ex.Message));
 
             if ((DateTime.UtcNow - _lastErrorLogUtc).TotalSeconds >= 30)
             {

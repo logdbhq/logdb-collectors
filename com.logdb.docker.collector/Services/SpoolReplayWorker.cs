@@ -1,4 +1,5 @@
 using com.logdb.docker.collector.Configuration;
+using com.logdb.docker.collector.Models;
 using Microsoft.Extensions.Options;
 
 namespace com.logdb.docker.collector.Services;
@@ -38,20 +39,15 @@ public class SpoolReplayWorker : BackgroundService
 
                 if (batch.Count > 0)
                 {
-                    var success = await _exporter.SendBatchAsync(batch, stoppingToken);
+                    var committed = await DrainChunkedAsync(batch, stoppingToken);
 
-                    if (success)
+                    // If we drained a full read, yield briefly then loop - more data likely waiting
+                    if (committed >= _spoolOptions.ReplayBatchSize)
                     {
-                        _spool.CommitBatch(batch.Count);
-
-                        // If we got a full batch, yield briefly then loop - more data likely waiting
-                        if (batch.Count >= _spoolOptions.ReplayBatchSize)
-                        {
-                            await Task.Delay(250, stoppingToken);
-                            continue;
-                        }
+                        await Task.Delay(250, stoppingToken);
+                        continue;
                     }
-                    // If send failed, records remain in spool - will be retried next cycle
+                    // Any uncommitted remainder stays in the spool - retried next cycle
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -75,14 +71,37 @@ public class SpoolReplayWorker : BackgroundService
         {
             var remaining = _spool.ReadBatch(_spoolOptions.ReplayBatchSize);
             if (remaining.Count > 0)
-            {
-                var success = await _exporter.SendBatchAsync(remaining, CancellationToken.None);
-                if (success) _spool.CommitBatch(remaining.Count);
-            }
+                await DrainChunkedAsync(remaining, CancellationToken.None);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Final spool replay failed");
         }
+    }
+
+    /// <summary>
+    /// Sends a replay batch in <see cref="SpoolOptions.SendChunkSize"/>-sized slices,
+    /// committing each slice the moment it lands. The spool is FIFO and slices are taken
+    /// in order, so committing a slice removes exactly that prefix. On the first failed
+    /// slice we stop and leave the remainder spooled for the next cycle, so one slow/failed
+    /// send can't discard work that already succeeded or wedge a backlog. Returns the
+    /// number of records committed.
+    /// </summary>
+    internal async Task<int> DrainChunkedAsync(List<LogRecord> batch, CancellationToken ct)
+    {
+        var chunkSize = Math.Max(1, _spoolOptions.SendChunkSize);
+        var committed = 0;
+
+        for (int offset = 0; offset < batch.Count; offset += chunkSize)
+        {
+            var chunk = batch.GetRange(offset, Math.Min(chunkSize, batch.Count - offset));
+            if (!await _exporter.SendBatchAsync(chunk, ct))
+                break;
+
+            _spool.CommitBatch(chunk.Count);
+            committed += chunk.Count;
+        }
+
+        return committed;
     }
 }

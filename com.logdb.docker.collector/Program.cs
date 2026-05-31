@@ -72,6 +72,7 @@ builder.Services.AddSingleton<ContainerToggleService>();
 builder.Services.AddSingleton<ContainerFilterService>();
 builder.Services.AddSingleton<FilterRuleService>();
 builder.Services.AddSingleton<LiveConsoleBuffer>();
+builder.Services.AddSingleton<DeliveryConsoleBuffer>();
 builder.Services.AddSingleton<DeliveryActivityTracker>();
 builder.Services.AddSingleton<ICheckpointStore, FileCheckpointStore>();
 builder.Services.AddSingleton<IDockerDiscoveryService, DockerDiscoveryService>();
@@ -84,6 +85,7 @@ builder.Services.AddHostedService<FileTailWorker>();
 builder.Services.AddHostedService<CheckpointFlushWorker>();
 builder.Services.AddHostedService<SpoolReplayWorker>();
 builder.Services.AddSingleton<MetricsSettingsService>();
+builder.Services.AddSingleton<MetricsSpoolStore>();
 builder.Services.AddSingleton<DockerMetricsCollectorService>();
 builder.Services.AddHostedService<DockerMetricsWorker>();
 
@@ -219,6 +221,13 @@ app.MapGet("/api/checkpoints", (ICheckpointStore store) => store.GetCheckpoints(
 app.MapGet("/api/checkpoints/status", (ICheckpointStore store) => store.GetStatus());
 
 app.MapGet("/api/exporter/status", (ILogDbExporter exporter) => exporter.GetStatus());
+
+// Per-record view of what the exporter handed to grpc-logger (logs + metrics), with delivery outcome.
+app.MapGet("/api/exporter/sent/recent", (DeliveryConsoleBuffer buffer, int? count, string? outcome, string? kind, string? filter) =>
+    buffer.GetRecent(count ?? 200,
+        string.IsNullOrWhiteSpace(outcome) ? null : outcome,
+        string.IsNullOrWhiteSpace(kind) ? null : kind,
+        string.IsNullOrWhiteSpace(filter) ? null : filter));
 
 // Time-series of records sent to grpc-logger (delivered/failed + batches, plus metrics), for the Activity chart.
 app.MapGet("/api/exporter/activity", (DeliveryActivityTracker activity, int? minutes) =>
@@ -435,5 +444,8 @@ checkpointStore.Load();
 
 var spoolStore = app.Services.GetRequiredService<ISpoolStore>();
 spoolStore.Initialize();
+
+var metricsSpoolStore = app.Services.GetRequiredService<MetricsSpoolStore>();
+metricsSpoolStore.Initialize();
 
 app.Run();
