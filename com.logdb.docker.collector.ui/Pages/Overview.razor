@@ -148,6 +148,11 @@ else
                     </div>
                     <div class="detail-row"><span class="detail-label">Batches</span><span class="detail-value">@_data.Exporter.BatchesSent.ToString("N0")</span></div>
                     <div class="detail-row"><span class="detail-label" title="Docker container metrics, sent separately from logs">Metrics records</span><span class="detail-value">@_data.Exporter.MetricsRecordsSent.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label" title="Container metrics waiting in the durable metrics spool (accumulate while the exporter is down/disabled)">Metrics queued</span><span class="detail-value @(_data.MetricsSpool.QueuedRecords > 0 ? "text-warning" : "")">@_data.MetricsSpool.QueuedRecords.ToString("N0")</span></div>
+                    @if (_data.MetricsSpool.DroppedRecords > 0)
+                    {
+                        <div class="detail-row"><span class="detail-label" title="Metrics dropped after the spool hit its record cap">Metrics dropped</span><span class="detail-value text-danger">@_data.MetricsSpool.DroppedRecords.ToString("N0")</span></div>
+                    }
                     <div class="detail-row"><span class="detail-label">Send errors</span><span class="detail-value @(_data.Exporter.SendErrors > 0 ? "text-danger" : "")">@_data.Exporter.SendErrors.ToString("N0")</span></div>
                     <div class="detail-row"><span class="detail-label">Last send</span><span class="detail-value">@FormatTime(_data.Exporter.LastSendUtc)</span></div>
                     @if (!string.IsNullOrEmpty(_data.Exporter.LastError))
@@ -294,6 +299,7 @@ else
         public PipelineDto Pipeline { get; set; } = new();
         public ExporterDto Exporter { get; set; } = new();
         public SpoolDto Spool { get; set; } = new();
+        public MetricsSpoolDto MetricsSpool { get; set; } = new();
     }
 
     private class AgentDto
@@ -351,5 +357,12 @@ else
         public long DroppedRecords { get; set; }
         public long ReplayedRecords { get; set; }
         public string? LastError { get; set; }
+    }
+
+    private class MetricsSpoolDto
+    {
+        public long QueuedRecords { get; set; }
+        public long DroppedRecords { get; set; }
+        public long ReplayedRecords { get; set; }
     }
 }

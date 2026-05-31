@@ -275,6 +275,7 @@ app.MapGet("/api/dashboard", (
     IFileTailService tail,
     ILogDbExporter exporter,
     ISpoolStore spool,
+    MetricsSpoolStore metricsSpool,
     FilterRuleService filters) =>
 {
     var docker = discovery.GetDockerStatus();
@@ -326,6 +327,12 @@ app.MapGet("/api/dashboard", (
             DroppedRecords = sp.DroppedRecords,
             ReplayedRecords = sp.ReplayedRecords,
             LastError = sp.LastError
+        },
+        MetricsSpool = new MetricsSpoolSummary
+        {
+            QueuedRecords = metricsSpool.QueuedRecords,
+            DroppedRecords = metricsSpool.DroppedRecords,
+            ReplayedRecords = metricsSpool.ReplayedRecords
         }
     };
 });

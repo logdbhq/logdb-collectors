@@ -7,6 +7,7 @@ public class DashboardSummary
     public PipelineSummary Pipeline { get; set; } = new();
     public ExporterSummary Exporter { get; set; } = new();
     public SpoolSummary Spool { get; set; } = new();
+    public MetricsSpoolSummary MetricsSpool { get; set; } = new();
 }
 
 public class DockerSummary
@@ -52,4 +53,12 @@ public class SpoolSummary
     public long DroppedRecords { get; set; }
     public long ReplayedRecords { get; set; }
     public string? LastError { get; set; }
+}
+
+/// <summary>Durable queue for container metrics (separate from the log spool).</summary>
+public class MetricsSpoolSummary
+{
+    public long QueuedRecords { get; set; }
+    public long DroppedRecords { get; set; }
+    public long ReplayedRecords { get; set; }
 }
