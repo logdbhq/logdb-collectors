@@ -144,9 +144,10 @@ else
                 <div class="card-body p-3">
                     <div class="text-center mb-3">
                         <div class="stat-value text-success">@_data.Exporter.RecordsSent.ToString("N0")</div>
-                        <div class="stat-label">Records sent</div>
+                        <div class="stat-label">Log records sent</div>
                     </div>
                     <div class="detail-row"><span class="detail-label">Batches</span><span class="detail-value">@_data.Exporter.BatchesSent.ToString("N0")</span></div>
+                    <div class="detail-row"><span class="detail-label" title="Docker container metrics, sent separately from logs">Metrics records</span><span class="detail-value">@_data.Exporter.MetricsRecordsSent.ToString("N0")</span></div>
                     <div class="detail-row"><span class="detail-label">Send errors</span><span class="detail-value @(_data.Exporter.SendErrors > 0 ? "text-danger" : "")">@_data.Exporter.SendErrors.ToString("N0")</span></div>
                     <div class="detail-row"><span class="detail-label">Last send</span><span class="detail-value">@FormatTime(_data.Exporter.LastSendUtc)</span></div>
                     @if (!string.IsNullOrEmpty(_data.Exporter.LastError))
@@ -333,6 +334,8 @@ else
         public bool Healthy { get; set; }
         public long BatchesSent { get; set; }
         public long RecordsSent { get; set; }
+        public long MetricsBatchesSent { get; set; }
+        public long MetricsRecordsSent { get; set; }
         public long SendErrors { get; set; }
         public DateTime? LastSendUtc { get; set; }
         public string? LastError { get; set; }

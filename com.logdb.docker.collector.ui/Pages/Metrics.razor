@@ -24,6 +24,15 @@
                 <i class="bi bi-arrow-clockwise"></i>
             </button>
         </div>
+        <div class="d-flex align-items-center gap-1" title="How often container metrics are collected and exported to LogDB">
+            <i class="bi bi-clock-history text-muted"></i>
+            <select class="form-select form-select-sm" style="width:auto;" value="@_intervalSeconds" @onchange="OnIntervalChanged" disabled="@_savingInterval">
+                @foreach (var opt in IntervalOptions())
+                {
+                    <option value="@opt.Seconds">@opt.Label</option>
+                }
+            </select>
+        </div>
         <span class="refresh-indicator"><span class="refresh-dot @(_paused ? "paused" : "")"></span> @(_paused ? "Paused" : $"{_refreshInterval}s")</span>
     </div>
 </div>
@@ -276,6 +285,10 @@ else
     private string _sortField = "cpu";
     private int _refreshInterval = 5;
 
+    // Export/collection interval (distinct from the page's UI refresh rate above)
+    private int _intervalSeconds = 300;
+    private bool _savingInterval;
+
     private List<ContainerMetricDto> SortedContainers
     {
         get
@@ -295,8 +308,74 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        await LoadSettingsAsync();
         await LoadAsync();
         StartTimer();
+    }
+
+    private record IntervalOption(int Seconds, string Label);
+
+    private IEnumerable<IntervalOption> IntervalOptions()
+    {
+        var presets = new List<IntervalOption>
+        {
+            new(30, "30 sec"),
+            new(60, "1 min"),
+            new(300, "5 min"),
+            new(600, "10 min"),
+            new(900, "15 min"),
+            new(1800, "30 min"),
+            new(3600, "1 hour"),
+        };
+        // Surface a non-preset value (e.g. set via env/config) so the dropdown reflects it
+        if (presets.All(p => p.Seconds != _intervalSeconds))
+            presets.Add(new IntervalOption(_intervalSeconds, FormatInterval(_intervalSeconds)));
+        return presets.OrderBy(p => p.Seconds);
+    }
+
+    private static string FormatInterval(int seconds) =>
+        seconds < 60 ? $"{seconds} sec"
+        : seconds % 3600 == 0 ? $"{seconds / 3600} hour"
+        : seconds % 60 == 0 ? $"{seconds / 60} min"
+        : $"{seconds} sec";
+
+    private async Task LoadSettingsAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var settings = await client.GetFromJsonAsync<MetricsSettingsDto>("/api/metrics/settings");
+            if (settings is not null) _intervalSeconds = settings.IntervalSeconds;
+        }
+        catch
+        {
+            // Leave default; the live-metrics fetch will surface any connection error.
+        }
+    }
+
+    private async Task OnIntervalChanged(ChangeEventArgs e)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var seconds)) return;
+
+        _savingInterval = true;
+        try
+        {
+            var client = HttpClientFactory.CreateClient("DockerCollectorApi");
+            var response = await client.PostAsJsonAsync("/api/metrics/settings", new { intervalSeconds = seconds });
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<MetricsSettingsDto>();
+                _intervalSeconds = result?.IntervalSeconds ?? seconds;
+            }
+        }
+        catch
+        {
+            // Keep the previously loaded value on failure.
+        }
+        finally
+        {
+            _savingInterval = false;
+        }
     }
 
     private void StartTimer()
@@ -412,6 +491,11 @@ else
     public void Dispose() => _timer?.Dispose();
 
     // DTOs
+    private class MetricsSettingsDto
+    {
+        public int IntervalSeconds { get; set; }
+    }
+
     private class LiveMetricsDto
     {
         public List<ContainerMetricDto> Containers { get; set; } = new();

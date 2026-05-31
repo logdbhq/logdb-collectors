@@ -1,5 +1,6 @@
 using com.logdb.docker.collector.Configuration;
 using com.logdb.docker.collector.Models;
+using com.logdb.docker.collector.Security;
 using com.logdb.docker.collector.Services;
 using Microsoft.Extensions.Options;
 
@@ -29,6 +30,7 @@ MapEnv("LOGDB_METRICS_ENABLED", "DockerMetrics:Enabled");
 MapEnv("LOGDB_METRICS_INTERVAL", "DockerMetrics:CollectionIntervalSeconds");
 MapEnv("LOGDB_TAIL_ACTIVE_INTERVAL", "Tail:ActiveIntervalSeconds");
 MapEnv("LOGDB_TAIL_IDLE_INTERVAL", "Tail:IdleIntervalSeconds");
+MapEnv("LOGDB_API_KEY", "Auth:ApiKey");
 
 if (envOverrides.Count > 0)
     builder.Configuration.AddInMemoryCollection(envOverrides);
@@ -70,6 +72,7 @@ builder.Services.AddSingleton<ContainerToggleService>();
 builder.Services.AddSingleton<ContainerFilterService>();
 builder.Services.AddSingleton<FilterRuleService>();
 builder.Services.AddSingleton<LiveConsoleBuffer>();
+builder.Services.AddSingleton<DeliveryActivityTracker>();
 builder.Services.AddSingleton<ICheckpointStore, FileCheckpointStore>();
 builder.Services.AddSingleton<IDockerDiscoveryService, DockerDiscoveryService>();
 builder.Services.AddSingleton<ISpoolStore, FileSpoolStore>();
@@ -80,6 +83,7 @@ builder.Services.AddHostedService<DockerDiscoveryWorker>();
 builder.Services.AddHostedService<FileTailWorker>();
 builder.Services.AddHostedService<CheckpointFlushWorker>();
 builder.Services.AddHostedService<SpoolReplayWorker>();
+builder.Services.AddSingleton<MetricsSettingsService>();
 builder.Services.AddSingleton<DockerMetricsCollectorService>();
 builder.Services.AddHostedService<DockerMetricsWorker>();
 
@@ -92,6 +96,12 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors();
+
+if (string.IsNullOrEmpty(app.Configuration["Auth:ApiKey"]))
+    app.Logger.LogWarning("LOGDB_API_KEY not set — collector API is unauthenticated.");
+
+// Require the shared API key on every endpoint except health probes.
+app.UseApiKeyAuth();
 
 // Health endpoints
 app.MapGet("/health", () => new { status = "ok" });
@@ -210,6 +220,10 @@ app.MapGet("/api/checkpoints/status", (ICheckpointStore store) => store.GetStatu
 
 app.MapGet("/api/exporter/status", (ILogDbExporter exporter) => exporter.GetStatus());
 
+// Time-series of records sent to grpc-logger (delivered/failed + batches, plus metrics), for the Activity chart.
+app.MapGet("/api/exporter/activity", (DeliveryActivityTracker activity, int? minutes) =>
+    activity.GetActivity(minutes ?? 60, DateTime.UtcNow));
+
 app.MapPost("/api/exporter/toggle", (ILogDbExporter exporter) =>
 {
     var current = exporter.GetStatus().Enabled;
@@ -287,6 +301,8 @@ app.MapGet("/api/dashboard", (
             Healthy = exp.Healthy,
             BatchesSent = exp.BatchesSent,
             RecordsSent = exp.RecordsSent,
+            MetricsBatchesSent = exp.MetricsBatchesSent,
+            MetricsRecordsSent = exp.MetricsRecordsSent,
             SendErrors = exp.SendErrors,
             LastSendUtc = exp.LastSendUtc,
             LastError = exp.LastError
@@ -355,6 +371,28 @@ app.MapGet("/api/metrics/live", (DockerMetricsCollectorService metrics) => new
     ContainerCount = metrics.LatestSnapshot.Count,
     LastCollectionUtc = metrics.LastCollectionUtc,
     TotalCollections = metrics.TotalCollections
+});
+
+app.MapGet("/api/metrics/settings", (MetricsSettingsService settings) => new
+{
+    intervalSeconds = settings.IntervalSeconds,
+    minIntervalSeconds = MetricsSettingsService.MinIntervalSeconds,
+    maxIntervalSeconds = MetricsSettingsService.MaxIntervalSeconds
+});
+
+app.MapPost("/api/metrics/settings", (MetricsSettingsRequest request, MetricsSettingsService settings) =>
+{
+    if (request.IntervalSeconds < MetricsSettingsService.MinIntervalSeconds ||
+        request.IntervalSeconds > MetricsSettingsService.MaxIntervalSeconds)
+    {
+        return Results.BadRequest(new
+        {
+            error = $"intervalSeconds must be between {MetricsSettingsService.MinIntervalSeconds} and {MetricsSettingsService.MaxIntervalSeconds}"
+        });
+    }
+
+    settings.SetIntervalSeconds(request.IntervalSeconds);
+    return Results.Ok(new { intervalSeconds = settings.IntervalSeconds });
 });
 
 // Discovery: resolve portal base URL for UI "Systems" sidebar links

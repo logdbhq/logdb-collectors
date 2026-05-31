@@ -119,6 +119,25 @@ main {
 .sidebar-control-btn { background: transparent; border: 1px solid var(--glass-border); color: var(--text-secondary); border-radius: 6px; padding: 4px 8px; cursor: pointer; transition: all 0.3s ease; }
 .sidebar-control-btn:hover { background: var(--glass-hover); color: var(--text-primary); }
 
+.sidebar-footer {
+    border-top: 1px solid var(--glass-border);
+    padding: 0.75rem 1rem;
+    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+}
+.sidebar-user {
+    display: flex; align-items: center; min-width: 0;
+    color: var(--text-secondary); font-size: 0.82rem; font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sidebar-footer form { margin: 0; }
+.sidebar-logout-btn {
+    display: inline-flex; align-items: center; white-space: nowrap;
+    background: transparent; border: 1px solid var(--glass-border); color: var(--text-secondary);
+    border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; cursor: pointer;
+    transition: all 0.3s ease;
+}
+.sidebar-logout-btn:hover { background: var(--glass-hover); color: var(--text-primary); }
+
 /* Navigation */
 .nav-scrollable {
     padding: 0.5rem 0;

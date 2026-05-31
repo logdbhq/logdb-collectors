@@ -55,6 +55,29 @@ Removing the state volume can cause re-read/duplicate delivery.
 | `LOGDB_DISCOVERY_INTERVAL` | `DockerDiscovery:RefreshIntervalSeconds` |
 | `LOGDB_CHECKPOINT_FLUSH_INTERVAL` | `Checkpoint:FlushIntervalSeconds` |
 | `LOGDB_SPOOL_MAX_DISK_MB` | `Spool:MaxDiskBytes` (MB to bytes) |
+| `LOGDB_API_KEY` | `Auth:ApiKey` (protects the backend API) |
+| `LOGDB_UI_USERNAME` | Operator login username (default `admin`) |
+| `LOGDB_UI_PASSWORD` | Operator login password (unset ⇒ UI auth disabled) |
+
+## Authentication
+
+The collector runs as two services — the operator UI (`:5010`) and the backend API
+(`:8080`), both publicly reachable in the default compose mapping. Authentication is
+built in:
+
+- **UI** — a single shared-password login. Set `LOGDB_UI_PASSWORD` (and optionally
+  `LOGDB_UI_USERNAME`) on the **UI** service to require sign-in; the session is a cookie.
+  Unset ⇒ UI stays open + startup warning (backward compatible). Persist the cookie
+  key-ring with `LOGDB_DP_KEYS_DIR` on a volume so logins survive restarts (the compose
+  example does this).
+- **API** — a shared key in the `X-Api-Key` header. Set `LOGDB_API_KEY` on the
+  **collector** service to require it on all `/api/*` endpoints (`/health*` stays open for
+  probes). The **UI** must be given the **same** `LOGDB_API_KEY` so it can call the API.
+  Unset ⇒ API open + startup warning. For defense-in-depth you can also drop the
+  `8080:8080` host port mapping so only the UI (on the internal network) reaches the API.
+
+Serve this behind a reverse proxy that terminates **HTTPS** — the shared password and
+key are only as safe as the transport.
 
 ## API Endpoints
 

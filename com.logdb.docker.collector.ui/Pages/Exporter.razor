@@ -62,9 +62,11 @@ else
                     <div class="card-body p-3">
                         <div class="text-center mb-3">
                             <div class="stat-value text-success">@_status.RecordsSent.ToString("N0")</div>
-                            <div class="stat-label">Records delivered</div>
+                            <div class="stat-label">Log records delivered</div>
                         </div>
                         <div class="detail-row"><span class="detail-label">Batches sent</span><span class="detail-value">@_status.BatchesSent.ToString("N0")</span></div>
+                        <div class="detail-row"><span class="detail-label" title="Docker container metrics are sent separately and are not shown in the live console">Metrics records</span><span class="detail-value">@_status.MetricsRecordsSent.ToString("N0")</span></div>
+                        <div class="detail-row"><span class="detail-label">Metrics batches</span><span class="detail-value">@_status.MetricsBatchesSent.ToString("N0")</span></div>
                         <div class="detail-row"><span class="detail-label">Send errors</span><span class="detail-value @(_status.SendErrors > 0 ? "text-danger" : "")">@_status.SendErrors.ToString("N0")</span></div>
                         <div class="detail-row"><span class="detail-label">Retries</span><span class="detail-value @(_status.RetryCount > 0 ? "text-warning" : "")">@_status.RetryCount.ToString("N0")</span></div>
                         <div class="detail-row"><span class="detail-label">Last send</span><span class="detail-value">@(_status.LastSendUtc?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never")</span></div>
@@ -152,6 +154,8 @@ else
         public bool Healthy { get; set; }
         public long BatchesSent { get; set; }
         public long RecordsSent { get; set; }
+        public long MetricsBatchesSent { get; set; }
+        public long MetricsRecordsSent { get; set; }
         public long SendErrors { get; set; }
         public long RetryCount { get; set; }
         public DateTime? LastSendUtc { get; set; }

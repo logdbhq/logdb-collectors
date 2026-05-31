@@ -23,6 +23,11 @@ services:
       - logdb-collector:/var/lib/logdb-collector
     environment:
       - LOGDB_EXPORTER_APIKEY=your-api-key-here
+      # Protects the backend API (X-Api-Key header). The UI forwards this same value,
+      # so it must match LOGDB_API_KEY on the UI service below. Leave unset to disable
+      # (NOT recommended — the API is reachable on :8080). Tip: drop the "8080:8080"
+      # port mapping above to keep the API off the host entirely.
+      - LOGDB_API_KEY=generate-a-long-random-key
       # Optional overrides:
       # - LOGDB_EXPORTER_ENABLED=true             # default: true in Docker env
       # - LOGDB_EXPORTER_MAX_RETRIES=3             # default: 3
@@ -39,8 +44,19 @@ services:
     restart: unless-stopped
     ports:
       - "5010:8080"
+    volumes:
+      # Persist cookie data-protection keys so logins survive UI restarts.
+      - logdb-collector-ui:/var/lib/logdb-collector-ui
     environment:
       - COLLECTOR_API_URL=http://logdb-docker-collector:8080
+      # Operator-console authentication (the UI is publicly reachable on :5010).
+      # Leave LOGDB_UI_PASSWORD unset to disable the login gate (NOT recommended).
+      # Always serve this behind an HTTPS proxy.
+      - LOGDB_UI_USERNAME=admin
+      - LOGDB_UI_PASSWORD=change-me-please
+      # Must match LOGDB_API_KEY on the collector service so the UI can call the API.
+      - LOGDB_API_KEY=generate-a-long-random-key
+      - LOGDB_DP_KEYS_DIR=/var/lib/logdb-collector-ui/dataprotection-keys
       # Sub-path under which the UI is served, must match the nginx location prefix.
       # Leave unset to serve at "/".
       - PathBase=/docker-collector
@@ -53,3 +69,4 @@ networks:
 
 volumes:
   logdb-collector:
+  logdb-collector-ui:

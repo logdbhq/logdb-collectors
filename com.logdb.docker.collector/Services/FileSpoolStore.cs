@@ -191,8 +191,13 @@ public class FileSpoolStore : ISpoolStore, IDisposable
 
             try
             {
-                // Close active writer so we can read it if it's the only segment
-                // But only read from completed segments first
+                // Seal the active segment so records ingested since the last cycle
+                // become part of THIS batch instead of waiting for the segment to
+                // reach MaxSegmentBytes — otherwise recent low-volume logs show
+                // live but are never sent.
+                if (_activeSegmentBytes > 0)
+                    RotateActiveSegment();
+
                 var segmentPaths = _segments.Keys.ToList();
 
                 foreach (var segPath in segmentPaths)

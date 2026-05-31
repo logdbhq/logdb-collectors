@@ -13,6 +13,7 @@ public class LogDbExporterService : ILogDbExporter
     private readonly ILogger<LogDbExporterService> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly LogDbExporterOptions _options;
+    private readonly DeliveryActivityTracker _activity;
     private readonly string _settingsPath;
     private readonly SemaphoreSlim _rediscoverGate = new(1, 1);
 
@@ -21,6 +22,8 @@ public class LogDbExporterService : ILogDbExporter
 
     private long _batchesSent;
     private long _recordsSent;
+    private long _metricsBatchesSent;
+    private long _metricsRecordsSent;
     private long _sendErrors;
     private long _retryCount;
     private DateTime? _lastSendUtc;
@@ -31,11 +34,12 @@ public class LogDbExporterService : ILogDbExporter
     private DateTime _lastErrorLogUtc;
 
     public LogDbExporterService(ILogger<LogDbExporterService> logger, IOptions<LogDbExporterOptions> options,
-        IOptions<CheckpointOptions> checkpointOptions, ILoggerFactory loggerFactory)
+        IOptions<CheckpointOptions> checkpointOptions, ILoggerFactory loggerFactory, DeliveryActivityTracker activity)
     {
         _logger = logger;
         _loggerFactory = loggerFactory;
         _options = options.Value;
+        _activity = activity;
 
         // Persist toggle state next to checkpoints (on the Docker volume)
         var checkpointDir = Path.GetDirectoryName(Path.GetFullPath(checkpointOptions.Value.FilePath)) ?? ".";
@@ -141,6 +145,8 @@ public class LogDbExporterService : ILogDbExporter
             Healthy = _healthy,
             BatchesSent = Interlocked.Read(ref _batchesSent),
             RecordsSent = Interlocked.Read(ref _recordsSent),
+            MetricsBatchesSent = Interlocked.Read(ref _metricsBatchesSent),
+            MetricsRecordsSent = Interlocked.Read(ref _metricsRecordsSent),
             SendErrors = Interlocked.Read(ref _sendErrors),
             RetryCount = Interlocked.Read(ref _retryCount),
             LastSendUtc = _lastSendUtc,
@@ -152,6 +158,7 @@ public class LogDbExporterService : ILogDbExporter
     {
         if (!IsEnabled || batch.Count == 0) return false;
 
+        var startUtc = DateTime.UtcNow;
         try
         {
             var aggregated = AggregateBatch(batch);
@@ -182,6 +189,7 @@ public class LogDbExporterService : ILogDbExporter
             if (wasUnhealthy)
                 _logger.LogInformation("LogDB exporter recovered: {Endpoint} reachable again", _currentEndpoint);
 
+            _activity.Record(startUtc, batch.Count, "delivered", metrics: false);
             _logger.LogDebug("Exported batch: {Raw} records -> {Aggregated} events", batch.Count, logs.Count);
             return true;
         }
@@ -190,6 +198,7 @@ public class LogDbExporterService : ILogDbExporter
             Interlocked.Increment(ref _sendErrors);
             _lastError = ex.Message;
             _healthy = false;
+            _activity.Record(startUtc, batch.Count, "failed", metrics: false);
 
             if ((DateTime.UtcNow - _lastErrorLogUtc).TotalSeconds >= 30)
             {
@@ -274,6 +283,7 @@ public class LogDbExporterService : ILogDbExporter
     {
         if (!IsEnabled || batch.Count == 0) return false;
 
+        var startUtc = DateTime.UtcNow;
         try
         {
             var logs = batch.Select(MapMetricToLogDbEvent).ToList();
@@ -294,14 +304,18 @@ public class LogDbExporterService : ILogDbExporter
 
             await _client.FlushAsync();
 
-            Interlocked.Increment(ref _batchesSent);
-            Interlocked.Add(ref _recordsSent, batch.Count);
+            // Metrics use dedicated counters so the log-facing "Records Sent" stat
+            // stays comparable to what the live console shows (logs only).
+            Interlocked.Increment(ref _metricsBatchesSent);
+            Interlocked.Add(ref _metricsRecordsSent, batch.Count);
             _lastSendUtc = DateTime.UtcNow;
             _lastError = null;
             var wasUnhealthy = !_healthy;
             _healthy = true;
             if (wasUnhealthy)
                 _logger.LogInformation("LogDB exporter recovered (metrics): {Endpoint} reachable again", _currentEndpoint);
+
+            _activity.Record(startUtc, batch.Count, "delivered", metrics: true);
             return true;
         }
         catch (Exception ex)
@@ -309,6 +323,7 @@ public class LogDbExporterService : ILogDbExporter
             Interlocked.Increment(ref _sendErrors);
             _lastError = ex.Message;
             _healthy = false;
+            _activity.Record(startUtc, batch.Count, "failed", metrics: true);
 
             if ((DateTime.UtcNow - _lastErrorLogUtc).TotalSeconds >= 30)
             {
