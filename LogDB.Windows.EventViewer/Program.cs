@@ -240,7 +240,7 @@ try
     Console.WriteLine($"  Server:      {serverName}");
     Console.WriteLine($"  Environment: {serverEnvironment}");
     Console.WriteLine($"  gRPC:        {serviceUrl}");
-    Console.WriteLine($"  API Key:     {(string.IsNullOrEmpty(apiKey) ? "NOT CONFIGURED" : apiKey[..Math.Min(10, apiKey.Length)] + "...")}");
+    Console.WriteLine($"  API Key:     {(string.IsNullOrEmpty(apiKey) || apiKey == "NOT CONFIGURED" ? "NOT CONFIGURED" : "CONFIGURED")}");
     Console.WriteLine($"  Log Sources: {(logSources.Count > 0 ? string.Join(", ", logSources) : "NONE CONFIGURED")}");
     Console.WriteLine($"  Levels:      {(eventLevels.Count > 0 ? string.Join(", ", eventLevels) : "NONE CONFIGURED")}");
     Console.WriteLine("");

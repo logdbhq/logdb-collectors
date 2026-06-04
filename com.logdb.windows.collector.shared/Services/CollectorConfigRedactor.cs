@@ -80,16 +80,6 @@ public static class CollectorConfigRedactor
 
     private static string MaskApiKey(string apiKey)
     {
-        if (string.IsNullOrEmpty(apiKey))
-        {
-            return string.Empty;
-        }
-
-        if (apiKey.Length <= 6)
-        {
-            return new string('*', apiKey.Length);
-        }
-
-        return $"{apiKey[..4]}{new string('*', apiKey.Length - 6)}{apiKey[^2..]}";
+        return string.IsNullOrEmpty(apiKey) ? string.Empty : "********";
     }
 }

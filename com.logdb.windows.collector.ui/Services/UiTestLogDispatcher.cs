@@ -198,9 +198,7 @@ internal sealed class UiTestLogDispatcher
 
     private static string Mask(string apiKey)
     {
-        if (string.IsNullOrEmpty(apiKey)) return "(empty)";
-        if (apiKey.Length <= 8) return new string('•', apiKey.Length);
-        return $"{apiKey[..4]}••••{apiKey[^4..]}";
+        return string.IsNullOrEmpty(apiKey) ? "(empty)" : "••••••••";
     }
 
     private static string Preview(Log log)

@@ -502,9 +502,7 @@ public sealed class LocalCollectorAdminClient
 
     private static string Mask(string? apiKey)
     {
-        if (string.IsNullOrEmpty(apiKey)) return "(none)";
-        if (apiKey.Length <= 10) return $"{apiKey[..Math.Min(3, apiKey.Length)]}***";
-        return $"{apiKey[..8]}***({apiKey.Length} chars)";
+        return string.IsNullOrEmpty(apiKey) ? "(none)" : "(configured)";
     }
 
     private static void DebugLog(string message)

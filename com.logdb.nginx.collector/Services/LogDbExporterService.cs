@@ -314,7 +314,8 @@ public class LogDbExporterService : ILogDbExporter
         if (string.IsNullOrWhiteSpace(apiKey)) return "(empty)";
         var trimmed = apiKey.Trim();
         if (PlaceholderApiKeys.Contains(trimmed)) return "(placeholder)";
-        return trimmed.Length <= 8 ? trimmed + "..." : trimmed[..8] + "...";
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(trimmed));
+        return "fp:" + Convert.ToHexString(hash, 0, 4).ToLowerInvariant();
     }
 
     private static List<AggregatedRecord> AggregateBatch(List<NginxLogRecord> batch)

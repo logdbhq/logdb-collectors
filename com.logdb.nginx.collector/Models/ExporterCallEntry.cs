@@ -16,7 +16,7 @@ public class ExporterCallEntry
 
     public string Endpoint { get; set; } = "";
 
-    /// <summary>First 8 chars of the API key (or "(empty)" / "(placeholder)") for sanity-check without leaking the full key.</summary>
+    /// <summary>Irreversible short fingerprint of the API key ("fp:xxxxxxxx") or "(empty)" / "(placeholder)". Stable per key for dashboard correlation; reveals no key material.</summary>
     public string ApiKeyPrefix { get; set; } = "";
 
     public double DurationMs { get; set; }

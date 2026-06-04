@@ -168,7 +168,7 @@ try
     Console.WriteLine($"  Server:      {serverName}");
     Console.WriteLine($"  Environment: {serverEnvironment}");
     Console.WriteLine($"  gRPC:        {serviceUrl}");
-    Console.WriteLine($"  API Key:     {(string.IsNullOrEmpty(apiKey) ? "NOT CONFIGURED" : apiKey[..Math.Min(10, apiKey.Length)] + "...")}");
+    Console.WriteLine($"  API Key:     {(string.IsNullOrEmpty(apiKey) || apiKey == "NOT CONFIGURED" ? "NOT CONFIGURED" : "CONFIGURED")}");
 
     if (effectiveSources.Count > 0)
     {
