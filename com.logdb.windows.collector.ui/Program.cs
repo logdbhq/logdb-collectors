@@ -28,11 +28,11 @@ class Program
         VelopackApp.Build()
             .OnFirstRun(version =>
             {
-                Console.WriteLine($"Collector UI first run: {version}");
+                UpdateLog.Write($"Collector UI first run: {version}");
             })
             .OnRestarted(version =>
             {
-                Console.WriteLine($"Collector UI restarted after update: {version}");
+                UpdateLog.Write($"Collector UI restarted after update: {version}");
             })
             .OnBeforeUpdateFastCallback(version =>
             {
@@ -43,9 +43,9 @@ class Program
                 // that prevent overwrite. Stopping it now lets BOTH the Velopack swap
                 // AND the ServiceBundleSync.SyncFromCurrentBundle() copy in OnAfter
                 // succeed.
-                Console.WriteLine($"Velopack pre-update hook: stopping {ServiceController.ServiceName} before swap to {version}");
+                UpdateLog.Write($"Velopack pre-update hook: stopping {ServiceController.ServiceName} before swap to {version}");
                 var stopped = ServiceController.Stop();
-                Console.WriteLine(stopped
+                UpdateLog.Write(stopped
                     ? $"Service stopped — proceeding with file swap to {version}"
                     : $"WARNING: failed to stop service cleanly; Velopack will attempt swap anyway and may fail");
             })
@@ -59,13 +59,13 @@ class Program
                 // fresh in-bundle binaries onto the SCM-registered location while the
                 // service is still stopped, so the restart below picks up the new bits.
                 // No-op when SCM already points inside the bundle.
-                Console.WriteLine($"Velopack post-update hook: syncing service binaries for {version}");
-                var sync = ServiceBundleSync.SyncFromCurrentBundle(msg => Console.WriteLine($"  {msg}"));
-                Console.WriteLine($"  -> [{sync.Outcome}] {sync.Message}");
+                UpdateLog.Write($"Velopack post-update hook: syncing service binaries for {version}");
+                var sync = ServiceBundleSync.SyncFromCurrentBundle(msg => UpdateLog.Write($"  {msg}"));
+                UpdateLog.Write($"  -> [{sync.Outcome}] {sync.Message}");
 
-                Console.WriteLine($"Velopack post-update hook: starting {ServiceController.ServiceName} on {version}");
+                UpdateLog.Write($"Velopack post-update hook: starting {ServiceController.ServiceName} on {version}");
                 var started = ServiceController.Start();
-                Console.WriteLine(started
+                UpdateLog.Write(started
                     ? $"Service restarted on {version}"
                     : $"WARNING: service failed to start after update — operator must investigate");
             })

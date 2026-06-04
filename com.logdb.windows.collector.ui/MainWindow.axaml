@@ -38,7 +38,7 @@
         </DataTemplate>
     </Window.DataTemplates>
 
-    <Grid RowDefinitions="60,*,Auto">
+    <Grid RowDefinitions="60,Auto,*,Auto">
         <Border Grid.Row="0"
                 Background="{DynamicResource TopbarBackgroundBrush}"
                 BorderBrush="{DynamicResource BorderBrushTheme}"
@@ -114,7 +114,39 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="68,*">
+        <Border Grid.Row="1"
+                Background="#3A2A0E"
+                BorderBrush="#C4953B"
+                BorderThickness="0,0,0,1"
+                Padding="14,10"
+                IsVisible="{Binding IsServiceDriftDetected}">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="10">
+                <TextBlock Grid.Column="0"
+                           Text="&#xE7BA;"
+                           FontFamily="Segoe MDL2 Assets"
+                           Foreground="#F5C76A"
+                           FontSize="16"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding ServiceDriftMessage}"
+                           Foreground="#F5E6C9"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap" />
+                <Button Grid.Column="2"
+                        Content="Open Service Management"
+                        Command="{Binding OpenServiceManagementCommand}"
+                        MinWidth="200" />
+                <Button Grid.Column="3"
+                        Content="Dismiss"
+                        Command="{Binding DismissServiceDriftCommand}"
+                        Background="Transparent"
+                        Foreground="#F5E6C9"
+                        BorderThickness="1"
+                        BorderBrush="#C4953B" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" ColumnDefinitions="68,*">
             <Border Background="{DynamicResource ThemeBackgroundSecondary}"
                     BorderBrush="{DynamicResource SidebarBorderBrushTheme}"
                     BorderThickness="0,0,1,0">
@@ -242,7 +274,7 @@
             </Grid>
         </Grid>
 
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 Background="{DynamicResource StatusbarBackgroundBrush}"
                 BorderBrush="{DynamicResource BorderBrushTheme}"
                 BorderThickness="0,1,0,0"

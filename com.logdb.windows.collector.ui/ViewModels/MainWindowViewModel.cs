@@ -70,6 +70,8 @@ public sealed class MainWindowViewModel : ObservableObject
     private string _toastColor = "#9ED29E";
     private CancellationTokenSource? _toastCts;
     private string _serviceVersion = "—";
+    private bool _isServiceDriftDetected;
+    private string _serviceDriftMessage = string.Empty;
 
     public MainWindowViewModel(
         Func<string, string, Task<bool>> exportTextAsync,
@@ -143,6 +145,8 @@ public sealed class MainWindowViewModel : ObservableObject
         ControlCenterOpenOverviewCommand = new RelayCommand(() => OpenPage(OverviewPage));
         ControlCenterOpenDestinationCommand = new RelayCommand(() => OpenPage(DestinationPage));
         ControlCenterOpenServiceManagementCommand = new RelayCommand(() => OpenPage(ServiceManagementPage));
+        OpenServiceManagementCommand = new RelayCommand(() => OpenPage(ServiceManagementPage));
+        DismissServiceDriftCommand = new RelayCommand(() => IsServiceDriftDetected = false);
         ControlCenterOpenDiagnosticsCommand = new AsyncRelayCommand(OpenDiagnosticsAsync);
         SaveModalApiKeyCommand = new AsyncRelayCommand(SaveModalApiKeyAsync);
         ExitFromApiKeyModalCommand = new RelayCommand(ExitFromApiKeyModal);
@@ -169,6 +173,8 @@ public sealed class MainWindowViewModel : ObservableObject
                 && !string.Equals(query.BinaryVersion, "NotInstalled", StringComparison.OrdinalIgnoreCase)
                     ? $"v{query.BinaryVersion}"
                     : "—";
+
+            UpdateServiceDrift(query);
         }
         catch
         {
@@ -176,7 +182,43 @@ public sealed class MainWindowViewModel : ObservableObject
             // both can fail on non-Windows / locked-down hosts. Don't crash the
             // status bar; leave the placeholder.
             ServiceVersion = "—";
+            IsServiceDriftDetected = false;
         }
+    }
+
+    // Catches the failure mode where Velopack updated the UI but the post-update
+    // ServiceBundleSync was skipped or failed (UAC declined, SCM binPath outside
+    // the bundle, etc.) — symptom is UI version > service version. Detected here
+    // once at startup; reset whenever the user navigates back through Service
+    // Management's apply flow.
+    private void UpdateServiceDrift(ServiceQueryResult query)
+    {
+        if (!query.Installed || string.IsNullOrWhiteSpace(query.BinaryVersion))
+        {
+            IsServiceDriftDetected = false;
+            return;
+        }
+
+        var ui = ParseVersion(AppVersion);
+        var svc = ParseVersion(query.BinaryVersion);
+        if (ui is null || svc is null || svc >= ui)
+        {
+            IsServiceDriftDetected = false;
+            return;
+        }
+
+        ServiceDriftMessage =
+            $"Service is on v{svc} but the UI is on v{ui}. " +
+            "The last update applied to the UI but the service was skipped — open Service Management to bring it up to date.";
+        IsServiceDriftDetected = true;
+    }
+
+    private static Version? ParseVersion(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var trimmed = raw.TrimStart('v', 'V');
+        var match = System.Text.RegularExpressions.Regex.Match(trimmed, @"\d+\.\d+\.\d+(?:\.\d+)?");
+        return match.Success && Version.TryParse(match.Value, out var parsed) ? parsed : null;
     }
 
     public OverviewPageViewModel OverviewPage { get; }
@@ -249,6 +291,20 @@ public sealed class MainWindowViewModel : ObservableObject
     {
         get => _serviceVersion;
         private set => SetProperty(ref _serviceVersion, value);
+    }
+
+    /// <summary>True when the UI's version is newer than the installed service binary's
+    /// version. Drives the drift banner above the main content. See <see cref="UpdateServiceDrift"/>.</summary>
+    public bool IsServiceDriftDetected
+    {
+        get => _isServiceDriftDetected;
+        private set => SetProperty(ref _isServiceDriftDetected, value);
+    }
+
+    public string ServiceDriftMessage
+    {
+        get => _serviceDriftMessage;
+        private set => SetProperty(ref _serviceDriftMessage, value);
     }
 
     public string StatusMessage
@@ -457,6 +513,8 @@ public sealed class MainWindowViewModel : ObservableObject
     public RelayCommand ControlCenterOpenOverviewCommand { get; }
     public RelayCommand ControlCenterOpenDestinationCommand { get; }
     public RelayCommand ControlCenterOpenServiceManagementCommand { get; }
+    public RelayCommand OpenServiceManagementCommand { get; }
+    public RelayCommand DismissServiceDriftCommand { get; }
     public AsyncRelayCommand ControlCenterOpenDiagnosticsCommand { get; }
 
     public async Task InitializeAsync()
