@@ -84,7 +84,13 @@ public static class CollectorConfigRedactor
                         DisplayName = kvp.Value.DisplayName,
                         Url = kvp.Value.Url,
                         MinScore = kvp.Value.MinScore
-                    })
+                    }),
+                CustomBlocklist = new CustomBlocklistConfigDto
+                {
+                    Enabled = source.Firewall.CustomBlocklist.Enabled,
+                    DisplayName = source.Firewall.CustomBlocklist.DisplayName,
+                    GuardUrl = source.Firewall.CustomBlocklist.GuardUrl
+                }
             }
         };
 

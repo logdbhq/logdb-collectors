@@ -14,15 +14,23 @@
          "is the binary actually updated" into a guessing game.
          Baseline for local/dev builds; CI overrides via -p:Version=<tag-version>
          so the released binary's version matches the tag exactly. -->
-    <Version>1.3.0</Version>
-    <AssemblyVersion>1.3.0.0</AssemblyVersion>
-    <FileVersion>1.3.0.0</FileVersion>
+    <Version>1.4.0</Version>
+    <AssemblyVersion>1.4.0.0</AssemblyVersion>
+    <FileVersion>1.4.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.7" />
     <PackageReference Include="Microsoft.Extensions.Logging.EventLog" Version="10.0.7" />
+    <!-- Grpc.Tools generates the GuardService client from Protos\guard_blocklist.proto.
+         Grpc.Net.Client + Google.Protobuf come in transitively via LogDB.Client; we
+         only need the codegen package here. -->
+    <PackageReference Include="Grpc.Tools" Version="2.71.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\guard_blocklist.proto" GrpcServices="Client" />
   </ItemGroup>
 
   <PropertyGroup>

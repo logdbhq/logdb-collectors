@@ -103,6 +103,7 @@ builder.Services.AddSingleton<ILogDbConnectionTester, LogDbConnectionTester>();
 builder.Services.AddSingleton<ICollectorControlInspector, CollectorControlInspector>();
 builder.Services.AddSingleton<PublicBlocklistFetcher>();
 builder.Services.AddSingleton<FirewallWhitelistService>();
+builder.Services.AddSingleton<GuardBlocklistClient>();
 builder.Services.AddSingleton<FirewallSyncEngine>();
 builder.Services.AddSingleton<IDiskSpooler, NullDiskSpooler>();
 builder.Services.AddSingleton<ModuleHostFactory>();

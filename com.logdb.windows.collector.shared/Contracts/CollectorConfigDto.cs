@@ -221,6 +221,23 @@ public class FirewallConfigDto
     /// Defaults are set by the runtime when the dictionary is empty so a fresh
     /// install with Enabled=true still does something useful.</summary>
     public Dictionary<string, PublicBlocklistFeedDto> PublicBlocklists { get; set; } = new();
+
+    /// <summary>Optional LogDB Guard subscription. When enabled, the firewall
+    /// fetches the same custom blocklist that LogDB Guard maintains (CrowdSec
+    /// decisions, operator-added IPs) over gRPC and applies it as one extra
+    /// feed alongside the public ones. Empty/missing = disabled.</summary>
+    public CustomBlocklistConfigDto CustomBlocklist { get; set; } = new();
+}
+
+public class CustomBlocklistConfigDto
+{
+    public bool Enabled { get; set; }
+    public string DisplayName { get; set; } = "LogDB Guard";
+
+    /// <summary>Explicit gRPC endpoint of the guard service (e.g. "https://guard.logdb.site").
+    /// Empty triggers discovery via the configured DiscoveryUrl (resolve/guard).
+    /// LogDB:ApiKey is reused for auth — no separate guard credential.</summary>
+    public string GuardUrl { get; set; } = string.Empty;
 }
 
 public class PublicBlocklistFeedDto

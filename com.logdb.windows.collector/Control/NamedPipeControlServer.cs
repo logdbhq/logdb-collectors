@@ -263,7 +263,7 @@ public sealed class NamedPipeControlServer : BackgroundService
                 }
 
             case ControlCommands.ApplyFirewall:
-                var applyResult = await _firewallEngine.SyncAsync(_configMonitor.CurrentValue.Firewall, cancellationToken);
+                var applyResult = await _firewallEngine.SyncAsync(_configMonitor.CurrentValue.LogDB, _configMonitor.CurrentValue.Firewall, cancellationToken);
                 return new ControlResponseDto
                 {
                     Success = applyResult.Success,

@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.ui.Services;
 using com.logdb.windows.collector.ui.ViewModels.Infrastructure;
 
@@ -28,6 +30,10 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
     private bool _firewallDryRun;
     private string _firewallWhitelistPath = string.Empty;
     private string _firewallBlocklistSummary = "No blocklists loaded.";
+    private bool _firewallCustomEnabled;
+    private string _firewallCustomDisplayName = "LogDB Guard";
+    private string _firewallCustomGuardUrl = string.Empty;
+    private BlocklistFeedRowViewModel? _selectedBlocklistFeed;
     private string _firewallRuntimeStatus = "Runtime: unavailable.";
     private string _firewallHint =
         "Firewall sync periodically fetches public IP-reputation feeds and applies them as inbound block rules.";
@@ -52,6 +58,9 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         SaveFirewallConfigCommand = new AsyncRelayCommand(SaveFirewallConfigAsync);
         ApplyFirewallNowCommand = new AsyncRelayCommand(ApplyFirewallNowAsync);
         RemoveFirewallRulesCommand = new AsyncRelayCommand(RemoveFirewallRulesAsync);
+        BlocklistFeeds = new ObservableCollection<BlocklistFeedRowViewModel>();
+        AddBlocklistFeedCommand = new RelayCommand(AddBlocklistFeed);
+        RemoveSelectedBlocklistFeedCommand = new RelayCommand(RemoveSelectedBlocklistFeed, () => _selectedBlocklistFeed != null);
         SaveCollectorPathCommand = new AsyncRelayCommand(SaveCollectorPathAsync);
 
         RunConsoleCommand = new AsyncRelayCommand(RunConsoleAsync);
@@ -217,6 +226,39 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         private set => SetProperty(ref _firewallBlocklistSummary, value);
     }
 
+    public bool FirewallCustomEnabled
+    {
+        get => _firewallCustomEnabled;
+        set => SetProperty(ref _firewallCustomEnabled, value);
+    }
+
+    public string FirewallCustomDisplayName
+    {
+        get => _firewallCustomDisplayName;
+        set => SetProperty(ref _firewallCustomDisplayName, value);
+    }
+
+    public string FirewallCustomGuardUrl
+    {
+        get => _firewallCustomGuardUrl;
+        set => SetProperty(ref _firewallCustomGuardUrl, value);
+    }
+
+    public ObservableCollection<BlocklistFeedRowViewModel> BlocklistFeeds { get; }
+
+    public BlocklistFeedRowViewModel? SelectedBlocklistFeed
+    {
+        get => _selectedBlocklistFeed;
+        set
+        {
+            if (SetProperty(ref _selectedBlocklistFeed, value))
+                RemoveSelectedBlocklistFeedCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public RelayCommand AddBlocklistFeedCommand { get; }
+    public RelayCommand RemoveSelectedBlocklistFeedCommand { get; }
+
     public string FirewallRuntimeStatus
     {
         get => _firewallRuntimeStatus;
@@ -291,10 +333,17 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         FirewallRuleNamePrefix = config.Firewall.RuleNamePrefix;
         FirewallDryRun = config.Firewall.DryRun;
         FirewallWhitelistPath = config.Firewall.WhitelistPath;
-        var enabledFeedCount = config.Firewall.PublicBlocklists.Count(kvp => kvp.Value.Enabled);
+        FirewallCustomEnabled = config.Firewall.CustomBlocklist.Enabled;
+        FirewallCustomDisplayName = string.IsNullOrWhiteSpace(config.Firewall.CustomBlocklist.DisplayName)
+            ? "LogDB Guard"
+            : config.Firewall.CustomBlocklist.DisplayName;
+        FirewallCustomGuardUrl = config.Firewall.CustomBlocklist.GuardUrl;
+        LoadBlocklistFeedsFromConfig(config.Firewall.PublicBlocklists);
+        var enabledFeedCount = BlocklistFeeds.Count(row => row.Enabled);
         FirewallBlocklistSummary = enabledFeedCount == 0
-            ? "No public blocklists enabled. Edit appsettings.json to add or enable feeds."
-            : $"{enabledFeedCount} public blocklist(s) enabled.";
+            ? (FirewallCustomEnabled ? "No public blocklists enabled (Guard only)." : "No blocklists enabled.")
+            : $"{enabledFeedCount} public blocklist(s) enabled"
+              + (FirewallCustomEnabled ? " + LogDB Guard." : ".");
 
         var serviceEndpointReachable = _adminClient.Discovery?.ServiceEndpoint.IsReachable == true;
         var consoleEndpointReachable = _adminClient.Discovery?.ConsoleEndpoint.IsReachable == true;
@@ -489,6 +538,12 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
             : FirewallRuleNamePrefix.Trim();
         config.Firewall.DryRun = FirewallDryRun;
         config.Firewall.WhitelistPath = FirewallWhitelistPath?.Trim() ?? string.Empty;
+        config.Firewall.CustomBlocklist.Enabled = FirewallCustomEnabled;
+        config.Firewall.CustomBlocklist.DisplayName = string.IsNullOrWhiteSpace(FirewallCustomDisplayName)
+            ? "LogDB Guard"
+            : FirewallCustomDisplayName.Trim();
+        config.Firewall.CustomBlocklist.GuardUrl = FirewallCustomGuardUrl?.Trim() ?? string.Empty;
+        config.Firewall.PublicBlocklists = WriteBlocklistFeedsToConfig();
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Success ? "Firewall configuration saved." : result.Message, result.Success);
@@ -505,6 +560,66 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         var apply = await _adminClient.ApplyFirewallAsync();
         _statusCallback(apply.Message, apply.Success);
         await RefreshAsync();
+    }
+
+    private void LoadBlocklistFeedsFromConfig(Dictionary<string, PublicBlocklistFeedDto> source)
+    {
+        BlocklistFeeds.Clear();
+        foreach (var (feedId, feed) in source.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            BlocklistFeeds.Add(new BlocklistFeedRowViewModel
+            {
+                FeedId = feedId,
+                DisplayName = feed.DisplayName,
+                Url = feed.Url,
+                Enabled = feed.Enabled,
+                MinScore = feed.MinScore
+            });
+        }
+        SelectedBlocklistFeed = null;
+    }
+
+    private Dictionary<string, PublicBlocklistFeedDto> WriteBlocklistFeedsToConfig()
+    {
+        // Last-write-wins on duplicate IDs (typical when a row is edited mid-rename).
+        // Skip rows with no ID or no URL — those are half-typed entries we don't want
+        // to round-trip through the wire format.
+        var result = new Dictionary<string, PublicBlocklistFeedDto>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in BlocklistFeeds)
+        {
+            var id = (row.FeedId ?? string.Empty).Trim();
+            var url = (row.Url ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(url)) continue;
+            result[id] = new PublicBlocklistFeedDto
+            {
+                Enabled = row.Enabled,
+                DisplayName = (row.DisplayName ?? string.Empty).Trim(),
+                Url = url,
+                MinScore = Math.Max(0, row.MinScore)
+            };
+        }
+        return result;
+    }
+
+    private void AddBlocklistFeed()
+    {
+        var row = new BlocklistFeedRowViewModel
+        {
+            FeedId = $"custom_feed_{BlocklistFeeds.Count + 1}",
+            DisplayName = "New feed",
+            Url = string.Empty,
+            Enabled = false,
+            MinScore = 0
+        };
+        BlocklistFeeds.Add(row);
+        SelectedBlocklistFeed = row;
+    }
+
+    private void RemoveSelectedBlocklistFeed()
+    {
+        if (_selectedBlocklistFeed == null) return;
+        BlocklistFeeds.Remove(_selectedBlocklistFeed);
+        SelectedBlocklistFeed = null;
     }
 
     private async Task RemoveFirewallRulesAsync()

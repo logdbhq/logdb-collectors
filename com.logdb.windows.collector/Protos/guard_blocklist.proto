@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+option csharp_namespace = "com.logdb.windows.collector.Protos.Guard";
+
+package guard;
+
+// Mirrors LogDB.Windows.Firewall/Protos/guard_blocklist.proto so the unified
+// collector and the standalone firewall service can both talk to the same
+// guard backend without one repo's regen breaking the other.
+
+service GuardService {
+  rpc GetBlockedIps(GetBlockedIpsRequest) returns (GetBlockedIpsResponse);
+}
+
+message GetBlockedIpsRequest {
+}
+
+message GetBlockedIpsResponse {
+  repeated BlockedIp blocked_ips = 1;
+}
+
+message BlockedIp {
+  string ip_address = 1;
+  string added_by = 2;
+  int64 added_at = 3;
+  string reason = 4;
+}

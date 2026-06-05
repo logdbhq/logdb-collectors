@@ -1,5 +1,6 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.ServiceManagementPageView">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="10">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
@@ -169,6 +170,60 @@
                     <TextBlock Text="{Binding FirewallBlocklistSummary}" Classes="muted" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding FirewallRuntimeStatus}" Classes="muted" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding FirewallHint}" Classes="muted" TextWrapping="Wrap" />
+
+                    <Border Classes="card" Padding="8" Margin="0,6,0,0">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="LogDB Guard (custom blocklist)" FontWeight="SemiBold" />
+                            <TextBlock Text="Subscribe to the IPs your LogDB Guard instance is blocking (CrowdSec decisions, operator-added entries) and apply them as one extra feed."
+                                       Classes="muted"
+                                       TextWrapping="Wrap" />
+                            <CheckBox Content="Enable Guard subscription"
+                                      IsChecked="{Binding FirewallCustomEnabled}" />
+                            <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                                <TextBlock Text="Display Name" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding FirewallCustomDisplayName}" />
+
+                                <TextBlock Grid.Row="1" Text="Guard URL" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1"
+                                         Text="{Binding FirewallCustomGuardUrl}"
+                                         Watermark="(empty = discover via DiscoveryUrl) e.g. https://guard.logdb.site" />
+                            </Grid>
+                            <TextBlock Text="Uses LogDB:ApiKey for authentication. Failures (unreachable, unauthenticated) are logged and skipped — they do not stop public feeds from syncing."
+                                       Classes="muted"
+                                       TextWrapping="Wrap"
+                                       FontSize="11" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card" Padding="8" Margin="0,6,0,0">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <TextBlock Text="Public blocklist feeds" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Add feed" Command="{Binding AddBlocklistFeedCommand}" />
+                                <Button Grid.Column="2" Content="Remove selected"
+                                        Command="{Binding RemoveSelectedBlocklistFeedCommand}" />
+                            </Grid>
+                            <TextBlock Text="Each row becomes a Windows Firewall rule named '{Prefix} - {Display Name}'. Toggle Enabled to disable a feed without losing the URL. MinScore filters scored feeds like IPsum (0 = no filter)."
+                                       Classes="muted"
+                                       TextWrapping="Wrap"
+                                       FontSize="11" />
+                            <dgrid:DataGrid ItemsSource="{Binding BlocklistFeeds}"
+                                            SelectedItem="{Binding SelectedBlocklistFeed}"
+                                            AutoGenerateColumns="False"
+                                            CanUserSortColumns="False"
+                                            HeadersVisibility="Column"
+                                            GridLinesVisibility="Horizontal"
+                                            Height="220">
+                                <dgrid:DataGrid.Columns>
+                                    <dgrid:DataGridCheckBoxColumn Header="On" Binding="{Binding Enabled}" Width="50" />
+                                    <dgrid:DataGridTextColumn Header="ID" Binding="{Binding FeedId}" Width="160" />
+                                    <dgrid:DataGridTextColumn Header="Display Name" Binding="{Binding DisplayName}" Width="180" />
+                                    <dgrid:DataGridTextColumn Header="URL" Binding="{Binding Url}" Width="*" />
+                                    <dgrid:DataGridTextColumn Header="MinScore" Binding="{Binding MinScore}" Width="90" />
+                                </dgrid:DataGrid.Columns>
+                            </dgrid:DataGrid>
+                        </StackPanel>
+                    </Border>
 
                     <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
                         <Button Content="Save Firewall Config"

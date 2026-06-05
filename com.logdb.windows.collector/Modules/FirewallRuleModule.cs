@@ -59,7 +59,7 @@ public sealed class FirewallRuleModule : BackgroundService
 
             try
             {
-                var summary = await _engine.SyncAsync(config.Firewall, stoppingToken).ConfigureAwait(false);
+                var summary = await _engine.SyncAsync(config.LogDB, config.Firewall, stoppingToken).ConfigureAwait(false);
                 if (summary.Success)
                 {
                     _statusRegistry.MarkRunning(moduleName);

@@ -27,15 +27,18 @@ public sealed class FirewallSyncEngine
 {
     private readonly PublicBlocklistFetcher _fetcher;
     private readonly FirewallWhitelistService _whitelist;
+    private readonly GuardBlocklistClient _guardClient;
     private readonly ILogger<FirewallSyncEngine> _logger;
 
     public FirewallSyncEngine(
         PublicBlocklistFetcher fetcher,
         FirewallWhitelistService whitelist,
+        GuardBlocklistClient guardClient,
         ILogger<FirewallSyncEngine> logger)
     {
         _fetcher = fetcher;
         _whitelist = whitelist;
+        _guardClient = guardClient;
         _logger = logger;
     }
 
@@ -47,6 +50,7 @@ public sealed class FirewallSyncEngine
     }
 
     public async Task<FirewallSyncSummary> SyncAsync(
+        LogDbConfigDto logDbConfig,
         FirewallConfigDto config,
         CancellationToken cancellationToken = default)
     {
@@ -56,13 +60,15 @@ public sealed class FirewallSyncEngine
         var enabledFeeds = config.PublicBlocklists
             .Where(kvp => kvp.Value.Enabled && !string.IsNullOrWhiteSpace(kvp.Value.Url))
             .ToList();
-        if (enabledFeeds.Count == 0)
-            return FirewallSyncSummary.Failed("No enabled public blocklists are configured.");
+        var customEnabled = config.CustomBlocklist.Enabled;
+        if (enabledFeeds.Count == 0 && !customEnabled)
+            return FirewallSyncSummary.Failed("No enabled blocklists are configured (public feeds and Guard blocklist are both off).");
 
         var whitelist = _whitelist.Load(config.WhitelistPath);
         var totalActiveRules = 0;
         var totalIps = 0;
         var perFeed = new List<FirewallFeedSyncSummary>();
+        var activeDisplayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var (feedId, feed) in enabledFeeds)
         {
@@ -73,16 +79,30 @@ public sealed class FirewallSyncEngine
             var ruleCount = await SyncFeedAsync(config, displayName, ips, cancellationToken).ConfigureAwait(false);
 
             perFeed.Add(new FirewallFeedSyncSummary(feedId, displayName, ips.Count, ruleCount, whitelisted));
+            activeDisplayNames.Add(displayName);
             totalActiveRules += ruleCount;
             totalIps += ips.Count;
         }
 
-        // Drop any rule whose source isn't in the enabled set anymore (e.g. a
-        // feed was disabled or removed) — otherwise stale rules linger forever.
-        var enabledDisplayNames = enabledFeeds
-            .Select(kvp => string.IsNullOrWhiteSpace(kvp.Value.DisplayName) ? kvp.Key : kvp.Value.DisplayName)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        await PruneOrphanedSourcesAsync(config, enabledDisplayNames, cancellationToken).ConfigureAwait(false);
+        if (customEnabled)
+        {
+            var customDisplayName = string.IsNullOrWhiteSpace(config.CustomBlocklist.DisplayName)
+                ? "LogDB Guard"
+                : config.CustomBlocklist.DisplayName;
+            var guardIps = await _guardClient.FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken).ConfigureAwait(false);
+            var whitelisted = FirewallWhitelistService.Apply(guardIps, whitelist);
+            var ruleCount = await SyncFeedAsync(config, customDisplayName, guardIps, cancellationToken).ConfigureAwait(false);
+
+            perFeed.Add(new FirewallFeedSyncSummary("custom_guard", customDisplayName, guardIps.Count, ruleCount, whitelisted));
+            activeDisplayNames.Add(customDisplayName);
+            totalActiveRules += ruleCount;
+            totalIps += guardIps.Count;
+        }
+
+        // Drop any rule whose source isn't in the active set anymore (a feed
+        // was disabled / removed, or the Guard mode was switched off) —
+        // otherwise stale rules linger forever.
+        await PruneOrphanedSourcesAsync(config, activeDisplayNames, cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation(
             "Firewall sync done: {Feeds} feeds, {Ips} unique IPs, {Rules} rules active",
