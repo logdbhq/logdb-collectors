@@ -141,7 +141,7 @@
                 <StackPanel Spacing="10">
                     <StackPanel Spacing="2">
                         <TextBlock Text="Firewall Sync" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="Periodically fetches blocked IPs from LogDB Guard and applies inbound block rules to Windows Firewall."
+                        <TextBlock Text="Pulls public IP-reputation feeds (FireHOL, Tor exits, IPsum, …) on a schedule and turns them into inbound Windows Firewall block rules."
                                    Classes="muted"
                                    TextWrapping="Wrap" />
                     </StackPanel>
@@ -149,22 +149,36 @@
                     <CheckBox Content="Enable firewall sync"
                               IsChecked="{Binding FirewallEnabled}" />
 
-                    <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                    <CheckBox Content="Dry run (log only, don't touch firewall)"
+                              IsChecked="{Binding FirewallDryRun}"
+                              ToolTip.Tip="Useful for verifying which feeds resolve and how many IPs would be applied, without mutating the host firewall." />
+
+                    <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
                         <TextBlock Text="Poll Interval (s)" VerticalAlignment="Center" />
-                        <NumericUpDown Grid.Column="1" Minimum="10" Maximum="3600" Value="{Binding FirewallPollIntervalSeconds}" />
+                        <NumericUpDown Grid.Column="1" Minimum="10" Maximum="86400" Value="{Binding FirewallPollIntervalSeconds}" />
 
                         <TextBlock Grid.Row="1" Text="Rule Prefix" VerticalAlignment="Center" />
                         <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FirewallRuleNamePrefix}" />
+
+                        <TextBlock Grid.Row="2" Text="Whitelist Path" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="2" Grid.Column="1"
+                                 Text="{Binding FirewallWhitelistPath}"
+                                 Watermark="(optional) C:\ProgramData\LogDB\collector\whitelist.txt" />
                     </Grid>
 
+                    <TextBlock Text="{Binding FirewallBlocklistSummary}" Classes="muted" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding FirewallRuntimeStatus}" Classes="muted" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding FirewallHint}" Classes="muted" TextWrapping="Wrap" />
 
-                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
                         <Button Content="Save Firewall Config"
                                 Command="{Binding SaveFirewallConfigCommand}"
                                 IsEnabled="{Binding CanSaveFirewallConfig}" />
                         <Button Grid.Column="1"
+                                Content="Apply Now"
+                                Command="{Binding ApplyFirewallNowCommand}"
+                                IsEnabled="{Binding CanRemoveFirewallRules}" />
+                        <Button Grid.Column="2"
                                 Content="Remove All Block Rules"
                                 Command="{Binding RemoveFirewallRulesCommand}"
                                 IsEnabled="{Binding CanRemoveFirewallRules}" />

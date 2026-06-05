@@ -192,6 +192,44 @@ public class HeartbeatModuleConfigDto : ModuleConfigDto
 public class FirewallConfigDto
 {
     public bool Enabled { get; set; }
-    public int PollIntervalSeconds { get; set; } = 60;
-    public string RuleNamePrefix { get; set; } = "LogDB Block";
+    public int PollIntervalSeconds { get; set; } = 900;
+    public string RuleNamePrefix { get; set; } = "LogDB Firewall";
+
+    /// <summary>"Inbound" or "Outbound". The vast majority of useful firewall
+    /// rules are Inbound (block attackers reaching us); kept configurable for
+    /// parity with the standalone firewall collector.</summary>
+    public string Direction { get; set; } = "Inbound";
+
+    /// <summary>If true, log what would be applied but don't actually call
+    /// New/Set/Remove-NetFirewallRule. For verifying config without touching
+    /// the host firewall.</summary>
+    public bool DryRun { get; set; }
+
+    /// <summary>Windows Firewall caps a rule's RemoteAddress list well above
+    /// this; the cap is to keep individual rules manageable in the GUI and
+    /// keep PowerShell command lines reasonable. Blocklists larger than this
+    /// get split into "(n/m)" sub-rules.</summary>
+    public int MaxIpsPerRule { get; set; } = 5000;
+
+    /// <summary>Optional path to a text file of IPs/CIDRs that must never be
+    /// blocked. One entry per line, # for comments. Empty = no whitelist.
+    /// Re-read on every sync so edits land without restarting the service.</summary>
+    public string WhitelistPath { get; set; } = string.Empty;
+
+    /// <summary>Public threat-feed sources, keyed by an opaque ID used for
+    /// rule naming (DisplayName becomes "{RuleNamePrefix} - {feed.DisplayName}").
+    /// Defaults are set by the runtime when the dictionary is empty so a fresh
+    /// install with Enabled=true still does something useful.</summary>
+    public Dictionary<string, PublicBlocklistFeedDto> PublicBlocklists { get; set; } = new();
+}
+
+public class PublicBlocklistFeedDto
+{
+    public bool Enabled { get; set; } = true;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+
+    /// <summary>For scored feeds (e.g. IPsum has IP\tscore per line) only
+    /// include entries with score &gt;= this. 0 disables score filtering.</summary>
+    public int MinScore { get; set; }
 }

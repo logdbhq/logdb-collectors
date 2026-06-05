@@ -71,7 +71,20 @@ public static class CollectorConfigRedactor
             {
                 Enabled = source.Firewall.Enabled,
                 PollIntervalSeconds = source.Firewall.PollIntervalSeconds,
-                RuleNamePrefix = source.Firewall.RuleNamePrefix
+                RuleNamePrefix = source.Firewall.RuleNamePrefix,
+                Direction = source.Firewall.Direction,
+                DryRun = source.Firewall.DryRun,
+                MaxIpsPerRule = source.Firewall.MaxIpsPerRule,
+                WhitelistPath = source.Firewall.WhitelistPath,
+                PublicBlocklists = source.Firewall.PublicBlocklists.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => new PublicBlocklistFeedDto
+                    {
+                        Enabled = kvp.Value.Enabled,
+                        DisplayName = kvp.Value.DisplayName,
+                        Url = kvp.Value.Url,
+                        MinScore = kvp.Value.MinScore
+                    })
             }
         };
 

@@ -4,6 +4,7 @@ using com.logdb.windows.collector.Diagnostics;
 using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Hosting;
 using com.logdb.windows.collector.Services;
+using com.logdb.windows.collector.Services.Firewall;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.shared.Services;
 using Microsoft.Extensions.Options;
@@ -25,7 +26,7 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly ILogDbConnectionTester _connectionTester;
     private readonly IRuntimeEndpointStore _endpointStore;
     private readonly ICollectorControlInspector _inspector;
-    private readonly FirewallRuleApplier _firewallRuleApplier;
+    private readonly FirewallSyncEngine _firewallEngine;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IConfiguration _configuration;
     private readonly SemaphoreSlim _configGate = new(1, 1);
@@ -39,7 +40,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         ILogDbConnectionTester connectionTester,
         IRuntimeEndpointStore endpointStore,
         ICollectorControlInspector inspector,
-        FirewallRuleApplier firewallRuleApplier,
+        FirewallSyncEngine firewallEngine,
         IHostApplicationLifetime hostLifetime,
         IConfiguration configuration,
         ILogger<NamedPipeControlServer> logger)
@@ -51,7 +52,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         _connectionTester = connectionTester;
         _endpointStore = endpointStore;
         _inspector = inspector;
-        _firewallRuleApplier = firewallRuleApplier;
+        _firewallEngine = firewallEngine;
         _hostLifetime = hostLifetime;
         _configuration = configuration;
         _logger = logger;
@@ -262,14 +263,15 @@ public sealed class NamedPipeControlServer : BackgroundService
                 }
 
             case ControlCommands.ApplyFirewall:
+                var applyResult = await _firewallEngine.SyncAsync(_configMonitor.CurrentValue.Firewall, cancellationToken);
                 return new ControlResponseDto
                 {
-                    Success = false,
-                    Message = "Firewall sync is now automatic. Enable the firewall module in configuration."
+                    Success = applyResult.Success,
+                    Message = applyResult.Message
                 };
 
             case ControlCommands.RemoveFirewall:
-                var removeResult = await _firewallRuleApplier.RemoveAllAsync(_configMonitor.CurrentValue.Firewall, cancellationToken);
+                var removeResult = await _firewallEngine.RemoveAllAsync(_configMonitor.CurrentValue.Firewall, cancellationToken);
                 return new ControlResponseDto
                 {
                     Success = removeResult.Success,

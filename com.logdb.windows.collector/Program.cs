@@ -6,6 +6,7 @@ using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Hosting;
 using com.logdb.windows.collector.Modules;
 using com.logdb.windows.collector.Services;
+using com.logdb.windows.collector.Services.Firewall;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.shared.Services;
 using Microsoft.Extensions.Hosting.WindowsServices;
@@ -100,7 +101,9 @@ builder.Services.AddSingleton<ILogDbServiceUrlResolver, LogDbServiceUrlResolver>
 builder.Services.AddSingleton<IRuntimeEndpointStore, RuntimeEndpointStore>();
 builder.Services.AddSingleton<ILogDbConnectionTester, LogDbConnectionTester>();
 builder.Services.AddSingleton<ICollectorControlInspector, CollectorControlInspector>();
-builder.Services.AddSingleton<FirewallRuleApplier>();
+builder.Services.AddSingleton<PublicBlocklistFetcher>();
+builder.Services.AddSingleton<FirewallWhitelistService>();
+builder.Services.AddSingleton<FirewallSyncEngine>();
 builder.Services.AddSingleton<IDiskSpooler, NullDiskSpooler>();
 builder.Services.AddSingleton<ModuleHostFactory>();
 

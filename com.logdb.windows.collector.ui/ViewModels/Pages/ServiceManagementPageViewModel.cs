@@ -23,11 +23,14 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
     private string _consoleStatus = "Not running";
     private string _consoleHint = "Console mode is for local testing.";
     private bool _firewallEnabled;
-    private int _firewallPollIntervalSeconds = 60;
-    private string _firewallRuleNamePrefix = "LogDB Block";
+    private int _firewallPollIntervalSeconds = 900;
+    private string _firewallRuleNamePrefix = "LogDB Firewall";
+    private bool _firewallDryRun;
+    private string _firewallWhitelistPath = string.Empty;
+    private string _firewallBlocklistSummary = "No blocklists loaded.";
     private string _firewallRuntimeStatus = "Runtime: unavailable.";
     private string _firewallHint =
-        "Firewall sync periodically fetches blocked IPs from LogDB and applies inbound block rules.";
+        "Firewall sync periodically fetches public IP-reputation feeds and applies them as inbound block rules.";
     private ServiceUpdateCheckResult? _lastUpdateCheck;
     private string _collectorExePath = string.Empty;
 
@@ -196,6 +199,24 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         set => SetProperty(ref _firewallRuleNamePrefix, value);
     }
 
+    public bool FirewallDryRun
+    {
+        get => _firewallDryRun;
+        set => SetProperty(ref _firewallDryRun, value);
+    }
+
+    public string FirewallWhitelistPath
+    {
+        get => _firewallWhitelistPath;
+        set => SetProperty(ref _firewallWhitelistPath, value);
+    }
+
+    public string FirewallBlocklistSummary
+    {
+        get => _firewallBlocklistSummary;
+        private set => SetProperty(ref _firewallBlocklistSummary, value);
+    }
+
     public string FirewallRuntimeStatus
     {
         get => _firewallRuntimeStatus;
@@ -268,6 +289,12 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         FirewallEnabled = config.Firewall.Enabled;
         FirewallPollIntervalSeconds = config.Firewall.PollIntervalSeconds;
         FirewallRuleNamePrefix = config.Firewall.RuleNamePrefix;
+        FirewallDryRun = config.Firewall.DryRun;
+        FirewallWhitelistPath = config.Firewall.WhitelistPath;
+        var enabledFeedCount = config.Firewall.PublicBlocklists.Count(kvp => kvp.Value.Enabled);
+        FirewallBlocklistSummary = enabledFeedCount == 0
+            ? "No public blocklists enabled. Edit appsettings.json to add or enable feeds."
+            : $"{enabledFeedCount} public blocklist(s) enabled.";
 
         var serviceEndpointReachable = _adminClient.Discovery?.ServiceEndpoint.IsReachable == true;
         var consoleEndpointReachable = _adminClient.Discovery?.ConsoleEndpoint.IsReachable == true;
@@ -458,8 +485,10 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         config.Firewall.Enabled = FirewallEnabled;
         config.Firewall.PollIntervalSeconds = Math.Max(10, FirewallPollIntervalSeconds);
         config.Firewall.RuleNamePrefix = string.IsNullOrWhiteSpace(FirewallRuleNamePrefix)
-            ? "LogDB Block"
+            ? "LogDB Firewall"
             : FirewallRuleNamePrefix.Trim();
+        config.Firewall.DryRun = FirewallDryRun;
+        config.Firewall.WhitelistPath = FirewallWhitelistPath?.Trim() ?? string.Empty;
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Success ? "Firewall configuration saved." : result.Message, result.Success);
@@ -468,8 +497,14 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
 
     private async Task ApplyFirewallNowAsync()
     {
-        _statusCallback("Firewall sync is now automatic when enabled. Save config to enable/disable.", false);
-        await Task.CompletedTask;
+        if (!EnsureAdmin("Applying firewall rules"))
+        {
+            return;
+        }
+
+        var apply = await _adminClient.ApplyFirewallAsync();
+        _statusCallback(apply.Message, apply.Success);
+        await RefreshAsync();
     }
 
     private async Task RemoveFirewallRulesAsync()

@@ -1,33 +1,41 @@
-using System.Net.Http.Json;
 using com.logdb.windows.collector.Health;
-using com.logdb.windows.collector.Services;
+using com.logdb.windows.collector.Services.Firewall;
 using com.logdb.windows.collector.shared.Contracts;
 using Microsoft.Extensions.Options;
 
 namespace com.logdb.windows.collector.Modules;
 
+/// <summary>
+/// Background worker that drives the host Windows Firewall toward the state
+/// the configured public blocklists describe. Idempotent per poll, and a no-op
+/// while <see cref="FirewallConfigDto.Enabled"/> is false (sleeps in a short
+/// loop instead of sitting on the long PollInterval, so flipping the toggle
+/// is responsive).
+///
+/// Before 1.3.0 this module fetched blocked IPs from a non-existent REST path
+/// constructed by appending /api/guard/blocked-ips to the gRPC logger URL —
+/// it was wired and shipped but had never produced a successful sync cycle.
+/// 1.3.0 swapped in <see cref="FirewallSyncEngine"/>, which mirrors the
+/// standalone LogDB.Windows.Firewall design (public threat feeds, whitelist
+/// file, chunked rules) so the unified collector finally has a working
+/// firewall capability.
+/// </summary>
 public sealed class FirewallRuleModule : BackgroundService
 {
     private readonly IOptionsMonitor<CollectorConfigDto> _configMonitor;
     private readonly CollectorStatusRegistry _statusRegistry;
-    private readonly FirewallRuleApplier _firewallRuleApplier;
-    private readonly IRuntimeEndpointStore _endpointStore;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly FirewallSyncEngine _engine;
     private readonly ILogger<FirewallRuleModule> _logger;
 
     public FirewallRuleModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
-        FirewallRuleApplier firewallRuleApplier,
-        IRuntimeEndpointStore endpointStore,
-        IHttpClientFactory httpClientFactory,
+        FirewallSyncEngine engine,
         ILogger<FirewallRuleModule> logger)
     {
         _configMonitor = configMonitor;
         _statusRegistry = statusRegistry;
-        _firewallRuleApplier = firewallRuleApplier;
-        _endpointStore = endpointStore;
-        _httpClientFactory = httpClientFactory;
+        _engine = engine;
         _logger = logger;
     }
 
@@ -45,35 +53,24 @@ public sealed class FirewallRuleModule : BackgroundService
             if (!enabled)
             {
                 _statusRegistry.MarkStopped(moduleName, "Disabled");
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken).ConfigureAwait(false);
                 continue;
             }
 
             try
             {
-                var apiKey = config.LogDB.ApiKey;
-                if (string.IsNullOrWhiteSpace(apiKey))
-                {
-                    _statusRegistry.MarkError(moduleName, "API key is required for firewall sync.");
-                    await Task.Delay(TimeSpan.FromSeconds(config.Firewall.PollIntervalSeconds), stoppingToken);
-                    continue;
-                }
-
-                var baseUrl = await _endpointStore.GetEndpointAsync(stoppingToken);
-                var blockedIps = await FetchBlockedIpsAsync(baseUrl, apiKey, stoppingToken);
-
-                var result = await _firewallRuleApplier.SyncAsync(config.Firewall, blockedIps, stoppingToken);
-                if (result.Success)
+                var summary = await _engine.SyncAsync(config.Firewall, stoppingToken).ConfigureAwait(false);
+                if (summary.Success)
                 {
                     _statusRegistry.MarkRunning(moduleName);
                     _statusRegistry.MarkHeartbeat(moduleName);
+                    _logger.LogInformation("Firewall sync: {Message}", summary.Message);
                 }
                 else
                 {
-                    _statusRegistry.MarkError(moduleName, result.Message);
+                    _statusRegistry.MarkError(moduleName, summary.Message);
+                    _logger.LogWarning("Firewall sync failed: {Message}", summary.Message);
                 }
-
-                _logger.LogInformation("Firewall sync: {Message}", result.Message);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -82,56 +79,14 @@ public sealed class FirewallRuleModule : BackgroundService
             catch (Exception ex)
             {
                 _statusRegistry.MarkError(moduleName, ex.Message);
-                _logger.LogError(ex, "Firewall module failed");
+                _logger.LogError(ex, "Firewall module poll cycle threw");
             }
 
+            // Minimum 10s to avoid pounding upstream blocklist hosts if someone
+            // mis-sets the interval. The 900s default is generous; FireHOL etc.
+            // refresh hourly at most.
             var interval = Math.Max(10, _configMonitor.CurrentValue.Firewall.PollIntervalSeconds);
-            await Task.Delay(TimeSpan.FromSeconds(interval), stoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(interval), stoppingToken).ConfigureAwait(false);
         }
-    }
-
-    private async Task<List<BlockedIpEntry>> FetchBlockedIpsAsync(
-        string baseUrl,
-        string apiKey,
-        CancellationToken cancellationToken)
-    {
-        var client = _httpClientFactory.CreateClient(nameof(FirewallRuleModule));
-        client.Timeout = TimeSpan.FromSeconds(30);
-
-        var apiUrl = BuildBlockedIpsUrl(baseUrl);
-        var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
-        request.Headers.Add("X-API-Key", apiKey);
-
-        var response = await client.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        var dtos = await response.Content.ReadFromJsonAsync<List<BlockedIpApiDto>>(cancellationToken)
-                   ?? new List<BlockedIpApiDto>();
-
-        return dtos
-            .Where(dto => !string.IsNullOrWhiteSpace(dto.IpAddress))
-            .Select(dto => new BlockedIpEntry(dto.IpAddress, dto.AddedBy, dto.AddedAt, dto.Reason))
-            .ToList();
-    }
-
-    private static string BuildBlockedIpsUrl(string baseUrl)
-    {
-        var trimmed = baseUrl.TrimEnd('/');
-
-        if (trimmed.Contains("/api/", StringComparison.OrdinalIgnoreCase))
-        {
-            var apiIndex = trimmed.IndexOf("/api/", StringComparison.OrdinalIgnoreCase);
-            trimmed = trimmed[..apiIndex];
-        }
-
-        return $"{trimmed}/api/guard/blocked-ips";
-    }
-
-    private sealed class BlockedIpApiDto
-    {
-        public string IpAddress { get; set; } = "";
-        public string AddedBy { get; set; } = "";
-        public DateTime AddedAt { get; set; }
-        public string? Reason { get; set; }
     }
 }
