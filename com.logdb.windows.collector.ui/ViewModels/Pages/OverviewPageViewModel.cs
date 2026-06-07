@@ -58,12 +58,23 @@ public sealed class ModuleCardViewModel : ObservableObject
     }
 }
 
+public sealed class FailureRowViewModel : ObservableObject
+{
+    public string TimeLocal { get; init; } = "-";
+    public string Module { get; init; } = string.Empty;
+    public string Error { get; init; } = string.Empty;
+}
+
 public sealed class OverviewPageViewModel : PageViewModelBase
 {
     private readonly LocalCollectorAdminClient _adminClient;
     private readonly Func<Task> _openDiagnosticsAction;
     private readonly Action<string, bool> _statusCallback;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+
+    // Full, unfiltered set of module cards. The bound Modules collection is a
+    // projection of this list, narrowed when ShowFailedOnly is on.
+    private readonly List<ModuleCardViewModel> _allModuleCards = new();
 
     private string _collectorMode = "Not running";
     private string _connectionStatus = "Offline";
@@ -84,6 +95,9 @@ public sealed class OverviewPageViewModel : PageViewModelBase
     private string _liveNetwork = "-";
     private string _activeModules = "0";
     private string _updatedAgo = "Updated now";
+    private bool _showFailedOnly;
+    private bool _isFailuresVisible;
+    private string _failuresSummary = "No failures recorded.";
 
     public OverviewPageViewModel(
         LocalCollectorAdminClient adminClient,
@@ -96,13 +110,18 @@ public sealed class OverviewPageViewModel : PageViewModelBase
         _statusCallback = statusCallback;
 
         Modules = new ObservableCollection<ModuleCardViewModel>();
+        Failures = new ObservableCollection<FailureRowViewModel>();
         TestConnectionCommand = new AsyncRelayCommand(TestConnectionAsync);
         ReloadConfigCommand = new AsyncRelayCommand(ReloadConfigAsync);
         OpenDiagnosticsCommand = new AsyncRelayCommand(_openDiagnosticsAction);
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        ShowFailuresCommand = new AsyncRelayCommand(ShowFailuresAsync);
+        ClearFailureFilterCommand = new RelayCommand(ClearFailureFilter);
     }
 
     public ObservableCollection<ModuleCardViewModel> Modules { get; }
+
+    public ObservableCollection<FailureRowViewModel> Failures { get; }
 
     public string CollectorMode
     {
@@ -218,10 +237,41 @@ public sealed class OverviewPageViewModel : PageViewModelBase
         set => SetProperty(ref _updatedAgo, value);
     }
 
+    /// <summary>
+    /// When true, the Modules grid is narrowed to modules with FailedCount &gt; 0.
+    /// Toggled by clicking the "Critical Issues" card or the filter checkbox.
+    /// </summary>
+    public bool ShowFailedOnly
+    {
+        get => _showFailedOnly;
+        set
+        {
+            if (SetProperty(ref _showFailedOnly, value))
+            {
+                ApplyModuleFilter();
+            }
+        }
+    }
+
+    /// <summary>Controls visibility of the "Recent Failures" drill-down panel.</summary>
+    public bool IsFailuresVisible
+    {
+        get => _isFailuresVisible;
+        set => SetProperty(ref _isFailuresVisible, value);
+    }
+
+    public string FailuresSummary
+    {
+        get => _failuresSummary;
+        set => SetProperty(ref _failuresSummary, value);
+    }
+
     public AsyncRelayCommand TestConnectionCommand { get; }
     public AsyncRelayCommand ReloadConfigCommand { get; }
     public AsyncRelayCommand OpenDiagnosticsCommand { get; }
     public AsyncRelayCommand RefreshCommand { get; }
+    public AsyncRelayCommand ShowFailuresCommand { get; }
+    public RelayCommand ClearFailureFilterCommand { get; }
 
     public override async Task RefreshAsync()
     {
@@ -232,7 +282,10 @@ public sealed class OverviewPageViewModel : PageViewModelBase
 
             if (status == null)
             {
+                _allModuleCards.Clear();
                 Modules.Clear();
+                Failures.Clear();
+                FailuresSummary = "Collector is not running.";
                 CollectorMode = "Not running";
                 ConnectionStatus = "Offline";
                 LastSuccessfulSend = "-";
@@ -321,10 +374,10 @@ public sealed class OverviewPageViewModel : PageViewModelBase
 
             UpdatedAgo = "Updated just now";
 
-            Modules.Clear();
+            _allModuleCards.Clear();
             foreach (var module in normalizedModules)
             {
-                Modules.Add(new ModuleCardViewModel
+                _allModuleCards.Add(new ModuleCardViewModel
                 {
                     Name = module.Name,
                     Enabled = module.Enabled,
@@ -335,10 +388,69 @@ public sealed class OverviewPageViewModel : PageViewModelBase
                     FailedCount = module.FailedCount
                 });
             }
+
+            ApplyModuleFilter();
+
+            if (IsFailuresVisible)
+            {
+                await RefreshFailuresAsync();
+            }
         }
         finally
         {
             _refreshLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Reveals the failure drill-down: narrows the Modules grid to failing
+    /// modules and loads the persisted failure history from the collector.
+    /// </summary>
+    private async Task ShowFailuresAsync()
+    {
+        IsFailuresVisible = true;
+        ShowFailedOnly = true;
+        await RefreshFailuresAsync();
+    }
+
+    private void ClearFailureFilter()
+    {
+        ShowFailedOnly = false;
+        IsFailuresVisible = false;
+    }
+
+    private async Task RefreshFailuresAsync()
+    {
+        var failures = await _adminClient.GetFailuresAsync();
+
+        Failures.Clear();
+        foreach (var failure in failures)
+        {
+            Failures.Add(new FailureRowViewModel
+            {
+                TimeLocal = failure.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                Module = failure.Module,
+                Error = string.IsNullOrWhiteSpace(failure.Error) ? "-" : failure.Error
+            });
+        }
+
+        FailuresSummary = Failures.Count == 0
+            ? "No failures recorded."
+            : $"{Failures.Count} recent failure(s) — newest first.";
+    }
+
+    private void ApplyModuleFilter()
+    {
+        IEnumerable<ModuleCardViewModel> visible = _allModuleCards;
+        if (ShowFailedOnly)
+        {
+            visible = visible.Where(module => module.FailedCount > 0);
+        }
+
+        Modules.Clear();
+        foreach (var module in visible)
+        {
+            Modules.Add(module);
         }
     }
 

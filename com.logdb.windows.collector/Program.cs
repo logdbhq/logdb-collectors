@@ -96,7 +96,8 @@ builder.Services.AddSingleton<CollectorStatusRegistry>(_ => new CollectorStatusR
     runtimeContext.Mode,
     runtimeContext.ControlPipeName,
     runtimeContext.ProcessId,
-    runtimeContext.ServiceName));
+    runtimeContext.ServiceName,
+    CollectorPathDefaults.FailureLogPath));
 builder.Services.AddSingleton<ILogDbServiceUrlResolver, LogDbServiceUrlResolver>();
 builder.Services.AddSingleton<IRuntimeEndpointStore, RuntimeEndpointStore>();
 builder.Services.AddSingleton<ILogDbConnectionTester, LogDbConnectionTester>();

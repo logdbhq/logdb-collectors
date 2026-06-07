@@ -172,6 +172,15 @@ public sealed class NamedPipeControlServer : BackgroundService
                     PayloadJson = JsonSerializer.Serialize(diagnostics, JsonOptions)
                 };
 
+            case ControlCommands.GetFailures:
+                var maxFailures = ParseMaxDiagnostics(request.PayloadJson);
+                var failures = _statusRegistry.RecentFailures(maxFailures);
+                return new ControlResponseDto
+                {
+                    Success = true,
+                    PayloadJson = JsonSerializer.Serialize(failures, JsonOptions)
+                };
+
             case ControlCommands.TestConnection:
                 var connectionResult = await _connectionTester.TestAsync(_configMonitor.CurrentValue, cancellationToken);
                 return new ControlResponseDto

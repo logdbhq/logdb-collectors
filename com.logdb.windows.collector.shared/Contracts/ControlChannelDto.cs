@@ -29,6 +29,7 @@ public static class ControlCommands
     public const string DisableModule = "disable-module";
     public const string GetDiagnostics = "diagnostics";
     public const string GetRecentDiagnostics = GetDiagnostics;
+    public const string GetFailures = "failures";
     public const string TestConnection = "test-connection";
     public const string ApplyFirewall = "apply-firewall";
     public const string RemoveFirewall = "remove-firewall";

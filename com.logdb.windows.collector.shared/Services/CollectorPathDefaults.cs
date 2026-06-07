@@ -12,4 +12,5 @@ public static class CollectorPathDefaults
     public static string UiSettingsPath => Path.Combine(BaseDirectory, "ui-settings.json");
     public static string LogDirectory => Path.Combine(BaseDirectory, "logs");
     public static string EndpointCachePath => Path.Combine(BaseDirectory, "endpoint-cache.json");
+    public static string FailureLogPath => Path.Combine(BaseDirectory, "failures.json");
 }

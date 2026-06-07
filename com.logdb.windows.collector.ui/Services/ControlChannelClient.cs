@@ -131,6 +131,26 @@ public sealed class ControlChannelClient
         return entries ?? new List<DiagnosticEntryDto>();
     }
 
+    public async Task<IReadOnlyList<CollectorFailureDto>> GetFailuresAsync(
+        CollectorInstanceMode mode,
+        int maxEntries = 250,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetFailures,
+            payloadJson: maxEntries.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return Array.Empty<CollectorFailureDto>();
+        }
+
+        var failures = JsonSerializer.Deserialize<List<CollectorFailureDto>>(response.PayloadJson, JsonOptions);
+        return failures ?? new List<CollectorFailureDto>();
+    }
+
     public async Task<CollectorConfigDto?> GetRedactedConfigAsync(
         CollectorInstanceMode mode,
         CancellationToken cancellationToken = default)

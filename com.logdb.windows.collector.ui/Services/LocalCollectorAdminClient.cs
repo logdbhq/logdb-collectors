@@ -135,6 +135,18 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.GetDiagnosticsAsync(SelectedTarget.Value, maxEntries, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<CollectorFailureDto>> GetFailuresAsync(
+        int maxEntries = 250,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return Array.Empty<CollectorFailureDto>();
+        }
+
+        return await _controlClient.GetFailuresAsync(SelectedTarget.Value, maxEntries, cancellationToken);
+    }
+
     public async Task<CollectorConfigDto?> GetEffectiveRedactedConfigAsync(CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)
