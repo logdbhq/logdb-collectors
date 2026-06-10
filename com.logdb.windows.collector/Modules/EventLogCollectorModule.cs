@@ -1,5 +1,6 @@
 using com.logdb.windows.collector.Configuration;
 using com.logdb.windows.collector.Health;
+using com.logdb.windows.collector.Hosting;
 using com.logdb.windows.collector.Services;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.eventviewer.Services;
@@ -13,6 +14,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<EventLogCollectorModule> _logger;
+    private readonly CollectorRuntimeContext _runtimeContext;
 
     public EventLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -20,11 +22,13 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
+        CollectorRuntimeContext runtimeContext,
         ILogger<EventLogCollectorModule> logger)
         : base("EventLog", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
+        _runtimeContext = runtimeContext;
         _logger = logger;
     }
 
@@ -52,6 +56,13 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     protected override IHost BuildHost(CollectorConfigDto config, string endpoint)
     {
         var values = LegacyExporterConfigMapper.BuildEventLogConfig(config);
+
+        // Never harvest our own Windows event-log Source (the EventLog logging
+        // provider writes under SourceName = ServiceName). Without this the
+        // collector re-ingests its own status/warning lines from the Application
+        // channel as data — a feedback loop that bloated windows_events.db.
+        if (!string.IsNullOrWhiteSpace(_runtimeContext.ServiceName))
+            values["EventViewer:SelfExcludeProviders:0"] = _runtimeContext.ServiceName;
 
         // Diagnostic: log the effective Server:ServerName (this is what
         // EventViewerExportService uses for the Computer field on every row)

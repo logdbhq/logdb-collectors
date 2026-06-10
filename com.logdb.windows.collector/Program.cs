@@ -86,7 +86,13 @@ builder.Logging.AddProvider(new CollectorLoggerProvider(logSink));
 builder.Logging.AddEventLog(new EventLogSettings
 {
     LogName = "Application",
-    SourceName = runtimeContext.ServiceName
+    SourceName = runtimeContext.ServiceName,
+    // Only Warning+ reaches the Windows Event Log. The EventLog module logs one
+    // Information line per harvested event; routing those into the Application
+    // log — which this collector also harvests — was an amplification loop that
+    // grew the events DB to 21M+ rows in weeks. Operational detail still goes to
+    // the collector's own file/UI sink (CollectorLoggerProvider) above.
+    Filter = (category, level) => level >= LogLevel.Warning
 });
 
 builder.Services.AddSingleton(runtimeContext);

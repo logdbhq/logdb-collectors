@@ -1,11 +1,28 @@
 # Release Checklist
 
-## Version: 1.4.1
+## Version: 1.4.2
 
 The Windows collector ships as a **bundle** (service host + Avalonia admin UI +
 install scripts), produced by `scripts/publish-windows-collector.ps1`. The
 version is stamped from the csproj `<Version>` (CI overrides via
 `-p:Version=<tag>`). Keep the service and UI csproj versions in lockstep.
+
+### What's new since 1.4.1
+
+- **Fix runaway event-log feedback loop.** The EventLog module logged one
+  Information line per harvested event into the Windows **Application** log, and
+  also harvested that channel — so every shipped event spawned a new one,
+  exponentially (observed: 21M+ rows / 12 GB in ~3 weeks on one host). Three
+  independent guards now break it:
+  - The Windows Event Log sink is limited to **Warning+** (`Program.cs`), so
+    routine per-event Info no longer pollutes the Application channel.
+  - The EventLog collector **never harvests its own event source**
+    (`SelfExcludeProviders`, wired from the service name), which also stops
+    re-ingesting the historical backlog already in the Application log.
+  - The Firewall module's "no blocklists configured" state is now a benign
+    **idle** (not an error), and module status is logged **only on change** —
+    previously it wrote a Warning every poll cycle (tens of thousands of
+    identical entries).
 
 ### What's new since 1.4.0
 

@@ -254,6 +254,16 @@ public class EventViewerExportService : BackgroundService
             if (aborted)
                 return;
 
+            // Never harvest the collector's own event-log Source — re-ingesting its
+            // own status lines as data is a feedback loop that bloated the events DB.
+            if (_config.SelfExcludeProviders?.Count > 0
+                && !string.IsNullOrEmpty(eventEntry.Source)
+                && _config.SelfExcludeProviders.Any(p => eventEntry.Source.Equals(p, StringComparison.OrdinalIgnoreCase)))
+            {
+                filteredOut++;
+                return;
+            }
+
             // Apply filter
             if (!_eventLogFilter.MatchesFilter(eventEntry, _config.FilterConditions))
             {

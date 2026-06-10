@@ -62,7 +62,10 @@ public sealed class FirewallSyncEngine
             .ToList();
         var customEnabled = config.CustomBlocklist.Enabled;
         if (enabledFeeds.Count == 0 && !customEnabled)
-            return FirewallSyncSummary.Failed("No enabled blocklists are configured (public feeds and Guard blocklist are both off).");
+            // Not a failure — the module is on but the user simply hasn't enabled
+            // any blocklist. A benign idle state, so it isn't surfaced as an error
+            // or logged every poll cycle.
+            return FirewallSyncSummary.Idle("No blocklists enabled — nothing to sync (public feeds and Guard blocklist are both off).");
 
         var whitelist = _whitelist.Load(config.WhitelistPath);
         var totalActiveRules = 0;
@@ -356,8 +359,18 @@ public sealed record FirewallSyncSummary(
     int TotalActiveRules,
     IReadOnlyList<FirewallFeedSyncSummary> PerFeed)
 {
+    /// <summary>
+    /// True when the cycle did no work because nothing is configured to sync
+    /// (no blocklists enabled). Benign idle state — <see cref="Success"/> is true
+    /// so it is never treated as an error, and callers must not log it every cycle.
+    /// </summary>
+    public bool IsIdle { get; init; }
+
     public static FirewallSyncSummary Failed(string message) =>
         new(false, message, 0, 0, Array.Empty<FirewallFeedSyncSummary>());
+
+    public static FirewallSyncSummary Idle(string message) =>
+        new(true, message, 0, 0, Array.Empty<FirewallFeedSyncSummary>()) { IsIdle = true };
 
     public static FirewallSyncSummary Synced(int totalIps, int totalRules, IReadOnlyList<FirewallFeedSyncSummary> perFeed) =>
         new(true, $"Synced {perFeed.Count} feed(s), {totalIps} IPs across {totalRules} rule(s).",

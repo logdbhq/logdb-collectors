@@ -45,6 +45,14 @@ public class EventViewerExportConfig
     public List<string>? ExcludeSources { get; set; }
 
     /// <summary>
+    /// Event Source (provider) names to always skip, regardless of FilterConditions.
+    /// Used so the collector never harvests its OWN entries from the Windows
+    /// Application log — re-ingesting its status/log lines as data created a
+    /// feedback loop that bloated the events database (12 GB / 19M rows observed).
+    /// </summary>
+    public List<string>? SelfExcludeProviders { get; set; }
+
+    /// <summary>
     /// Optional Provider (Source) name override. When set, every emitted event
     /// uses this value instead of the original Windows event Source. Used to
     /// tag which server / collector instance the logs are coming from.
