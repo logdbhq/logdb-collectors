@@ -92,6 +92,10 @@ public class EventViewerExportService : BackgroundService
                         var exported = await ExportLogSourceStreamingAsync(logSource, stoppingToken);
                         totalExported += exported;
                     }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        break; // shutting down / config reload — not an error
+                    }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error reading events from {LogSource}", logSource);
@@ -101,6 +105,10 @@ public class EventViewerExportService : BackgroundService
                 _logger.LogInformation("Export cycle complete: {Count} events exported", totalExported);
 
                 await Task.Delay(TimeSpan.FromMinutes(_config.ExportIntervalMinutes), stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break; // shutdown requested — exit the cycle loop quietly
             }
             catch (Exception ex)
             {

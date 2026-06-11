@@ -95,6 +95,15 @@ builder.Logging.AddEventLog(new EventLogSettings
     Filter = (category, level) => level >= LogLevel.Warning
 });
 
+// Keep the SDK's own chatter out of the Windows Event Log. The LogDB.Client
+// SDK logs transient send retries at Warning ("Retry N after Xms") via Polly;
+// those are self-healing noise, not collector faults. They still go to the
+// collector's file/UI sink (CollectorLoggerProvider) for diagnostics — real
+// module failures are surfaced separately through the collector's own
+// (com.logdb.windows.collector.*) categories and the status registry.
+builder.Logging.AddFilter<Microsoft.Extensions.Logging.EventLog.EventLogLoggerProvider>(
+    "LogDB", LogLevel.None);
+
 builder.Services.AddSingleton(runtimeContext);
 builder.Services.AddHttpClient();
 

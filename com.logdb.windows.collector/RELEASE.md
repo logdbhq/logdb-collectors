@@ -1,11 +1,26 @@
 # Release Checklist
 
-## Version: 1.4.3
+## Version: 1.4.4
 
 The Windows collector ships as a **bundle** (service host + Avalonia admin UI +
 install scripts), produced by `scripts/publish-windows-collector.ps1`. The
 version is stamped from the csproj `<Version>` (CI overrides via
 `-p:Version=<tag>`). Keep the service and UI csproj versions in lockstep.
+
+### What's new since 1.4.3
+
+- **Fix a startup/shutdown crash** (`SingleInstanceLock`). The single-instance
+  mutex was released from a different thread than acquired it (async `Main`),
+  throwing `ApplicationException` → unhandled → the process died and Windows
+  logged an Application Error / .NET Runtime event each time (a flood under
+  service auto-restart). Release is now safe, and a mutex abandoned by a prior
+  crash is treated as acquired.
+- **Stop logging expected cancellations as errors.** During config reload /
+  shutdown, in-flight reads throw `TaskCanceledException`; the IIS reader and the
+  EventViewer export cycle now treat that as expected instead of `LogError`.
+- **Keep SDK chatter out of the Windows Event Log.** `LogDB.*` SDK categories
+  (e.g. Polly "Retry N after Xms") no longer route to the Event Log; they remain
+  in the collector's own file/UI sink.
 
 ### What's new since 1.4.2
 
