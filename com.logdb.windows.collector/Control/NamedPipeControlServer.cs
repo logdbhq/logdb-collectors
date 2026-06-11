@@ -1,5 +1,6 @@
 using System.IO.Pipes;
 using System.Text.Json;
+using com.logdb.windows.collector.Activity;
 using com.logdb.windows.collector.Diagnostics;
 using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Hosting;
@@ -29,6 +30,7 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly FirewallSyncEngine _firewallEngine;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IConfiguration _configuration;
+    private readonly SendActivityTracker _sendActivity;
     private readonly SemaphoreSlim _configGate = new(1, 1);
     private readonly ILogger<NamedPipeControlServer> _logger;
 
@@ -43,6 +45,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         FirewallSyncEngine firewallEngine,
         IHostApplicationLifetime hostLifetime,
         IConfiguration configuration,
+        SendActivityTracker sendActivity,
         ILogger<NamedPipeControlServer> logger)
     {
         _runtimeContext = runtimeContext;
@@ -55,6 +58,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         _firewallEngine = firewallEngine;
         _hostLifetime = hostLifetime;
         _configuration = configuration;
+        _sendActivity = sendActivity;
         _logger = logger;
     }
 
@@ -131,11 +135,23 @@ public sealed class NamedPipeControlServer : BackgroundService
         switch (request.Command)
         {
             case ControlCommands.GetStatus:
+            {
+                // The registry's SentCount only counts module-start cycles (always 1
+                // for a running module). Surface the real records-shipped totals from
+                // the send-activity tracker instead. Modules that don't ship via the
+                // log client (e.g. Firewall) have no entry → 0.
+                var snapshot = _statusRegistry.Snapshot();
+                var totals = _sendActivity.GetTotalsByModule();
+                foreach (var module in snapshot.Modules)
+                {
+                    module.SentCount = totals.TryGetValue(module.Name, out var t) ? t.Sent : 0;
+                }
                 return new ControlResponseDto
                 {
                     Success = true,
-                    PayloadJson = JsonSerializer.Serialize(_statusRegistry.Snapshot(), JsonOptions)
+                    PayloadJson = JsonSerializer.Serialize(snapshot, JsonOptions)
                 };
+            }
 
             case ControlCommands.GetConfig:
             case "redacted-config":
@@ -242,6 +258,33 @@ public sealed class NamedPipeControlServer : BackgroundService
                     Message = metricsPreview.Message,
                     PayloadJson = JsonSerializer.Serialize(metricsPreview, JsonOptions)
                 };
+
+            case ControlCommands.GetSendActivity:
+                try
+                {
+                    var query = string.IsNullOrWhiteSpace(request.PayloadJson)
+                        ? new SendActivityQueryDto
+                        {
+                            FromUtc = DateTime.UtcNow.AddDays(-7),
+                            ToUtc = DateTime.UtcNow
+                        }
+                        : JsonSerializer.Deserialize<SendActivityQueryDto>(request.PayloadJson, JsonOptions)
+                          ?? new SendActivityQueryDto();
+                    var activity = _sendActivity.GetActivity(query);
+                    return new ControlResponseDto
+                    {
+                        Success = true,
+                        PayloadJson = JsonSerializer.Serialize(activity, JsonOptions)
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new ControlResponseDto
+                    {
+                        Success = false,
+                        Message = $"Send-activity query failed: {ex.GetType().Name}: {ex.Message}"
+                    };
+                }
 
             case ControlCommands.GetResolvedEndpoint:
                 try

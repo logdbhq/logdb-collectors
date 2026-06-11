@@ -2,8 +2,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              xmlns:svg="clr-namespace:Avalonia.Svg.Skia;assembly=Avalonia.Svg.Skia"
+             xmlns:views="clr-namespace:com.logdb.windows.collector.ui.Views.Pages"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.DiagnosticsPageView">
-    <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
+    <TabControl>
+        <TabItem Header="Console">
+            <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
         <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox Content="Auto refresh (3s)" IsChecked="{Binding OnlineAutoRefresh}" />
             <TextBlock VerticalAlignment="Center" Text="Tail lines" />
@@ -94,5 +97,10 @@
                 </dgrid:DataGrid.Columns>
             </dgrid:DataGrid>
         </Border>
-    </Grid>
+            </Grid>
+        </TabItem>
+        <TabItem Header="Throughput">
+            <views:ThroughputPageView DataContext="{Binding Throughput}" />
+        </TabItem>
+    </TabControl>
 </UserControl>

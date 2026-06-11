@@ -1,3 +1,4 @@
+using com.logdb.windows.collector.Activity;
 using com.logdb.windows.collector.Configuration;
 using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Services;
@@ -11,6 +12,7 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
 {
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly ISendActivitySink _sendActivity;
 
     public HeartbeatCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -18,11 +20,13 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
         IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
+        ISendActivitySink sendActivity,
         ILogger<HeartbeatCollectorModule> logger)
         : base("Heartbeat", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
+        _sendActivity = sendActivity;
     }
 
     protected override bool IsEnabled(CollectorConfigDto config)
@@ -76,12 +80,14 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
         // the zombie-long-lived-channel class of bugs where a stale HTTP/2
         // connection silently swallows rows.
         builder.Services.AddSingleton<ILogDBClient>(_ =>
-            new EphemeralLogDbClient(() => LogDbClientFactory.Create(
-                config.LogDB,
-                endpoint,
-                _loggerFactory,
-                defaultApplication: defaultApplication,
-                defaultEnvironment: defaultEnvironment)));
+            new RecordingLogDbClient(
+                new EphemeralLogDbClient(() => LogDbClientFactory.Create(
+                    config.LogDB,
+                    endpoint,
+                    _loggerFactory,
+                    defaultApplication: defaultApplication,
+                    defaultEnvironment: defaultEnvironment)),
+                _sendActivity, "Heartbeat", Environment.MachineName));
 
         builder.Services.AddHostedService<HeartbeatBeatExportService>();
 

@@ -90,6 +90,9 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     public const string OnlineModuleFilterAll = "(All)";
     public const string OnlineModuleFilterOther = "Other";
 
+    /// <summary>Second sub-tab of the Online Console: send throughput charts.</summary>
+    public ThroughputPageViewModel Throughput { get; }
+
     public DiagnosticsPageViewModel(
         LocalCollectorAdminClient adminClient,
         Action<string, bool> statusCallback,
@@ -101,6 +104,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         _statusCallback = statusCallback;
         _exportTextAsync = exportTextAsync;
         _copyToClipboardAsync = copyToClipboardAsync;
+        Throughput = new ThroughputPageViewModel(adminClient, statusCallback);
 
         OnlineConsoleRows = new ObservableCollection<OnlineDiagnosticRowViewModel>();
         OnlineModuleFilters = new ObservableCollection<OnlineModuleFilterItemViewModel>

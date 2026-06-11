@@ -1,0 +1,86 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:lvc="clr-namespace:LiveChartsCore.SkiaSharpView.Avalonia;assembly=LiveChartsCore.SkiaSharpView.Avalonia"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.ThroughputPageView">
+    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
+
+        <!-- Filters -->
+        <Border Classes="panel">
+            <WrapPanel Orientation="Horizontal" ItemWidth="NaN">
+                <StackPanel Spacing="3" Margin="0,0,16,8">
+                    <TextBlock Classes="cardLabel" Text="Range (days)" />
+                    <ComboBox MinWidth="90" ItemsSource="{Binding RangeDayOptions}"
+                              SelectedItem="{Binding RangeDays, Mode=TwoWay}" />
+                </StackPanel>
+
+                <StackPanel Spacing="3" Margin="0,0,16,8">
+                    <TextBlock Classes="cardLabel" Text="Granularity" />
+                    <ComboBox MinWidth="100" ItemsSource="{Binding Granularities}"
+                              SelectedItem="{Binding Granularity, Mode=TwoWay}" />
+                </StackPanel>
+
+                <StackPanel Spacing="3" Margin="0,0,16,8">
+                    <TextBlock Classes="cardLabel" Text="Group by" />
+                    <ComboBox MinWidth="110" ItemsSource="{Binding GroupByOptions}"
+                              SelectedItem="{Binding GroupBy, Mode=TwoWay}" />
+                </StackPanel>
+
+                <StackPanel Spacing="3" Margin="0,0,16,8">
+                    <TextBlock Classes="cardLabel" Text="Log type" />
+                    <ComboBox MinWidth="130" ItemsSource="{Binding Modules}"
+                              SelectedItem="{Binding ModuleFilter, Mode=TwoWay}" />
+                </StackPanel>
+
+                <StackPanel Spacing="3" Margin="0,0,16,8">
+                    <TextBlock Classes="cardLabel" Text="Host" />
+                    <ComboBox MinWidth="150" ItemsSource="{Binding Hosts}"
+                              SelectedItem="{Binding HostFilter, Mode=TwoWay}" />
+                </StackPanel>
+
+                <StackPanel Spacing="3" Margin="0,0,16,8">
+                    <TextBlock Classes="cardLabel" Text="Collection" />
+                    <ComboBox MinWidth="150" ItemsSource="{Binding Collections}"
+                              SelectedItem="{Binding CollectionFilter, Mode=TwoWay}" />
+                </StackPanel>
+
+                <StackPanel Spacing="3" Margin="0,0,16,8" VerticalAlignment="Bottom">
+                    <CheckBox Content="Sent" IsChecked="{Binding ShowSent, Mode=TwoWay}" />
+                    <CheckBox Content="Failed" IsChecked="{Binding ShowFailed, Mode=TwoWay}" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom" Margin="0,0,0,8">
+                    <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+                    <CheckBox Content="Auto (10s)" IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              ToolTip.Tip="Reload the chart every 10 seconds." />
+                </StackPanel>
+            </WrapPanel>
+        </Border>
+
+        <!-- Totals -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10">
+            <Border Classes="card">
+                <StackPanel Spacing="2">
+                    <TextBlock Classes="cardLabel" Text="Sent (range)" />
+                    <TextBlock Classes="cardValue" Text="{Binding TotalSent}" />
+                </StackPanel>
+            </Border>
+            <Border Classes="card">
+                <StackPanel Spacing="2">
+                    <TextBlock Classes="cardLabel" Text="Failed (range)" />
+                    <TextBlock Classes="cardValue" Text="{Binding TotalFailed}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Chart -->
+        <Border Grid.Row="2" Classes="panel">
+            <lvc:CartesianChart Series="{Binding Series}"
+                                XAxes="{Binding XAxes}"
+                                YAxes="{Binding YAxes}"
+                                LegendPosition="Bottom"
+                                ZoomMode="X"
+                                MinHeight="320" />
+        </Border>
+    </Grid>
+</UserControl>

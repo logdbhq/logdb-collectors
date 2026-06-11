@@ -1,11 +1,24 @@
 # Release Checklist
 
-## Version: 1.4.2
+## Version: 1.4.3
 
 The Windows collector ships as a **bundle** (service host + Avalonia admin UI +
 install scripts), produced by `scripts/publish-windows-collector.ps1`. The
 version is stamped from the csproj `<Version>` (CI overrides via
 `-p:Version=<tag>`). Keep the service and UI csproj versions in lockstep.
+
+### What's new since 1.4.2
+
+- **Throughput charts** in the **Online Console** tab (new "Throughput"
+  sub-tab). Time-series of records shipped to the server over a selected date
+  range, grouped by log type / host / collection, split sent vs failed, with
+  hour/day granularity and a 10-second auto-refresh.
+- **Send-activity capture.** A `RecordingLogDbClient` wraps every module's log
+  client and records per-batch sent/failed counts into a persisted
+  `SendActivityTracker` (`send-activity.json`, hourly buckets, 90-day
+  retention), exposed over the control channel via `send-activity`.
+- **Modules grid "Sent" column now shows real records shipped** (from the
+  send-activity totals) instead of a start-cycle counter that was always 1.
 
 ### What's new since 1.4.1
 

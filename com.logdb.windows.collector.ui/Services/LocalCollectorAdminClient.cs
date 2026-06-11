@@ -147,6 +147,18 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.GetFailuresAsync(SelectedTarget.Value, maxEntries, cancellationToken);
     }
 
+    public async Task<SendActivityDto?> GetSendActivityAsync(
+        SendActivityQueryDto query,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return null;
+        }
+
+        return await _controlClient.GetSendActivityAsync(SelectedTarget.Value, query, cancellationToken);
+    }
+
     public async Task<CollectorConfigDto?> GetEffectiveRedactedConfigAsync(CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)

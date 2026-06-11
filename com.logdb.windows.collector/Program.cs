@@ -97,6 +97,14 @@ builder.Logging.AddEventLog(new EventLogSettings
 
 builder.Services.AddSingleton(runtimeContext);
 builder.Services.AddHttpClient();
+
+// Throughput telemetry: persisted hourly record of what each module shipped,
+// split by outcome. Registered as both the concrete tracker (queried by the
+// control channel) and the sink (recorded into by each module's client wrapper).
+var sendActivityTracker = new com.logdb.windows.collector.Activity.SendActivityTracker();
+builder.Services.AddSingleton(sendActivityTracker);
+builder.Services.AddSingleton<com.logdb.windows.collector.Activity.ISendActivitySink>(sendActivityTracker);
+
 builder.Services.AddSingleton<CollectorStatusRegistry>(_ => new CollectorStatusRegistry(
     runtimeContext.ConfigPath,
     runtimeContext.Mode,

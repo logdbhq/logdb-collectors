@@ -1,3 +1,4 @@
+using com.logdb.windows.collector.Activity;
 using com.logdb.windows.collector.Configuration;
 using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Services;
@@ -12,6 +13,7 @@ public sealed class WindowsMetricsCollectorModule : ExporterModuleBase
 {
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
+    private readonly ISendActivitySink _sendActivity;
 
     public WindowsMetricsCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -19,11 +21,13 @@ public sealed class WindowsMetricsCollectorModule : ExporterModuleBase
         IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
+        ISendActivitySink sendActivity,
         ILogger<WindowsMetricsCollectorModule> logger)
         : base("Metrics", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
+        _sendActivity = sendActivity;
     }
 
     protected override bool IsEnabled(CollectorConfigDto config)
@@ -66,7 +70,9 @@ public sealed class WindowsMetricsCollectorModule : ExporterModuleBase
         // the zombie-long-lived-channel class of bugs where a stale HTTP/2
         // connection silently swallows rows.
         builder.Services.AddSingleton<ILogDBClient>(_ =>
-            new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)));
+            new RecordingLogDbClient(
+                new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)),
+                _sendActivity, "Metrics", Environment.MachineName));
 
         builder.Services.AddSingleton<WindowsMetricsReader>();
         builder.Services.AddHostedService<WindowsTrackerExportService>();

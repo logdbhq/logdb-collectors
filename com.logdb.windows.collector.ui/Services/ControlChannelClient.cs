@@ -163,4 +163,23 @@ public sealed class ControlChannelClient
 
         return JsonSerializer.Deserialize<CollectorConfigDto>(response.PayloadJson, JsonOptions);
     }
+
+    public async Task<SendActivityDto?> GetSendActivityAsync(
+        CollectorInstanceMode mode,
+        SendActivityQueryDto query,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetSendActivity,
+            payloadJson: JsonSerializer.Serialize(query, JsonOptions),
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<SendActivityDto>(response.PayloadJson, JsonOptions);
+    }
 }

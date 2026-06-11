@@ -14,9 +14,9 @@
          "is the binary actually updated" into a guessing game.
          Baseline for local/dev builds; CI overrides via -p:Version=<tag-version>
          so the released binary's version matches the tag exactly. -->
-    <Version>1.4.2</Version>
-    <AssemblyVersion>1.4.2.0</AssemblyVersion>
-    <FileVersion>1.4.2.0</FileVersion>
+    <Version>1.4.3</Version>
+    <AssemblyVersion>1.4.3.0</AssemblyVersion>
+    <FileVersion>1.4.3.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

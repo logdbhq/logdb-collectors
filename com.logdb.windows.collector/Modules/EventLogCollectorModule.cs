@@ -1,3 +1,4 @@
+using com.logdb.windows.collector.Activity;
 using com.logdb.windows.collector.Configuration;
 using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Hosting;
@@ -15,6 +16,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<EventLogCollectorModule> _logger;
     private readonly CollectorRuntimeContext _runtimeContext;
+    private readonly ISendActivitySink _sendActivity;
 
     public EventLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -23,12 +25,14 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         CollectorRuntimeContext runtimeContext,
+        ISendActivitySink sendActivity,
         ILogger<EventLogCollectorModule> logger)
         : base("EventLog", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
         _runtimeContext = runtimeContext;
+        _sendActivity = sendActivity;
         _logger = logger;
     }
 
@@ -85,7 +89,9 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         // the zombie-long-lived-channel class of bugs where a stale HTTP/2
         // connection silently swallows rows.
         builder.Services.AddSingleton<ILogDBClient>(_ =>
-            new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)));
+            new RecordingLogDbClient(
+                new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)),
+                _sendActivity, "EventLog", Environment.MachineName));
 
         builder.Services.AddSingleton<EventLogReader>();
         builder.Services.AddSingleton<EventLogFilter>();
