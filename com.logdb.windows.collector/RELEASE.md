@@ -1,11 +1,24 @@
 # Release Checklist
 
-## Version: 1.4.5
+## Version: 1.4.6
 
 The Windows collector ships as a **bundle** (service host + Avalonia admin UI +
 install scripts), produced by `scripts/publish-windows-collector.ps1`. The
 version is stamped from the csproj `<Version>` (CI overrides via
 `-p:Version=<tag>`). Keep the service and UI csproj versions in lockstep.
+
+### What's new since 1.4.5
+
+- **Fix Windows Events never arriving (frozen watermark).** The EventViewer sent
+  each event **inline while enumerating the thread-affine `EventLogReader`**; when
+  the `await` resumed on another thread the in-flight gRPC request was torn down →
+  `RpcException(Cancelled, "Call canceled by the client")`, which froze the
+  watermark on the first event forever (metrics/IIS/heartbeat were unaffected
+  because they send one small record per cycle). Reads now **buffer events first,
+  then send after the reader is fully drained** — no gRPC await happens mid-read.
+- **Dead-letter guard.** If a single event fails to send for 5 cycles in a row it
+  is skipped (watermark advanced past it) so one genuinely-poison event can never
+  wedge the whole channel again.
 
 ### What's new since 1.4.4
 

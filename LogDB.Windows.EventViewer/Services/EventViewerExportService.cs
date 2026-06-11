@@ -30,6 +30,14 @@ public class EventViewerExportService : BackgroundService
 
     private bool _stateResetDone;
 
+    // Dead-letter guard: per-source tracking of the event the watermark is frozen
+    // on. If the SAME event fails MaxFreezeAttemptsBeforeSkip cycles in a row it is
+    // skipped (watermark advanced past it) so one genuinely-poison event can never
+    // wedge the whole channel forever.
+    private const int MaxFreezeAttemptsBeforeSkip = 5;
+    private readonly Dictionary<string, (string Key, int FailCount)> _stuckHead =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public EventViewerExportService(
         ILogger<EventViewerExportService> logger,
         IConfiguration configuration,
@@ -186,6 +194,13 @@ public class EventViewerExportService : BackgroundService
         // first failed sub-batch `aborted` stops further work so the unconfirmed
         // events are re-read next cycle.
         var pending = new List<(EventLogEntryModel Entry, Log Log)>();
+
+        // Events read + filtered this cycle, buffered so the gRPC send happens
+        // AFTER the thread-affine EventLogReader is fully drained. Sending inline
+        // during the read enumeration tore down the in-flight gRPC request when the
+        // await resumed on another thread → RpcException(Cancelled, "Call canceled
+        // by the client"), which froze the watermark on the first event forever.
+        var collected = new List<(EventLogEntryModel Entry, Log Log)>();
         var aborted = false;
 
         // Logs the per-row Online Console line + advances success bookkeeping
@@ -194,6 +209,8 @@ public class EventViewerExportService : BackgroundService
         {
             successCount++;
             latestProcessed = eventEntry;
+            // Progress was made — clear any frozen-head tracking for this source.
+            _stuckHead.Remove(logSource);
 
             // "LogEventTimestamp" is a well-known scope key the LogDB collector
             // reads to surface the record's own timestamp in the Online Console
@@ -256,12 +273,12 @@ public class EventViewerExportService : BackgroundService
             pending.Clear();
         }
 
-        // Callback: called for each event as it's read from the Event Log
-        async Task ProcessEvent(EventLogEntryModel eventEntry)
+        // READ-phase callback: filter + buffer only. Deliberately does NO gRPC
+        // send (and no await), so nothing async happens while the thread-affine
+        // EventLogReader is mid-enumeration. Sending is done by SendCollectedAsync
+        // below, after the reader is fully drained.
+        Task CollectEvent(EventLogEntryModel eventEntry)
         {
-            if (aborted)
-                return;
-
             // Never harvest the collector's own event-log Source — re-ingesting its
             // own status lines as data is a feedback loop that bloated the events DB.
             if (_config.SelfExcludeProviders?.Count > 0
@@ -269,68 +286,112 @@ public class EventViewerExportService : BackgroundService
                 && _config.SelfExcludeProviders.Any(p => eventEntry.Source.Equals(p, StringComparison.OrdinalIgnoreCase)))
             {
                 filteredOut++;
-                return;
+                return Task.CompletedTask;
             }
 
-            // Apply filter
             if (!_eventLogFilter.MatchesFilter(eventEntry, _config.FilterConditions))
             {
                 filteredOut++;
-                return;
+                return Task.CompletedTask;
             }
 
-            if (_enableBatching)
-            {
-                pending.Add((eventEntry, ConvertToLogDto(eventEntry, logSource)));
-                if (pending.Count >= _batchSize)
-                    await FlushPendingAsync();
-                return;
-            }
+            collected.Add((eventEntry, ConvertToLogDto(eventEntry, logSource)));
+            return Task.CompletedTask;
+        }
 
-            try
+        // SEND-phase: runs after the reader is drained/disposed, so gRPC awaits are
+        // safe. Preserves the watermark semantics — events ship in ascending order;
+        // the first failure freezes the watermark so unconfirmed events are re-read
+        // next cycle.
+        async Task SendCollectedAsync()
+        {
+            // Records a failure of the current head event; returns true once the
+            // same event has failed MaxFreezeAttemptsBeforeSkip cycles in a row, in
+            // which case the caller skips it instead of freezing the channel.
+            bool ShouldSkipPoison(EventLogEntryModel e)
             {
-                var log = ConvertToLogDto(eventEntry, logSource);
-                var result = await _logDBClient.LogAsync(log, cancellationToken);
-
-                if (result == LogResponseStatus.Success)
+                var key = GenerateDeterministicId(logSource, e);
+                var count = (_stuckHead.TryGetValue(logSource, out var s) && s.Key == key)
+                    ? s.FailCount + 1
+                    : 1;
+                if (count >= MaxFreezeAttemptsBeforeSkip)
                 {
-                    RecordConfirmed(eventEntry);
+                    _stuckHead.Remove(logSource);
+                    return true;
                 }
-                else
+                _stuckHead[logSource] = (key, count);
+                return false;
+            }
+
+            foreach (var (entry, log) in collected)
+            {
+                if (aborted)
+                    break;
+
+                if (_enableBatching)
                 {
-                    // Freeze the watermark: stop here so this event is re-read
-                    // next cycle instead of being skipped by a later success.
+                    pending.Add((entry, log));
+                    if (pending.Count >= _batchSize)
+                        await FlushPendingAsync();
+                    continue;
+                }
+
+                try
+                {
+                    var result = await _logDBClient.LogAsync(log, cancellationToken);
+                    if (result == LogResponseStatus.Success)
+                    {
+                        RecordConfirmed(entry);
+                    }
+                    else
+                    {
+                        failCount++;
+                        if (ShouldSkipPoison(entry))
+                        {
+                            _logger.LogError(
+                                "Dead-lettering {LogSource} event (EventID: {EventId}, Time: {Time}) after {Max} failed cycles — skipping to unblock the channel.",
+                                logSource, entry.EventID, entry.TimeGenerated, MaxFreezeAttemptsBeforeSkip);
+                            latestProcessed = entry; // advance the watermark past the poison event
+                            continue;
+                        }
+                        aborted = true;
+                        _logger.LogWarning(
+                            "Send failed for {LogSource} (EventID: {EventId}, Time: {Time}): {Status}. " +
+                            "Freezing watermark; will retry from this event next cycle.",
+                            logSource, entry.EventID, entry.TimeGenerated, result);
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // Shutdown / reload — expected and transient, never counts toward
+                    // the poison-event dead-letter. Just freeze and resume next start.
                     aborted = true;
-                    failCount++;
-                    _logger.LogWarning(
-                        "Send failed for {LogSource} (EventID: {EventId}, Time: {Time}): {Status}. " +
-                        "Freezing watermark; will retry from this event next cycle.",
-                        logSource, eventEntry.EventID, eventEntry.TimeGenerated, result);
+                    _logger.LogDebug(
+                        "Send cancelled during shutdown for {LogSource} (EventID: {EventId})",
+                        logSource, entry.EventID);
                 }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                // Service stopping / module reloading - expected, not an error.
-                // Freeze so in-flight events are re-read on the next start.
-                aborted = true;
-                _logger.LogDebug(
-                    "Send cancelled during shutdown for {LogSource} (EventID: {EventId})",
-                    logSource, eventEntry.EventID);
-            }
-            catch (Exception ex)
-            {
-                // Includes a send *timeout* (TaskCanceledException with the token
-                // NOT cancelled) - a real failure, so freeze and retry next cycle.
-                aborted = true;
-                failCount++;
-                _logger.LogError(ex,
-                    "Exception sending event for {LogSource} (EventID: {EventId}, Time: {Time}). " +
-                    "Freezing watermark; will retry from this event next cycle.",
-                    logSource, eventEntry.EventID, eventEntry.TimeGenerated);
+                catch (Exception ex)
+                {
+                    failCount++;
+                    if (ShouldSkipPoison(entry))
+                    {
+                        _logger.LogError(ex,
+                            "Dead-lettering {LogSource} event (EventID: {EventId}, Time: {Time}) after {Max} failed cycles — skipping to unblock the channel.",
+                            logSource, entry.EventID, entry.TimeGenerated, MaxFreezeAttemptsBeforeSkip);
+                        latestProcessed = entry; // advance the watermark past the poison event
+                        continue;
+                    }
+                    aborted = true;
+                    _logger.LogError(ex,
+                        "Exception sending event for {LogSource} (EventID: {EventId}, Time: {Time}). " +
+                        "Freezing watermark; will retry from this event next cycle.",
+                        logSource, entry.EventID, entry.TimeGenerated);
+                }
             }
         }
 
-        // Stream events: read -> filter -> send inline
+        // Phase 1 — read + filter into the buffer. No gRPC send happens during the
+        // event-log enumeration (that mid-read send was what got cancelled).
         if (sourceIsFirstRun)
         {
             var latestDate = _eventLogReader.GetLatestEventDate(logSource);
@@ -341,19 +402,22 @@ public class EventViewerExportService : BackgroundService
             }
 
             _logger.LogInformation(
-                "FIRST RUN for {LogSource}: streaming all events up to {LatestDate}",
+                "FIRST RUN for {LogSource}: reading all events up to {LatestDate}",
                 logSource, latestDate.Value);
 
             await _eventLogReader.ReadAllEventsUpToDateAsync(
-                logSource, latestDate.Value, _config.EventLevels, ProcessEvent);
+                logSource, latestDate.Value, _config.EventLevels, CollectEvent);
         }
         else
         {
             var sinceTimestamp = sourceLastTimestamp ?? DateTime.UtcNow.AddHours(-1);
             await _eventLogReader.ReadEventsAsync(
                 logSource, sinceTimestamp, sourceLastEventId, _config.EventLevels,
-                _config.MaxEventsPerExport, ProcessEvent);
+                _config.MaxEventsPerExport, CollectEvent);
         }
+
+        // Phase 2 — the reader is fully drained; now ship the buffered events.
+        await SendCollectedAsync();
 
         // Flush the final partial batch (no-op when batching is off or aborted).
         if (_enableBatching && !aborted)
