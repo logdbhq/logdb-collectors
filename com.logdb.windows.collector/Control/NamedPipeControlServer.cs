@@ -144,7 +144,20 @@ public sealed class NamedPipeControlServer : BackgroundService
                 var totals = _sendActivity.GetTotalsByModule();
                 foreach (var module in snapshot.Modules)
                 {
-                    module.SentCount = totals.TryGetValue(module.Name, out var t) ? t.Sent : 0;
+                    if (totals.TryGetValue(module.Name, out var t))
+                    {
+                        // Records that shipped vs records that failed to ship — so
+                        // "Sent 0 / Failed 349" reads as "delivery is failing" rather
+                        // than the misleading "0 / 0".
+                        module.SentCount = t.Sent;
+                        module.FailedCount = t.Failed;
+                    }
+                    else
+                    {
+                        // Module ships nothing via the log client (e.g. Firewall) —
+                        // leave its registry FailedCount (module-cycle errors) intact.
+                        module.SentCount = 0;
+                    }
                 }
                 return new ControlResponseDto
                 {

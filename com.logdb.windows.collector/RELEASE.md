@@ -1,11 +1,26 @@
 # Release Checklist
 
-## Version: 1.4.4
+## Version: 1.4.5
 
 The Windows collector ships as a **bundle** (service host + Avalonia admin UI +
 install scripts), produced by `scripts/publish-windows-collector.ps1`. The
 version is stamped from the csproj `<Version>` (CI overrides via
 `-p:Version=<tag>`). Keep the service and UI csproj versions in lockstep.
+
+### What's new since 1.4.4
+
+- **Fix the Destination "Refresh Discovery" target selector.** Rebuilding the
+  instance list nulled the freshly auto-picked target through the ComboBox
+  binding, leaving it unselected and forcing the page onto its own discovery
+  lookup (which can disagree with the running collector's key-based endpoint).
+  Refresh now auto-selects a reachable instance (service if installed, else
+  console) and re-syncs it, in both console and installed-service run modes.
+- **Modules grid "Sent"/"Failed" columns** now report real records shipped vs
+  records that failed to ship (from the send-activity tracker), instead of a
+  start-cycle counter / module-error count.
+- **Stable Throughput chart colours.** Each series keeps a fixed colour across
+  auto-refreshes (deterministic palette keyed by group name) instead of
+  reshuffling on every reload.
 
 ### What's new since 1.4.3
 

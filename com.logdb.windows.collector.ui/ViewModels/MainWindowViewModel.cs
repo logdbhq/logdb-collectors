@@ -260,12 +260,23 @@ public sealed class MainWindowViewModel : ObservableObject
         private set => SetProperty(ref _currentPage, value);
     }
 
+    // Set while RefreshDiscoveryAsync rebuilds TargetOptions: clearing the
+    // ComboBox's ItemsSource pushes a null SelectedItem through the TwoWay
+    // binding, which would otherwise wipe the freshly auto-picked target on
+    // the admin client before we re-select it.
+    private bool _suppressTargetSync;
+
     public TargetOptionViewModel? SelectedTarget
     {
         get => _selectedTarget;
         set
         {
             if (!SetProperty(ref _selectedTarget, value))
+            {
+                return;
+            }
+
+            if (_suppressTargetSync)
             {
                 return;
             }
@@ -558,20 +569,40 @@ public sealed class MainWindowViewModel : ObservableObject
     private async Task RefreshDiscoveryAsync()
     {
         await _adminClient.RefreshDiscoveryAsync();
-        TargetOptions.Clear();
 
-        foreach (var mode in _adminClient.GetAvailableTargets())
+        // The admin client just auto-picked a reachable target (service if
+        // installed, else console). Remember it now: rebuilding TargetOptions
+        // below makes the ComboBox momentarily push a null selection, which
+        // used to overwrite this pick and leave the ComboBox unselected.
+        var chosen = _adminClient.SelectedTarget;
+
+        _suppressTargetSync = true;
+        try
         {
-            var label = mode switch
+            TargetOptions.Clear();
+
+            foreach (var mode in _adminClient.GetAvailableTargets())
             {
-                CollectorInstanceMode.Service => "Service instance (local)",
-                CollectorInstanceMode.Console => "Console instance (local)",
-                _ => mode.ToString()
-            };
-            TargetOptions.Add(new TargetOptionViewModel(mode, label));
+                var label = mode switch
+                {
+                    CollectorInstanceMode.Service => "Service instance (local)",
+                    CollectorInstanceMode.Console => "Console instance (local)",
+                    _ => mode.ToString()
+                };
+                TargetOptions.Add(new TargetOptionViewModel(mode, label));
+            }
+
+            SelectedTarget = TargetOptions.FirstOrDefault(option => option.Mode == chosen);
+        }
+        finally
+        {
+            _suppressTargetSync = false;
         }
 
-        SelectedTarget = TargetOptions.FirstOrDefault(option => option.Mode == _adminClient.SelectedTarget);
+        // Re-sync the client with the final selection (the binding may have
+        // nulled it mid-rebuild) and refresh the visible page against it.
+        _adminClient.SetSelectedTarget(SelectedTarget?.Mode);
+        await RefreshCurrentPageAsync();
 
         var parts = new List<string>
         {

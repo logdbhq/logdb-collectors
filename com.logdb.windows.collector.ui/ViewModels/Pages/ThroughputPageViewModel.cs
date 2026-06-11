@@ -244,7 +244,12 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
                     Name = data.Series.Count > 1 ? $"{s.Name} · sent" : "sent",
                     Values = s.Buckets.Select(b => new DateTimePoint(b.StartUtc.ToLocalTime(), b.Sent)).ToArray(),
                     GeometrySize = 0,
-                    LineSmoothness = 0.2
+                    LineSmoothness = 0.2,
+                    // Deterministic per-group colour so it stays stable across
+                    // auto-refreshes (otherwise LiveCharts reassigns palette colours
+                    // by series index on every rebuild).
+                    Stroke = new SolidColorPaint(ColorFor(s.Name), 2),
+                    Fill = null
                 });
             }
             if (ShowFailed)
@@ -255,7 +260,9 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
                     Values = s.Buckets.Select(b => new DateTimePoint(b.StartUtc.ToLocalTime(), b.Failed)).ToArray(),
                     GeometrySize = 0,
                     LineSmoothness = 0.2,
-                    Stroke = new SolidColorPaint(new SKColor(0xE5, 0x39, 0x35), 2),
+                    // Failed is always red — and when grouped, tinted per group so
+                    // multiple groups' failure lines remain distinguishable.
+                    Stroke = new SolidColorPaint(FailedColorFor(s.Name), 2),
                     Fill = null
                 });
             }
@@ -305,6 +312,35 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
     {
         var dt = new DateTime((long)Math.Max(0, ticks), DateTimeKind.Utc).ToLocalTime();
         return Granularity == SendActivityGranularity.Day ? dt.ToString("MMM d") : dt.ToString("MMM d HH:mm");
+    }
+
+    // Fixed palettes + a stable (process-independent) hash so a given series keeps
+    // the same colour across auto-refreshes and restarts.
+    private static readonly SKColor[] SentPalette =
+    {
+        new(0x42, 0xA5, 0xF5), new(0x66, 0xBB, 0x6A), new(0xFF, 0xA7, 0x26),
+        new(0xAB, 0x47, 0xBC), new(0x26, 0xC6, 0xDA), new(0xFF, 0xCA, 0x28),
+        new(0x8D, 0x6E, 0x63), new(0x78, 0x90, 0x9C),
+    };
+
+    private static readonly SKColor[] FailedPalette =
+    {
+        new(0xE5, 0x39, 0x35), new(0xD8, 0x1B, 0x60), new(0xC6, 0x28, 0x28),
+        new(0xF4, 0x51, 0x1E), new(0xAD, 0x14, 0x57),
+    };
+
+    private static SKColor ColorFor(string key) => SentPalette[StableIndex(key, SentPalette.Length)];
+
+    private static SKColor FailedColorFor(string key) => FailedPalette[StableIndex(key, FailedPalette.Length)];
+
+    private static int StableIndex(string key, int mod)
+    {
+        unchecked
+        {
+            var h = 17;
+            foreach (var c in key) h = h * 31 + c;
+            return ((h % mod) + mod) % mod;
+        }
     }
 
     private static string? NormFilter(string? value) =>
