@@ -102,5 +102,46 @@
         <TabItem Header="Throughput">
             <views:ThroughputPageView DataContext="{Binding Throughput}" />
         </TabItem>
+        <TabItem>
+            <TabItem.Header>
+                <TextBlock Text="{Binding ErrorsTabHeader}" />
+            </TabItem.Header>
+            <Grid Margin="8" RowDefinitions="Auto,*,Auto,220" RowSpacing="8">
+                <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}"
+                           Text="Warnings and errors from the live tail (ignores the Console source filter). Select a row to see the full detail — including exception stack traces — below." />
+
+                <Border Grid.Row="1" Classes="panel" MinHeight="220">
+                    <dgrid:DataGrid ItemsSource="{Binding ErrorRows}"
+                                    SelectedItem="{Binding SelectedErrorRow, Mode=TwoWay}"
+                                    AutoGenerateColumns="False"
+                                    IsReadOnly="True"
+                                    CanUserSortColumns="False"
+                                    CanUserResizeColumns="True">
+                        <dgrid:DataGrid.Columns>
+                            <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
+                            <dgrid:DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="90" />
+                            <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="100" />
+                            <dgrid:DataGridTextColumn Header="Message" Binding="{Binding MessageFirstLine}" Width="*" />
+                        </dgrid:DataGrid.Columns>
+                    </dgrid:DataGrid>
+                </Border>
+
+                <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                    <TextBlock Text="Detail" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" Content="Copy Detail" Command="{Binding CopyErrorDetailCommand}" />
+                </Grid>
+
+                <Border Grid.Row="3" Classes="panel">
+                    <TextBox Text="{Binding SelectedErrorDetail, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="NoWrap"
+                             FontFamily="Cascadia Mono,Consolas,monospace"
+                             FontSize="12"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                </Border>
+            </Grid>
+        </TabItem>
     </TabControl>
 </UserControl>

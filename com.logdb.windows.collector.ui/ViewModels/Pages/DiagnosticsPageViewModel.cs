@@ -23,6 +23,27 @@ public sealed class OnlineDiagnosticRowViewModel
     public IBrush? RowForeground { get; set; }
     public AsyncRelayCommand? CopyCommand { get; set; }
 
+    /// <summary>
+    /// First line of <see cref="Message"/> for grid display. Exception stack
+    /// traces are appended to the message by the collector's logger; in a grid
+    /// cell they render crushed, so the grid shows the headline and the Errors
+    /// tab's detail pane shows the full text.
+    /// </summary>
+    public string MessageFirstLine
+    {
+        get
+        {
+            var idx = Message.IndexOfAny(new[] { '\r', '\n' });
+            return idx < 0 ? Message : Message[..idx] + "  …";
+        }
+    }
+
+    /// <summary>True for levels that belong on the Errors tab.</summary>
+    public bool IsErrorLike =>
+        Level.Equals("Warning", StringComparison.OrdinalIgnoreCase)
+        || Level.Equals("Error", StringComparison.OrdinalIgnoreCase)
+        || Level.Equals("Critical", StringComparison.OrdinalIgnoreCase);
+
     public string ToLogLine() =>
         $"[{TimeLocal}] [{Level}] {Module}: {Message}";
 
@@ -120,6 +141,74 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         CopySupportBundleCommand = new AsyncRelayCommand(CopySupportBundleAsync);
         RefreshOnlineConsoleCommand = new AsyncRelayCommand(RefreshOnlineConsoleAsync);
         ClearOnlineConsoleCommand = new RelayCommand(ClearOnlineConsole);
+
+        ErrorRows = new ObservableCollection<OnlineDiagnosticRowViewModel>();
+        CopyErrorDetailCommand = new AsyncRelayCommand(async () =>
+        {
+            if (!string.IsNullOrEmpty(SelectedErrorDetail))
+            {
+                await _copyToClipboardAsync(SelectedErrorDetail);
+                _statusCallback("Error detail copied to clipboard.", true);
+            }
+        });
+    }
+
+    // ── Errors sub-tab: warnings/errors only, with full-detail pane ────────
+
+    /// <summary>Warning/Error/Critical rows from the live tail, newest first.</summary>
+    public ObservableCollection<OnlineDiagnosticRowViewModel> ErrorRows { get; }
+
+    public AsyncRelayCommand CopyErrorDetailCommand { get; }
+
+    private OnlineDiagnosticRowViewModel? _selectedErrorRow;
+    public OnlineDiagnosticRowViewModel? SelectedErrorRow
+    {
+        get => _selectedErrorRow;
+        set
+        {
+            if (SetProperty(ref _selectedErrorRow, value))
+            {
+                NotifyPropertyChanged(nameof(SelectedErrorDetail));
+            }
+        }
+    }
+
+    /// <summary>Full multi-line text (incl. stack trace) of the selected error.</summary>
+    public string SelectedErrorDetail => _selectedErrorRow?.Message ?? string.Empty;
+
+    private string _errorsTabHeader = "Errors";
+    public string ErrorsTabHeader
+    {
+        get => _errorsTabHeader;
+        private set => SetProperty(ref _errorsTabHeader, value);
+    }
+
+    /// <summary>
+    /// Rebuilds the Errors tab from the freshly fetched tail. Ignores the module
+    /// filter on purpose — an error should never be hidden by a view filter.
+    /// Keeps the current selection when the same entry is still present.
+    /// </summary>
+    private void UpdateErrorRows()
+    {
+        var selectedKey = _selectedErrorRow is { } sel ? sel.TimeLocal + "" + sel.Message : null;
+
+        ErrorRows.Clear();
+        OnlineDiagnosticRowViewModel? reselect = null;
+        foreach (var row in _allOnlineRows.Where(r => r.IsErrorLike))
+        {
+            ErrorRows.Add(row);
+            if (selectedKey != null && reselect == null
+                && row.TimeLocal + "" + row.Message == selectedKey)
+            {
+                reselect = row;
+            }
+        }
+
+        ErrorsTabHeader = ErrorRows.Count == 0 ? "Errors" : $"Errors ({ErrorRows.Count})";
+        if (reselect != null)
+        {
+            SelectedErrorRow = reselect;
+        }
     }
 
     public ObservableCollection<OnlineDiagnosticRowViewModel> OnlineConsoleRows { get; }
@@ -279,6 +368,8 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         {
             OnlineConsoleRows.Add(row);
         }
+
+        UpdateErrorRows();
 
         var suffix = filterAll
             ? string.Empty

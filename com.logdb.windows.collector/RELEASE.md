@@ -4,6 +4,13 @@
 
 ### What's new since 1.4.7
 
+- **Errors detail console.** New "Errors (N)" sub-tab in the Online Console:
+  Warning/Error/Critical entries only (ignores the Console's source filter so an
+  error can never be hidden), live count in the tab header, and a full-detail
+  pane showing the complete multi-line message — including exception stack
+  traces — with a Copy Detail button. Previously the grid crushed messages to
+  one line and the real error (e.g. the RpcException behind "Retry 3 after
+  4000ms") was only findable by grepping the log files on disk.
 - **Stop logging "<module> host stopped unexpectedly" on every service stop.**
   `ExporterModuleBase` raced `WaitForShutdownAsync(stoppingToken)` against
   `Task.Delay(..., stoppingToken)` — the same token cancels both, and whenever
