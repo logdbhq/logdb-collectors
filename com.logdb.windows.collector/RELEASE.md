@@ -1,5 +1,15 @@
 # Release Checklist
 
+## Version: 1.4.9
+
+### What's new since 1.4.8
+
+- **Server rejection reasons in the Errors console.** Bumps LogDB.Client to
+  5.1.5, which logs `Server rejected record: <reason>` whenever the server
+  declines a send instead of silently collapsing it to a bare Failed. Combined
+  with the ingress fix that returns real failure reasons, the Online Console's
+  Errors tab now shows WHY a send failed, not just that it did.
+
 ## Version: 1.4.8
 
 ### What's new since 1.4.7

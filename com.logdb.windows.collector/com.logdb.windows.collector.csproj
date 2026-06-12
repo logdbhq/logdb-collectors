@@ -14,9 +14,9 @@
          "is the binary actually updated" into a guessing game.
          Baseline for local/dev builds; CI overrides via -p:Version=<tag-version>
          so the released binary's version matches the tag exactly. -->
-    <Version>1.4.8</Version>
-    <AssemblyVersion>1.4.8.0</AssemblyVersion>
-    <FileVersion>1.4.8.0</FileVersion>
+    <Version>1.4.9</Version>
+    <AssemblyVersion>1.4.9.0</AssemblyVersion>
+    <FileVersion>1.4.9.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -43,7 +43,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(HasLocalLoggerProject)' == 'false'">
-    <PackageReference Include="LogDB.Client" Version="5.1.4" />
+    <PackageReference Include="LogDB.Client" Version="5.1.5" />
     <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
   </ItemGroup>
