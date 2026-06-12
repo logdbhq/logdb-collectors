@@ -72,6 +72,16 @@ public abstract class ExporterModuleBase : BackgroundService
                     var completed = await Task.WhenAny(waitTask, Task.Delay(_runProbeDelay, stoppingToken));
                     if (completed == waitTask)
                     {
+                        // The same stoppingToken cancels BOTH tasks on service stop;
+                        // when waitTask happens to win the WhenAny race this looked
+                        // like a module crash and logged "<module> host stopped
+                        // unexpectedly" on every normal shutdown/update. Only treat
+                        // it as a fault when we are NOT being asked to stop.
+                        if (stoppingToken.IsCancellationRequested)
+                        {
+                            break;
+                        }
+
                         throw new InvalidOperationException($"{_moduleName} host stopped unexpectedly.");
                     }
 

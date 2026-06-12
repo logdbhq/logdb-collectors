@@ -1,5 +1,17 @@
 # Release Checklist
 
+## Version: 1.4.8
+
+### What's new since 1.4.7
+
+- **Stop logging "<module> host stopped unexpectedly" on every service stop.**
+  `ExporterModuleBase` raced `WaitForShutdownAsync(stoppingToken)` against
+  `Task.Delay(..., stoppingToken)` — the same token cancels both, and whenever
+  the wait task happened to win the `WhenAny`, a perfectly normal shutdown or
+  update restart was recorded as a per-module failure (visible in the Recent
+  Failures panel, typically all modules "failing" in the same second). A module
+  host that stops while the service is NOT shutting down is still reported.
+
 ## Version: 1.4.7
 
 ### What's new since 1.4.6
