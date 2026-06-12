@@ -43,7 +43,10 @@ public partial class MainWindow : Window
             ApplyWindowPlacementFromSettings();
             CaptureNormalBoundsIfNeeded();
             await _viewModel.InitializeAsync();
-            await _viewModel.AutoCheckUpdatesOnStartupAsync();
+            // Startup update checking is handled solely by App.CheckForUpdatesAsync
+            // (throttled, rate-limit aware). A second check here doubled the GitHub
+            // API usage per launch and raced the popup flow with a non-elevated
+            // auto-apply that couldn't swap the service files anyway.
         }
         catch (Exception ex)
         {

@@ -549,23 +549,6 @@ public sealed class MainWindowViewModel : ObservableObject
         await RefreshControlCenterSnapshotAsync();
     }
 
-    public async Task AutoCheckUpdatesOnStartupAsync()
-    {
-        var autoUpdateEnabled =
-            !string.Equals(Environment.GetEnvironmentVariable("LOGDB_COLLECTOR_UI_AUTO_UPDATE"), "false", StringComparison.OrdinalIgnoreCase);
-
-        if (!autoUpdateEnabled)
-        {
-            return;
-        }
-
-        var result = await _updateService.CheckAndApplyAsync(silentIfNoUpdate: true);
-        if (!result.Success && !result.Message.Contains("No updates", StringComparison.OrdinalIgnoreCase))
-        {
-            SetStatus(result.Message, false);
-        }
-    }
-
     private async Task RefreshDiscoveryAsync()
     {
         await _adminClient.RefreshDiscoveryAsync();

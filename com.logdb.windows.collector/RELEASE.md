@@ -1,5 +1,22 @@
 # Release Checklist
 
+## Version: 1.4.7
+
+### What's new since 1.4.6
+
+- **Stop the update-popup / 403 rate-limit loop.** The UI checked for updates
+  twice per launch (App popup path + a redundant VM auto-apply path) with no
+  memory between launches, burning GitHub's anonymous 60 req/hour API quota;
+  once rate-limited, "Install now" silently failed (the elevated instance
+  swallowed the 403) and the popup returned forever. Now: a single, throttled
+  auto-check (persisted stamp, 6h interval, 2h back-off after a rate-limit), the
+  update package downloads in the user instance *before* the prompt, and the
+  popup path honours `LOGDB_COLLECTOR_UI_UPDATE_TOKEN` (PAT → 5000 req/h).
+- **Fix Destination "Resolved Endpoint" showing "Discovery unreachable" with a
+  healthy instance selected.** The local-API-key guard short-circuited before
+  the ask-the-running-instance path; asking a running service/console for its
+  locked endpoint needs no key, so that path now runs first.
+
 ## Version: 1.4.6
 
 The Windows collector ships as a **bundle** (service host + Avalonia admin UI +

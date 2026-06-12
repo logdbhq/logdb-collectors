@@ -304,11 +304,11 @@ public sealed class LocalCollectorAdminClient
     /// </summary>
     public async Task<EndpointResolution> ResolveGrpcLoggerEndpointAsync(CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(_apiKeySecret))
-        {
-            DebugLog("ResolveGrpcLoggerEndpointAsync: no API key, skipping");
-            return EndpointResolution.None;
-        }
+        // NOTE: the API key is only needed for the direct-discovery fallback below.
+        // Asking a RUNNING instance for its locked endpoint needs no key, so that
+        // path must come first — the old key-guard short-circuited here and made the
+        // Destination page show "Discovery unreachable" even when a healthy
+        // service/console instance was selected and knew its endpoint.
 
         // PREFERRED PATH: if a collector instance is running, ask it directly.
         // This guarantees Test uses the same endpoint production is using —
@@ -346,7 +346,14 @@ public sealed class LocalCollectorAdminClient
         string? lastError = null;
         int? lastStatusCode = null;
 
-        if (!string.IsNullOrWhiteSpace(discoveryUrl))
+        if (string.IsNullOrWhiteSpace(_apiKeySecret))
+        {
+            // Discovery resolves per API key — without one a direct call is
+            // meaningless. Fall through to the service's endpoint cache.
+            DebugLog("ResolveGrpcLoggerEndpointAsync: no API key for direct discovery — trying service cache");
+            lastError = "no API key configured in the UI";
+        }
+        else if (!string.IsNullOrWhiteSpace(discoveryUrl))
         {
             DebugLog($"ResolveGrpcLoggerEndpointAsync: calling {discoveryUrl} (apiKey={Mask(_apiKeySecret)})");
             try

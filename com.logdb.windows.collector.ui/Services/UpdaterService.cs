@@ -32,9 +32,12 @@ public sealed class UpdaterService
 
     public UpdaterService()
     {
-        // GithubSource(repoUrl, accessToken, preReleases). null token = anonymous read
-        // against public release assets, which is what we ship today.
-        _manager = new UpdateManager(new GithubSource(GithubRepoUrl, null, false));
+        // GithubSource(repoUrl, accessToken, preReleases). Anonymous GitHub API
+        // access is limited to 60 requests/hour; operators can set
+        // LOGDB_COLLECTOR_UI_UPDATE_TOKEN (a PAT with public-repo read) to lift
+        // that to 5000/hour. Same env var the VelopackUpdateService honours.
+        var token = Environment.GetEnvironmentVariable("LOGDB_COLLECTOR_UI_UPDATE_TOKEN");
+        _manager = new UpdateManager(new GithubSource(GithubRepoUrl, token, false));
     }
 
     public bool IsInstalledByVelopack => _manager.IsInstalled;
@@ -50,16 +53,27 @@ public sealed class UpdaterService
     /// </summary>
     public async Task<UpdateInfo?> CheckAsync(CancellationToken cancellationToken = default)
     {
-        if (!_manager.IsInstalled) return null;
+        var (info, _) = await CheckWithErrorAsync(cancellationToken).ConfigureAwait(false);
+        return info;
+    }
+
+    /// <summary>
+    /// Like <see cref="CheckAsync"/> but surfaces the failure reason instead of
+    /// swallowing it — callers need to tell "up to date" apart from "GitHub
+    /// rate-limited the check" (the latter must back off, not retry-loop).
+    /// </summary>
+    public async Task<(UpdateInfo? Info, string? Error)> CheckWithErrorAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_manager.IsInstalled) return (null, null);
         try
         {
-            return await _manager.CheckForUpdatesAsync().ConfigureAwait(false);
+            return (await _manager.CheckForUpdatesAsync().ConfigureAwait(false), null);
         }
-        catch
+        catch (Exception ex)
         {
-            // Network down, GitHub rate-limit, no release yet on the feed — none of those
-            // should crash the UI. Caller logs and continues.
-            return null;
+            // Network down, GitHub rate-limit, no release yet on the feed — none of
+            // those should crash the UI. Caller decides whether to back off.
+            return (null, ex.Message);
         }
     }
 
