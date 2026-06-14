@@ -1,5 +1,15 @@
 # Release Checklist
 
+## Version: 1.4.16
+
+### What's new since 1.4.15
+
+- **Silence the "ApiKey was missing on log in batch, set from options" warnings.**
+  Bumps LogDB.Client 5.1.5 → 5.1.6. Published 5.1.5 predated the SDK change that
+  stops warning on the (intended) ApiKey-from-options fallback, so every batch
+  send logged a benign Warning. 5.1.6 drops it. (ApiKey was always set correctly;
+  this was log noise only.)
+
 ## Version: 1.4.15
 
 ### What's new since 1.4.14

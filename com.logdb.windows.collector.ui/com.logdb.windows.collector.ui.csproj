@@ -12,9 +12,9 @@
     <!-- Baseline for local/dev builds. CI overrides via -p:Version=<tag-version> so
          the assembly's version matches the released tag exactly. Don't rely on this
          file being bumped before tagging — the CI override is the source of truth. -->
-    <Version>1.4.15</Version>
-    <AssemblyVersion>1.4.15.0</AssemblyVersion>
-    <FileVersion>1.4.15.0</FileVersion>
+    <Version>1.4.16</Version>
+    <AssemblyVersion>1.4.16.0</AssemblyVersion>
+    <FileVersion>1.4.16.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -37,7 +37,7 @@
     <PackageReference Include="LiveChartsCore.SkiaSharpView.Avalonia" Version="2.0.0-rc5.4" />
     <PackageReference Include="Tmds.DBus.Protocol" Version="0.93.0" />
     <PackageReference Include="Velopack" Version="0.0.1298" />
-    <PackageReference Include="LogDB.Client" Version="5.1.5" />
+    <PackageReference Include="LogDB.Client" Version="5.1.6" />
     <PackageReference Include="OpenTelemetry.Api" Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
   </ItemGroup>
