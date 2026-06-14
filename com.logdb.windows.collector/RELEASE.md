@@ -1,5 +1,19 @@
 # Release Checklist
 
+## Version: 1.4.12
+
+### What's new since 1.4.11
+
+- **Windows Events now honors a start date set on an already-running source.**
+  The EventViewer applied `InitialStartDate` only on first run (no saved state),
+  so changing the date on a collector that already had a watermark was ignored —
+  a future "start tomorrow" never held off and today's events kept shipping.
+  The date is now a floor on the read watermark (`max(watermark, startDate)`): a
+  future date jumps the watermark forward (holds off until then); a past date is
+  a no-op once the watermark has passed it (use ResetState to backfill earlier).
+  This matches the IIS behaviour. Audited Metrics/Heartbeat — real-time polls,
+  no start-date concept by design.
+
 ## Version: 1.4.11
 
 ### What's new since 1.4.10

@@ -171,11 +171,22 @@ public class EventViewerExportService : BackgroundService
 
         var sourceIsFirstRun = sourceLastTimestamp == null;
 
-        if (sourceIsFirstRun && InitialStartDate.HasValue)
+        // Treat the configured start date as a FLOOR on the read watermark, even
+        // when saved state already exists. Previously it applied only on first run,
+        // so an already-running source ignored a newly-set date — in particular a
+        // FUTURE date ("start tomorrow") never held off and today's events kept
+        // shipping. max() semantics: a future date jumps the watermark forward
+        // (holds off until then); a past date is a no-op once the watermark has
+        // advanced beyond it. Use ResetState/--reset to genuinely backfill earlier.
+        if (InitialStartDate.HasValue)
         {
-            sourceLastTimestamp = InitialStartDate.Value;
+            if (sourceLastTimestamp == null || InitialStartDate.Value > sourceLastTimestamp.Value)
+            {
+                sourceLastTimestamp = InitialStartDate.Value;
+                _logger.LogInformation(
+                    "Applying InitialStartDate {Date} as the read floor for {LogSource}", InitialStartDate.Value, logSource);
+            }
             sourceIsFirstRun = false;
-            _logger.LogInformation("Using InitialStartDate: {Date} for {LogSource}", InitialStartDate.Value, logSource);
         }
 
         _logger.LogInformation(
