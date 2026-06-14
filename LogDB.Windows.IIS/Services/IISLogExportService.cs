@@ -357,15 +357,14 @@ public class IISLogExportService : BackgroundService
         {
             var siteFolder = Path.GetFileName(Path.GetDirectoryName(logFile)) ?? "?";
             Console.WriteLine($"  Site {siteFolder} / {fileName}: read {totalRead} | sent {totalSent}");
-            // Only surface per-file scans that actually shipped rows. A reset or a
-            // future start date makes IIS walk every historical file reading-but-
-            // sending-nothing; at Information that floods the live console. The
-            // "read N, sent 0" case drops to Debug so it stays in the file sink only.
+            // Keep every per-file scan visible, but make the message state plainly
+            // how many rows went to the server, so a reset / future-start-date scan
+            // (reads a lot, sends nothing) can never be mistaken for live delivery.
             if (totalSent > 0)
-                _logger.LogInformation("Site {Site} file {File}: read {Read}, sent {Sent}",
+                _logger.LogInformation("Site {Site} file {File}: read {Read}, {Sent} sent to server",
                     siteFolder, fileName, totalRead, totalSent);
             else
-                _logger.LogDebug("Site {Site} file {File}: read {Read}, sent 0 (all filtered)",
+                _logger.LogInformation("Site {Site} file {File}: read {Read}, 0 sent to server (filtered — not shipped)",
                     siteFolder, fileName, totalRead);
         }
 

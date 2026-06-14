@@ -1,15 +1,23 @@
 # Release Checklist
 
+## Version: 1.4.14
+
+### What's new since 1.4.13
+
+- **IIS per-file lines now state "sent to server" explicitly.** Rather than
+  hiding scans that shipped nothing, each per-file line says how many rows
+  actually went to the server: `read N, M sent to server` for a real send, and
+  `read N, 0 sent to server (filtered — not shipped)` for a reset / future-
+  start-date scan. So a scan stays visible but can't be mistaken for delivery.
+  ("New file detected" stays at Debug — pure scan mechanics.)
+
 ## Version: 1.4.13
 
 ### What's new since 1.4.12
 
-- **Quiet the IIS console flood on reset / future start date.** A reset (or a
-  future start date) makes IIS walk every historical log file reading-but-
-  sending-nothing; the per-file "Site … read N, sent 0" and "New file detected"
-  lines were logged at Information and flooded the Online Console. Both now log
-  at Debug when nothing shipped — the file sink still has them, the live console
-  only shows files that actually sent rows.
+- **Quiet "New file detected" console flood on reset.** A reset makes IIS walk
+  every historical log file, and the per-file "New file detected" line was at
+  Information and flooded the Online Console; it now logs at Debug.
 
 ## Version: 1.4.12
 
