@@ -1,5 +1,16 @@
 # Release Checklist
 
+## Version: 1.4.13
+
+### What's new since 1.4.12
+
+- **Quiet the IIS console flood on reset / future start date.** A reset (or a
+  future start date) makes IIS walk every historical log file reading-but-
+  sending-nothing; the per-file "Site … read N, sent 0" and "New file detected"
+  lines were logged at Information and flooded the Online Console. Both now log
+  at Debug when nothing shipped — the file sink still has them, the live console
+  only shows files that actually sent rows.
+
 ## Version: 1.4.12
 
 ### What's new since 1.4.11
