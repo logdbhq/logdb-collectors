@@ -534,7 +534,16 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public DateTime? EventLogInitialStartDate
     {
         get => _eventLogInitialStartDate;
-        set => SetProperty(ref _eventLogInitialStartDate, value);
+        set
+        {
+            if (!SetProperty(ref _eventLogInitialStartDate, value)) return;
+            // Picking a date means "start from this date" — mutually exclusive
+            // with "resume from last". Without flipping the toggle off, the save
+            // path (ResumeFromLast ? null : InitialStartDate) silently discards
+            // the date and the module keeps sending from where it left off.
+            if (value.HasValue)
+                EventLogResumeFromLast = false;
+        }
     }
 
     public bool EventLogResumeFromLast
@@ -665,7 +674,16 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public DateTime? IisInitialStartDate
     {
         get => _iisInitialStartDate;
-        set => SetProperty(ref _iisInitialStartDate, value);
+        set
+        {
+            if (!SetProperty(ref _iisInitialStartDate, value)) return;
+            // Picking a date means "start from this date" — mutually exclusive
+            // with "resume from last". Without flipping the toggle off, the save
+            // path (IisResumeFromLast ? null : IisInitialStartDate) silently
+            // discards the date and IIS keeps shipping from where it left off.
+            if (value.HasValue)
+                IisResumeFromLast = false;
+        }
     }
 
     public bool IisResumeFromLast

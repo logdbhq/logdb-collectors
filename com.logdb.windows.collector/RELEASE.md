@@ -1,5 +1,16 @@
 # Release Checklist
 
+## Version: 1.4.11
+
+### What's new since 1.4.10
+
+- **Fix IIS/EventLog "start date" being silently discarded.** Picking a date in
+  the Data Sources calendar did not turn off the "resume from last position"
+  toggle, and the save path (`ResumeFromLast ? null : InitialStartDate`) then
+  nulled the date — so the module kept sending from where it left off and the
+  chosen start date was ignored. Selecting a date now clears "resume from last"
+  for both IIS and Windows Events, so the date actually persists to config.
+
 ## Version: 1.4.10
 
 ### What's new since 1.4.9
