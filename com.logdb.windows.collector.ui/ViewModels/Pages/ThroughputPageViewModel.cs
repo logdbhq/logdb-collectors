@@ -55,6 +55,7 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
         Collections = new ObservableCollection<string> { AllOption };
 
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
+        ClearStatsCommand = new AsyncRelayCommand(ClearStatsAsync);
 
         var axisPaint = new SolidColorPaint(new SKColor(0x90, 0x90, 0x90));
         _xAxes = new[] { new Axis { LabelsPaint = axisPaint, TextSize = 11, LabelsRotation = 0, Labeler = FormatTick } };
@@ -165,6 +166,17 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
     }
 
     public AsyncRelayCommand RefreshCommand { get; }
+    public AsyncRelayCommand ClearStatsCommand { get; }
+
+    private async Task ClearStatsAsync()
+    {
+        var (success, message) = await _adminClient.ResetSendActivityAsync();
+        _statusCallback(success ? "Send statistics cleared." : message, success);
+        if (success)
+        {
+            await RefreshAsync();
+        }
+    }
 
     private void Reload()
     {

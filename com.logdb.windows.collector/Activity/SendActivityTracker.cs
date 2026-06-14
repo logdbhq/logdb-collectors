@@ -149,6 +149,32 @@ public sealed class SendActivityTracker : ISendActivitySink
         return result;
     }
 
+    /// <summary>
+    /// Drops every recorded bucket and clears the persisted store — zeroes the
+    /// Modules grid "Sent"/"Failed" totals and the Throughput history. Invoked
+    /// from the admin UI; sending itself is unaffected and starts re-counting
+    /// from zero on the next batch.
+    /// </summary>
+    public void Reset()
+    {
+        lock (_lock)
+        {
+            _buckets.Clear();
+            _dirty = false;
+            _lastFlushUtc = DateTime.UtcNow;
+        }
+
+        try
+        {
+            if (File.Exists(_path)) File.Delete(_path);
+        }
+        catch
+        {
+            // If the file can't be deleted, an empty in-memory store will still
+            // overwrite it on the next flush. Don't let cleanup throw.
+        }
+    }
+
     public void Flush()
     {
         List<PersistRow> rows;

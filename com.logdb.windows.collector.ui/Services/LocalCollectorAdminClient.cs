@@ -159,6 +159,18 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.GetSendActivityAsync(SelectedTarget.Value, query, cancellationToken);
     }
 
+    public async Task<(bool Success, string Message)> ResetSendActivityAsync(CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return (false, "No collector instance selected.");
+        }
+
+        var response = await _controlClient.SendAsync(
+            SelectedTarget.Value, ControlCommands.ResetSendActivity, cancellationToken: cancellationToken);
+        return (response.Success, response.Message ?? (response.Success ? "Send statistics cleared." : "Reset failed."));
+    }
+
     public async Task<CollectorConfigDto?> GetEffectiveRedactedConfigAsync(CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)

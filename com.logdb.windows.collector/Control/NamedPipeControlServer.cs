@@ -299,6 +299,21 @@ public sealed class NamedPipeControlServer : BackgroundService
                     };
                 }
 
+            case ControlCommands.ResetSendActivity:
+                try
+                {
+                    _sendActivity.Reset();
+                    return new ControlResponseDto { Success = true, Message = "Send statistics cleared." };
+                }
+                catch (Exception ex)
+                {
+                    return new ControlResponseDto
+                    {
+                        Success = false,
+                        Message = $"Reset send-activity failed: {ex.GetType().Name}: {ex.Message}"
+                    };
+                }
+
             case ControlCommands.GetResolvedEndpoint:
                 try
                 {

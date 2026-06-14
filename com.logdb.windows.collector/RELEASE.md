@@ -1,5 +1,16 @@
 # Release Checklist
 
+## Version: 1.4.10
+
+### What's new since 1.4.9
+
+- **"Clear Stats" button** on the Throughput tab. Zeroes the Sent/Failed totals
+  and the Throughput history via a new `reset-send-activity` control command
+  (`SendActivityTracker.Reset()` clears the in-memory buckets and deletes
+  `send-activity.json`). Resets both the Throughput charts and the Modules grid
+  Sent/Failed columns (shared tracker); sending is unaffected and counts restart
+  from zero on the next batch.
+
 ## Version: 1.4.9
 
 ### What's new since 1.4.8

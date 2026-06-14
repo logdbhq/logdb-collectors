@@ -42,6 +42,7 @@ public static class ControlCommands
     public const string PreviewMetrics = "preview-metrics";
     public const string GetResolvedEndpoint = "get-resolved-endpoint";
     public const string GetSendActivity = "send-activity";
+    public const string ResetSendActivity = "reset-send-activity";
 
     public const string ApplyFirewallRules = ApplyFirewall;
 }

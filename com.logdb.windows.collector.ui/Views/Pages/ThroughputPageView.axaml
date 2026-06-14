@@ -50,6 +50,9 @@
 
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Bottom" Margin="0,0,0,8">
                     <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+                    <Button Content="Clear Stats"
+                            Command="{Binding ClearStatsCommand}"
+                            ToolTip.Tip="Zero the Sent/Failed totals and Throughput history on the collector. Does not affect sending — counts restart from zero." />
                     <CheckBox Content="Auto (10s)" IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
                               VerticalAlignment="Center"
                               ToolTip.Tip="Reload the chart every 10 seconds." />
