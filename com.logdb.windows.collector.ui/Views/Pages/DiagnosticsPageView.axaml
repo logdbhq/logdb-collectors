@@ -73,7 +73,27 @@
                     <dgrid:DataGridTextColumn Header="Event Time" Binding="{Binding EventTimeLocal}" Width="170" />
                     <dgrid:DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="90" />
                     <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="90" />
-                    <dgrid:DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="*" />
+                    <dgrid:DataGridTemplateColumn Header="Message" Width="*">
+                        <dgrid:DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <Border IsVisible="{Binding HasSendTag}"
+                                            Background="{Binding SendTagBrush}"
+                                            CornerRadius="3"
+                                            Padding="5,1"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding SendTag}"
+                                                   FontSize="10"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="White" />
+                                    </Border>
+                                    <TextBlock Text="{Binding Message}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </dgrid:DataGridTemplateColumn.CellTemplate>
+                    </dgrid:DataGridTemplateColumn>
                     <dgrid:DataGridTemplateColumn Header="" Width="40" CanUserResize="False">
                         <dgrid:DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>

@@ -15,6 +15,9 @@ public sealed class OnlineDiagnosticRowViewModel
     private static readonly IBrush MetricsBrush = new SolidColorBrush(Color.Parse("#FFB74D"));
     private static readonly IBrush HeartbeatBrush = new SolidColorBrush(Color.Parse("#BA68C8"));
 
+    private static readonly IBrush SentTagBrush = new SolidColorBrush(Color.Parse("#2E7D32"));
+    private static readonly IBrush NotSentTagBrush = new SolidColorBrush(Color.Parse("#616161"));
+
     public string TimeLocal { get; set; } = string.Empty;
     public string EventTimeLocal { get; set; } = string.Empty;
     public string Level { get; set; } = string.Empty;
@@ -37,6 +40,30 @@ public sealed class OnlineDiagnosticRowViewModel
             return idx < 0 ? Message : Message[..idx] + "  …";
         }
     }
+
+    /// <summary>
+    /// "SENT" / "NOT SENT" / "" — derived from a "&lt;N&gt; sent to server" phrase
+    /// in the message (currently emitted by the IIS exporter). Drives a coloured
+    /// chip in the console so a scan that shipped nothing can't be mistaken for a
+    /// real send. "" = ordinary line with no chip.
+    /// </summary>
+    public string SendTag
+    {
+        get
+        {
+            const string needle = " sent to server";
+            var idx = Message.IndexOf(needle, StringComparison.Ordinal);
+            if (idx <= 0) return string.Empty;
+            var start = idx;
+            while (start > 0 && char.IsDigit(Message[start - 1])) start--;
+            if (start == idx) return string.Empty; // no count directly before the phrase
+            return Message.Substring(start, idx - start) == "0" ? "NOT SENT" : "SENT";
+        }
+    }
+
+    public bool HasSendTag => SendTag.Length > 0;
+
+    public IBrush SendTagBrush => SendTag == "SENT" ? SentTagBrush : NotSentTagBrush;
 
     /// <summary>True for levels that belong on the Errors tab.</summary>
     public bool IsErrorLike =>

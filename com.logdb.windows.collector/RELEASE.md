@@ -1,5 +1,16 @@
 # Release Checklist
 
+## Version: 1.4.15
+
+### What's new since 1.4.14
+
+- **SENT / NOT SENT colour chip in the Online Console.** Console rows that carry
+  a "&lt;N&gt; sent to server" result (IIS per-file scans) now show a coloured chip
+  in the Message column: green **SENT** when rows reached the server, grey
+  **NOT SENT** when a scan shipped nothing (reset / future start date). Lines
+  without a send result show no chip. Makes "is this actually going to the
+  server?" answerable at a glance instead of by reading each message.
+
 ## Version: 1.4.14
 
 ### What's new since 1.4.13
