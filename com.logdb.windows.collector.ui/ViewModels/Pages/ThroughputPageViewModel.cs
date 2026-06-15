@@ -242,13 +242,21 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
         }
 
         // Keep the time-axis label format in step with the chosen granularity.
+        // UnitWidth tells the column series how wide one bucket is on a continuous
+        // time axis; without it columns default to a 1-tick width and render as
+        // hairline spikes. MinStep stops labels bunching up at fine zoom.
+        var unitTicks = (Granularity == SendActivityGranularity.Day
+            ? TimeSpan.FromDays(1)
+            : TimeSpan.FromHours(1)).Ticks;
         XAxes = new[]
         {
             new Axis
             {
                 LabelsPaint = new SolidColorPaint(new SKColor(0x90, 0x90, 0x90)),
                 TextSize = 11,
-                Labeler = FormatTick
+                Labeler = FormatTick,
+                UnitWidth = unitTicks,
+                MinStep = unitTicks
             }
         };
 

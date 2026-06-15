@@ -1,5 +1,15 @@
 # Release Checklist
 
+## Version: 1.4.18
+
+### What's new since 1.4.17
+
+- **Fix hairline Throughput bars.** The stacked columns introduced in 1.4.17
+  rendered as thin spikes: on a continuous time axis LiveCharts defaults a
+  column's width to a single tick. The time axis now sets `UnitWidth` (and
+  `MinStep`) to the selected bucket size — 1 hour or 1 day — so each bar fills
+  its slot.
+
 ## Version: 1.4.17
 
 ### What's new since 1.4.16
