@@ -1,5 +1,23 @@
 # Release Checklist
 
+## Version: 1.4.17
+
+### What's new since 1.4.16
+
+- **Throughput chart is now stacked bars with adjustable, persisted colours.**
+  The Throughput tab renders stacked columns instead of lines — each time bucket
+  is one bar split into per-group sent/failed segments, so a bucket's total
+  throughput and its composition read at a glance. A custom legend sits below the
+  chart: click a colour swatch to recolour that series from a picker. Picks are
+  saved to `user-settings.json` (`throughputColors`) and restored on restart;
+  series with no override keep the existing stable palette.
+
+- **Online Console rows are clickable, with a full-record detail pane.** Selecting
+  a Console row shows its complete, untruncated content below the grid — Time,
+  Event Time, Level, Module, SENT/NOT SENT status, and the full multi-line message
+  (which the grid otherwise trims). A "Copy Detail" button copies the block, and
+  the selection survives the 3 s auto-refresh.
+
 ## Version: 1.4.16
 
 ### What's new since 1.4.15

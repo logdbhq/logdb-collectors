@@ -84,6 +84,27 @@ public static class WindowPlacementStore
         }
     }
 
+    /// <summary>Per-series chart colours for the Throughput tab, keyed by series name
+    /// (e.g. "EventLog · sent"). Returns an empty map when nothing has been saved.</summary>
+    public static Dictionary<string, string> LoadThroughputColors()
+    {
+        try
+        {
+            return LoadSettings()?.ThroughputColors ?? new Dictionary<string, string>();
+        }
+        catch
+        {
+            return new Dictionary<string, string>();
+        }
+    }
+
+    public static void SaveThroughputColors(Dictionary<string, string> colors)
+    {
+        var settings = LoadSettings() ?? new UserSettingsDto();
+        settings.ThroughputColors = colors;
+        SaveSettings(settings);
+    }
+
     public static void SaveMainWindowPlacement(MainWindowPlacementDto placement)
     {
         var settings = LoadSettings() ?? new UserSettingsDto();
@@ -145,6 +166,7 @@ public static class WindowPlacementStore
         public DataSourcesDraftDto? DataSourcesDraft { get; set; }
         public DiagnosticsOnlineColumnsDto? DiagnosticsOnlineColumns { get; set; }
         public bool? IsDarkTheme { get; set; }
+        public Dictionary<string, string>? ThroughputColors { get; set; }
     }
 
     public sealed class MainWindowPlacementDto

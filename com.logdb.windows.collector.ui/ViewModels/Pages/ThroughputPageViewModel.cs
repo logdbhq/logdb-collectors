@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using Avalonia.Media;
 using Avalonia.Threading;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.ui.Services;
@@ -42,6 +44,10 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
     private bool _autoRefresh;
     private CancellationTokenSource? _autoRefreshCts;
 
+    // User colour overrides keyed by series name (e.g. "EventLog · sent"), loaded
+    // from and saved back to user-settings.json so picks survive a restart.
+    private readonly Dictionary<string, SKColor> _colorOverrides;
+
     private static readonly TimeSpan AutoRefreshInterval = TimeSpan.FromSeconds(10);
 
     public ThroughputPageViewModel(LocalCollectorAdminClient adminClient, Action<string, bool> statusCallback)
@@ -53,6 +59,9 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
         Modules = new ObservableCollection<string> { AllOption };
         Hosts = new ObservableCollection<string> { AllOption };
         Collections = new ObservableCollection<string> { AllOption };
+        LegendItems = new ObservableCollection<ThroughputSeriesLegendItem>();
+
+        _colorOverrides = LoadColorOverrides();
 
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
         ClearStatsCommand = new AsyncRelayCommand(ClearStatsAsync);
@@ -140,6 +149,10 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
         get => _series;
         private set => SetProperty(ref _series, value);
     }
+
+    /// <summary>Custom legend rows with clickable colour swatches (the built-in
+    /// LiveCharts legend can't be recoloured by the user).</summary>
+    public ObservableCollection<ThroughputSeriesLegendItem> LegendItems { get; }
 
     public Axis[] XAxes
     {
@@ -246,41 +259,54 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
         TotalSent = data.TotalSent;
         TotalFailed = data.TotalFailed;
 
+        // Stacked columns: every (group, sent/failed) pair is its own segment, all in
+        // the default stack group, so a bucket's bar = total throughput for that time,
+        // split into individually-coloured segments that each map to a legend swatch.
         var series = new List<ISeries>();
+        var legend = new List<ThroughputSeriesLegendItem>();
+        var multi = data.Series.Count > 1;
+
         foreach (var s in data.Series)
         {
             if (ShowSent)
             {
-                series.Add(new LineSeries<DateTimePoint>
+                var name = multi ? $"{s.Name} · sent" : "sent";
+                var color = ResolveColor(name, ColorFor(s.Name));
+                series.Add(new StackedColumnSeries<DateTimePoint>
                 {
-                    Name = data.Series.Count > 1 ? $"{s.Name} · sent" : "sent",
+                    Name = name,
                     Values = s.Buckets.Select(b => new DateTimePoint(b.StartUtc.ToLocalTime(), b.Sent)).ToArray(),
-                    GeometrySize = 0,
-                    LineSmoothness = 0.2,
-                    // Deterministic per-group colour so it stays stable across
-                    // auto-refreshes (otherwise LiveCharts reassigns palette colours
-                    // by series index on every rebuild).
-                    Stroke = new SolidColorPaint(ColorFor(s.Name), 2),
-                    Fill = null
+                    Fill = new SolidColorPaint(color),
+                    Stroke = null,
+                    Padding = 1
                 });
+                legend.Add(BuildLegendItem(name, color));
             }
             if (ShowFailed)
             {
-                series.Add(new LineSeries<DateTimePoint>
+                var name = multi ? $"{s.Name} · failed" : "failed";
+                var color = ResolveColor(name, FailedColorFor(s.Name));
+                series.Add(new StackedColumnSeries<DateTimePoint>
                 {
-                    Name = data.Series.Count > 1 ? $"{s.Name} · failed" : "failed",
+                    Name = name,
                     Values = s.Buckets.Select(b => new DateTimePoint(b.StartUtc.ToLocalTime(), b.Failed)).ToArray(),
-                    GeometrySize = 0,
-                    LineSmoothness = 0.2,
-                    // Failed is always red — and when grouped, tinted per group so
-                    // multiple groups' failure lines remain distinguishable.
-                    Stroke = new SolidColorPaint(FailedColorFor(s.Name), 2),
-                    Fill = null
+                    Fill = new SolidColorPaint(color),
+                    Stroke = null,
+                    Padding = 1
                 });
+                legend.Add(BuildLegendItem(name, color));
             }
         }
 
         Series = series.ToArray();
+
+        // Only rebuild the legend when the set of series changed — otherwise an
+        // auto-refresh would tear down items and close any open colour picker.
+        if (!LegendItems.Select(i => i.Name).SequenceEqual(legend.Select(i => i.Name)))
+        {
+            LegendItems.Clear();
+            foreach (var item in legend) LegendItems.Add(item);
+        }
 
         if (TotalSent == 0 && TotalFailed == 0)
             _statusCallback("Throughput: no send activity recorded yet for this range.", true);
@@ -344,6 +370,82 @@ public sealed class ThroughputPageViewModel : PageViewModelBase
     private static SKColor ColorFor(string key) => SentPalette[StableIndex(key, SentPalette.Length)];
 
     private static SKColor FailedColorFor(string key) => FailedPalette[StableIndex(key, FailedPalette.Length)];
+
+    // ── Colour overrides (adjustable + persisted) ─────────────────────────
+
+    private SKColor ResolveColor(string seriesName, SKColor fallback) =>
+        _colorOverrides.TryGetValue(seriesName, out var c) ? c : fallback;
+
+    private ThroughputSeriesLegendItem BuildLegendItem(string name, SKColor color)
+    {
+        var item = new ThroughputSeriesLegendItem(name, ToAvalonia(color));
+        item.ColorChanged += OnLegendColorChanged;
+        return item;
+    }
+
+    // The user picked a new colour from a legend swatch: recolour the live series
+    // segment in place (no full rebuild → flyout stays open), remember and persist it.
+    private void OnLegendColorChanged(ThroughputSeriesLegendItem item)
+    {
+        var sk = ToSk(item.Color);
+        _colorOverrides[item.Name] = sk;
+
+        foreach (var s in _series)
+        {
+            if (s.Name == item.Name && s is StackedColumnSeries<DateTimePoint> col)
+            {
+                col.Fill = new SolidColorPaint(sk);
+                break;
+            }
+        }
+
+        PersistColorOverrides();
+    }
+
+    private Dictionary<string, SKColor> LoadColorOverrides()
+    {
+        var result = new Dictionary<string, SKColor>();
+        foreach (var (name, hex) in WindowPlacementStore.LoadThroughputColors())
+        {
+            if (TryParseHex(hex, out var c)) result[name] = c;
+        }
+        return result;
+    }
+
+    private void PersistColorOverrides()
+    {
+        try
+        {
+            WindowPlacementStore.SaveThroughputColors(
+                _colorOverrides.ToDictionary(kv => kv.Key, kv => ToHex(kv.Value)));
+        }
+        catch
+        {
+            // Colour persistence is best-effort; a failed save must not break the chart.
+        }
+    }
+
+    private static SKColor ToSk(Color c) => new(c.R, c.G, c.B, c.A);
+
+    private static Color ToAvalonia(SKColor c) => Color.FromArgb(c.Alpha, c.Red, c.Green, c.Blue);
+
+    private static string ToHex(SKColor c) => $"#{c.Red:X2}{c.Green:X2}{c.Blue:X2}";
+
+    private static bool TryParseHex(string? hex, out SKColor color)
+    {
+        color = default;
+        if (string.IsNullOrWhiteSpace(hex)) return false;
+        var s = hex.TrimStart('#');
+        if (s.Length != 6) return false;
+        if (!byte.TryParse(s.AsSpan(0, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var r) ||
+            !byte.TryParse(s.AsSpan(2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var g) ||
+            !byte.TryParse(s.AsSpan(4, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b))
+        {
+            return false;
+        }
+        color = new SKColor(r, g, b);
+        return true;
+    }
 
     private static int StableIndex(string key, int mod)
     {

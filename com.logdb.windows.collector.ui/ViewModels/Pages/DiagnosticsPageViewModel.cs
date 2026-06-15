@@ -74,6 +74,25 @@ public sealed class OnlineDiagnosticRowViewModel
     public string ToLogLine() =>
         $"[{TimeLocal}] [{Level}] {Module}: {Message}";
 
+    /// <summary>
+    /// Full, untruncated detail for the clicked Console row: every field plus the
+    /// complete (possibly multi-line) message. Shown in the Console detail pane.
+    /// </summary>
+    public string ToDetailText()
+    {
+        var sb = new StringBuilder();
+        sb.Append("Time:       ").AppendLine(TimeLocal);
+        if (!string.IsNullOrEmpty(EventTimeLocal))
+            sb.Append("Event Time: ").AppendLine(EventTimeLocal);
+        sb.Append("Level:      ").AppendLine(Level);
+        sb.Append("Module:     ").AppendLine(Module);
+        if (HasSendTag)
+            sb.Append("Status:     ").AppendLine(SendTag);
+        sb.AppendLine();
+        sb.Append(Message);
+        return sb.ToString();
+    }
+
     public static (string Module, IBrush? Brush) ResolveModule(string category)
     {
         if (category.Contains(".eventviewer.", StringComparison.OrdinalIgnoreCase))
@@ -168,6 +187,14 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         CopySupportBundleCommand = new AsyncRelayCommand(CopySupportBundleAsync);
         RefreshOnlineConsoleCommand = new AsyncRelayCommand(RefreshOnlineConsoleAsync);
         ClearOnlineConsoleCommand = new RelayCommand(ClearOnlineConsole);
+        CopyOnlineDetailCommand = new AsyncRelayCommand(async () =>
+        {
+            if (!string.IsNullOrEmpty(SelectedOnlineDetail))
+            {
+                await _copyToClipboardAsync(SelectedOnlineDetail);
+                _statusCallback("Record detail copied to clipboard.", true);
+            }
+        });
 
         ErrorRows = new ObservableCollection<OnlineDiagnosticRowViewModel>();
         CopyErrorDetailCommand = new AsyncRelayCommand(async () =>
@@ -239,6 +266,26 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     }
 
     public ObservableCollection<OnlineDiagnosticRowViewModel> OnlineConsoleRows { get; }
+
+    public AsyncRelayCommand CopyOnlineDetailCommand { get; }
+
+    private OnlineDiagnosticRowViewModel? _selectedOnlineRow;
+
+    /// <summary>The Console row the user clicked; drives the detail pane.</summary>
+    public OnlineDiagnosticRowViewModel? SelectedOnlineRow
+    {
+        get => _selectedOnlineRow;
+        set
+        {
+            if (SetProperty(ref _selectedOnlineRow, value))
+            {
+                NotifyPropertyChanged(nameof(SelectedOnlineDetail));
+            }
+        }
+    }
+
+    /// <summary>Full untruncated detail of the selected Console row.</summary>
+    public string SelectedOnlineDetail => _selectedOnlineRow?.ToDetailText() ?? string.Empty;
 
     public bool OnlineAutoRefresh
     {
@@ -390,11 +437,23 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
             ? _allOnlineRows
             : _allOnlineRows.Where(r => MatchesSelectedFilters(r.Module, selectedNames));
 
+        // A refresh rebuilds the row instances, so remember the selection by value
+        // and restore it afterwards — otherwise the detail pane clears every 3s.
+        var selectedKey = _selectedOnlineRow is { } sel ? sel.TimeLocal + "" + sel.Message : null;
+
         OnlineConsoleRows.Clear();
+        OnlineDiagnosticRowViewModel? reselect = null;
         foreach (var row in visible)
         {
             OnlineConsoleRows.Add(row);
+            if (selectedKey != null && reselect == null
+                && row.TimeLocal + "" + row.Message == selectedKey)
+            {
+                reselect = row;
+            }
         }
+
+        SelectedOnlineRow = reselect;
 
         UpdateErrorRows();
 
@@ -424,6 +483,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
 
         _allOnlineRows.Clear();
         OnlineConsoleRows.Clear();
+        SelectedOnlineRow = null;
         OnlineStatusText = "Live tail cleared.";
     }
 

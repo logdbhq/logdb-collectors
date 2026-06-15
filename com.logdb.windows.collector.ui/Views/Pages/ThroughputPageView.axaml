@@ -76,14 +76,45 @@
             </Border>
         </StackPanel>
 
-        <!-- Chart -->
+        <!-- Chart + custom, recolourable legend -->
         <Border Grid.Row="2" Classes="panel">
-            <lvc:CartesianChart Series="{Binding Series}"
-                                XAxes="{Binding XAxes}"
-                                YAxes="{Binding YAxes}"
-                                LegendPosition="Bottom"
-                                ZoomMode="X"
-                                MinHeight="320" />
+            <DockPanel LastChildFill="True">
+                <!-- Legend: click a swatch to recolour that series (saved to config). -->
+                <ItemsControl DockPanel.Dock="Bottom"
+                              Margin="0,8,0,0"
+                              ItemsSource="{Binding LegendItems}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="5" Margin="0,0,14,4"
+                                        VerticalAlignment="Center">
+                                <Button Width="16" Height="16" Padding="0"
+                                        Background="{Binding SwatchBrush}"
+                                        BorderThickness="1"
+                                        ToolTip.Tip="Click to change this series' colour">
+                                    <Button.Flyout>
+                                        <Flyout>
+                                            <ColorView Color="{Binding Color, Mode=TwoWay}" />
+                                        </Flyout>
+                                    </Button.Flyout>
+                                </Button>
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <lvc:CartesianChart Series="{Binding Series}"
+                                    XAxes="{Binding XAxes}"
+                                    YAxes="{Binding YAxes}"
+                                    LegendPosition="Hidden"
+                                    ZoomMode="X"
+                                    MinHeight="320" />
+            </DockPanel>
         </Border>
     </Grid>
 </UserControl>
