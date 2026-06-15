@@ -13,6 +13,7 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ISendActivitySink _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
 
     public HeartbeatCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -21,12 +22,14 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         ISendActivitySink sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<HeartbeatCollectorModule> logger)
         : base("Heartbeat", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
         _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
     }
 
     protected override bool IsEnabled(CollectorConfigDto config)
@@ -87,7 +90,7 @@ public sealed class HeartbeatCollectorModule : ExporterModuleBase
                     _loggerFactory,
                     defaultApplication: defaultApplication,
                     defaultEnvironment: defaultEnvironment)),
-                _sendActivity, "Heartbeat", Environment.MachineName));
+                _sendActivity, "Heartbeat", Environment.MachineName, _recentRecords));
 
         builder.Services.AddHostedService<HeartbeatBeatExportService>();
 

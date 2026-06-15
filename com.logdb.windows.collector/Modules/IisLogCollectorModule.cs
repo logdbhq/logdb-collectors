@@ -15,6 +15,7 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<IisLogCollectorModule> _logger;
     private readonly ISendActivitySink _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
 
     public IisLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -23,12 +24,14 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         ISendActivitySink sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<IisLogCollectorModule> logger)
         : base("IIS", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
         _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
         _logger = logger;
     }
 
@@ -84,7 +87,7 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
         builder.Services.AddSingleton<ILogDBClient>(_ =>
             new RecordingLogDbClient(
                 new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)),
-                _sendActivity, "IIS", Environment.MachineName));
+                _sendActivity, "IIS", Environment.MachineName, _recentRecords));
 
         builder.Services.AddSingleton<IISLogReader>();
         builder.Services.AddSingleton<AzureAppServiceJsonReader>();

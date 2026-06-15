@@ -17,6 +17,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     private readonly ILogger<EventLogCollectorModule> _logger;
     private readonly CollectorRuntimeContext _runtimeContext;
     private readonly ISendActivitySink _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
 
     public EventLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -26,6 +27,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         ILoggerFactory loggerFactory,
         CollectorRuntimeContext runtimeContext,
         ISendActivitySink sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<EventLogCollectorModule> logger)
         : base("EventLog", configMonitor, statusRegistry, endpointStore, logger)
     {
@@ -33,6 +35,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         _loggerFactory = loggerFactory;
         _runtimeContext = runtimeContext;
         _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
         _logger = logger;
     }
 
@@ -91,7 +94,7 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         builder.Services.AddSingleton<ILogDBClient>(_ =>
             new RecordingLogDbClient(
                 new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)),
-                _sendActivity, "EventLog", Environment.MachineName));
+                _sendActivity, "EventLog", Environment.MachineName, _recentRecords));
 
         builder.Services.AddSingleton<EventLogReader>();
         builder.Services.AddSingleton<EventLogFilter>();

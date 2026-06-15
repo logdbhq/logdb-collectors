@@ -159,6 +159,18 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.GetSendActivityAsync(SelectedTarget.Value, query, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<RecentRecordDto>> GetRecentRecordsAsync(
+        int maxEntries = 200,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return Array.Empty<RecentRecordDto>();
+        }
+
+        return await _controlClient.GetRecentRecordsAsync(SelectedTarget.Value, maxEntries, cancellationToken);
+    }
+
     public async Task<(bool Success, string Message)> ResetSendActivityAsync(CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)

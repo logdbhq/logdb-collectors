@@ -1,5 +1,19 @@
 # Release Checklist
 
+## Version: 1.4.19
+
+### What's new since 1.4.18
+
+- **New "Recent records" tab — inspect the actual JSON sent to the server.** The
+  collector now keeps a small in-memory ring buffer (last 200) of the record
+  documents it ships, captured uniformly at the send boundary
+  (`RecordingLogDbClient`) across every module. A new Diagnostics sub-tab lists
+  them newest-first (time, module, collection, host, SENT/FAILED); selecting a row
+  shows the exact JSON document that was POSTed, with a Copy JSON button. Exposed
+  over the control channel via a new `recent-records` command. The buffer is
+  bounded and **not persisted** — it clears on collector restart, and capture is
+  best-effort so it can never affect delivery.
+
 ## Version: 1.4.18
 
 ### What's new since 1.4.17

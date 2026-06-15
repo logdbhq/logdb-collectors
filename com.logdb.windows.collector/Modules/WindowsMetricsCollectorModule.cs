@@ -14,6 +14,7 @@ public sealed class WindowsMetricsCollectorModule : ExporterModuleBase
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ISendActivitySink _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
 
     public WindowsMetricsCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -22,12 +23,14 @@ public sealed class WindowsMetricsCollectorModule : ExporterModuleBase
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
         ISendActivitySink sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<WindowsMetricsCollectorModule> logger)
         : base("Metrics", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
         _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
     }
 
     protected override bool IsEnabled(CollectorConfigDto config)
@@ -72,7 +75,7 @@ public sealed class WindowsMetricsCollectorModule : ExporterModuleBase
         builder.Services.AddSingleton<ILogDBClient>(_ =>
             new RecordingLogDbClient(
                 new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)),
-                _sendActivity, "Metrics", Environment.MachineName));
+                _sendActivity, "Metrics", Environment.MachineName, _recentRecords));
 
         builder.Services.AddSingleton<WindowsMetricsReader>();
         builder.Services.AddHostedService<WindowsTrackerExportService>();

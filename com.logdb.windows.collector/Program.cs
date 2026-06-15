@@ -114,6 +114,11 @@ var sendActivityTracker = new com.logdb.windows.collector.Activity.SendActivityT
 builder.Services.AddSingleton(sendActivityTracker);
 builder.Services.AddSingleton<com.logdb.windows.collector.Activity.ISendActivitySink>(sendActivityTracker);
 
+// In-memory ring buffer of the most recent shipped records (bodies, not just
+// counts). Captured by each module's RecordingLogDbClient; queried by the control
+// channel for the admin UI's "Recent records" view. Not persisted.
+builder.Services.AddSingleton<com.logdb.windows.collector.Activity.RecentRecordsBuffer>();
+
 builder.Services.AddSingleton<CollectorStatusRegistry>(_ => new CollectorStatusRegistry(
     runtimeContext.ConfigPath,
     runtimeContext.Mode,

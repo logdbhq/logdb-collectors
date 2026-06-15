@@ -164,6 +164,26 @@ public sealed class ControlChannelClient
         return JsonSerializer.Deserialize<CollectorConfigDto>(response.PayloadJson, JsonOptions);
     }
 
+    public async Task<IReadOnlyList<RecentRecordDto>> GetRecentRecordsAsync(
+        CollectorInstanceMode mode,
+        int maxEntries = 200,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetRecentRecords,
+            payloadJson: maxEntries.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return Array.Empty<RecentRecordDto>();
+        }
+
+        var records = JsonSerializer.Deserialize<List<RecentRecordDto>>(response.PayloadJson, JsonOptions);
+        return records ?? new List<RecentRecordDto>();
+    }
+
     public async Task<SendActivityDto?> GetSendActivityAsync(
         CollectorInstanceMode mode,
         SendActivityQueryDto query,

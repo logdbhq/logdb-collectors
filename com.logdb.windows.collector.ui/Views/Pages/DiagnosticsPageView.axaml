@@ -142,6 +142,9 @@
         <TabItem Header="Throughput">
             <views:ThroughputPageView DataContext="{Binding Throughput}" />
         </TabItem>
+        <TabItem Header="Recent records">
+            <views:RecentRecordsPageView DataContext="{Binding RecentRecords}" />
+        </TabItem>
         <TabItem>
             <TabItem.Header>
                 <TextBlock Text="{Binding ErrorsTabHeader}" />

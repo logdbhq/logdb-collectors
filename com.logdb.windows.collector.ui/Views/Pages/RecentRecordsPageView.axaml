@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.RecentRecordsPageView">
+    <Grid Margin="8" RowDefinitions="Auto,Auto,*,Auto,220" RowSpacing="8">
+
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Refresh Now" Command="{Binding RefreshCommand}" />
+            <CheckBox Content="Auto (3s)" IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
+                      VerticalAlignment="Center"
+                      ToolTip.Tip="Reload the captured records every 3 seconds." />
+        </StackPanel>
+
+        <TextBlock Grid.Row="1"
+                   Text="{Binding StatusText}"
+                   Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+
+        <Border Grid.Row="2" Classes="panel" MinHeight="200">
+            <dgrid:DataGrid ItemsSource="{Binding Records}"
+                            SelectedItem="{Binding SelectedRecord, Mode=TwoWay}"
+                            AutoGenerateColumns="False"
+                            IsReadOnly="True"
+                            CanUserSortColumns="False"
+                            CanUserResizeColumns="True">
+                <dgrid:DataGrid.Columns>
+                    <dgrid:DataGridTextColumn Header="Time" Binding="{Binding WhenLocal}" Width="170" />
+                    <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="100" />
+                    <dgrid:DataGridTextColumn Header="Collection" Binding="{Binding Collection}" Width="160" />
+                    <dgrid:DataGridTextColumn Header="Host" Binding="{Binding Host}" Width="140" />
+                    <dgrid:DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*" />
+                </dgrid:DataGrid.Columns>
+            </dgrid:DataGrid>
+        </Border>
+
+        <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+            <TextBlock Text="Record JSON (sent to server)" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button Grid.Column="2" Content="Copy JSON" Command="{Binding CopyJsonCommand}" />
+        </Grid>
+
+        <Border Grid.Row="4" Classes="panel">
+            <TextBox Text="{Binding SelectedJson, Mode=OneWay}"
+                     IsReadOnly="True"
+                     AcceptsReturn="True"
+                     TextWrapping="NoWrap"
+                     Watermark="Select a record above to see the exact JSON document sent to the server."
+                     FontFamily="Cascadia Mono,Consolas,monospace"
+                     FontSize="12"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto" />
+        </Border>
+    </Grid>
+</UserControl>

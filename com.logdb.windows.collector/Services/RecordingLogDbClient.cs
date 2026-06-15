@@ -17,13 +17,20 @@ internal sealed class RecordingLogDbClient : ILogDBClient
 {
     private readonly ILogDBClient _inner;
     private readonly ISendActivitySink _sink;
+    private readonly RecentRecordsBuffer? _records;
     private readonly string _module;
     private readonly string _host;
 
-    public RecordingLogDbClient(ILogDBClient inner, ISendActivitySink sink, string module, string host)
+    public RecordingLogDbClient(
+        ILogDBClient inner,
+        ISendActivitySink sink,
+        string module,
+        string host,
+        RecentRecordsBuffer? records = null)
     {
         _inner = inner;
         _sink = sink;
+        _records = records;
         _module = module;
         _host = host;
     }
@@ -31,51 +38,63 @@ internal sealed class RecordingLogDbClient : ILogDBClient
     public async Task<LogResponseStatus> LogAsync(Log log, CancellationToken cancellationToken = default)
     {
         var status = await _inner.LogAsync(log, cancellationToken).ConfigureAwait(false);
-        Record(log?.Collection, 1, status);
+        var when = DateTime.UtcNow;
+        Record(log?.Collection, 1, status, when);
+        _records?.Capture(_module, _host, log, status == LogResponseStatus.Success, when);
         return status;
     }
 
     public async Task<LogResponseStatus> SendLogBatchAsync(IReadOnlyList<Log> logs, CancellationToken cancellationToken = default)
     {
         var status = await _inner.SendLogBatchAsync(logs, cancellationToken).ConfigureAwait(false);
-        Record(logs is { Count: > 0 } ? logs[0]?.Collection : null, logs?.Count ?? 0, status);
+        var when = DateTime.UtcNow;
+        Record(logs is { Count: > 0 } ? logs[0]?.Collection : null, logs?.Count ?? 0, status, when);
+        _records?.Capture(_module, _host, logs, status == LogResponseStatus.Success, when);
         return status;
     }
 
     public async Task<LogResponseStatus> LogBeatAsync(LogBeat logBeat, CancellationToken cancellationToken = default)
     {
         var status = await _inner.LogBeatAsync(logBeat, cancellationToken).ConfigureAwait(false);
-        Record(logBeat?.Collection, 1, status);
+        var when = DateTime.UtcNow;
+        Record(logBeat?.Collection, 1, status, when);
+        _records?.Capture(_module, _host, logBeat, status == LogResponseStatus.Success, when);
         return status;
     }
 
     public async Task<LogResponseStatus> SendLogBeatBatchAsync(IReadOnlyList<LogBeat> logBeats, CancellationToken cancellationToken = default)
     {
         var status = await _inner.SendLogBeatBatchAsync(logBeats, cancellationToken).ConfigureAwait(false);
-        Record(logBeats is { Count: > 0 } ? logBeats[0]?.Collection : null, logBeats?.Count ?? 0, status);
+        var when = DateTime.UtcNow;
+        Record(logBeats is { Count: > 0 } ? logBeats[0]?.Collection : null, logBeats?.Count ?? 0, status, when);
+        _records?.Capture(_module, _host, logBeats, status == LogResponseStatus.Success, when);
         return status;
     }
 
     public async Task<LogResponseStatus> LogCacheAsync(LogCache logCache, CancellationToken cancellationToken = default)
     {
         var status = await _inner.LogCacheAsync(logCache, cancellationToken).ConfigureAwait(false);
-        Record(logCache?.Collection, 1, status);
+        var when = DateTime.UtcNow;
+        Record(logCache?.Collection, 1, status, when);
+        _records?.Capture(_module, _host, logCache, status == LogResponseStatus.Success, when);
         return status;
     }
 
     public async Task<LogResponseStatus> SendLogCacheBatchAsync(IReadOnlyList<LogCache> logCaches, CancellationToken cancellationToken = default)
     {
         var status = await _inner.SendLogCacheBatchAsync(logCaches, cancellationToken).ConfigureAwait(false);
-        Record(logCaches is { Count: > 0 } ? logCaches[0]?.Collection : null, logCaches?.Count ?? 0, status);
+        var when = DateTime.UtcNow;
+        Record(logCaches is { Count: > 0 } ? logCaches[0]?.Collection : null, logCaches?.Count ?? 0, status, when);
+        _records?.Capture(_module, _host, logCaches, status == LogResponseStatus.Success, when);
         return status;
     }
 
-    private void Record(string? collection, long count, LogResponseStatus status)
+    private void Record(string? collection, long count, LogResponseStatus status, DateTime whenUtc)
     {
         if (count <= 0) return;
         try
         {
-            _sink.Record(_module, collection, _host, count, status == LogResponseStatus.Success, DateTime.UtcNow);
+            _sink.Record(_module, collection, _host, count, status == LogResponseStatus.Success, whenUtc);
         }
         catch
         {

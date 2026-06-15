@@ -12,9 +12,9 @@
     <!-- Baseline for local/dev builds. CI overrides via -p:Version=<tag-version> so
          the assembly's version matches the released tag exactly. Don't rely on this
          file being bumped before tagging — the CI override is the source of truth. -->
-    <Version>1.4.18</Version>
-    <AssemblyVersion>1.4.18.0</AssemblyVersion>
-    <FileVersion>1.4.18.0</FileVersion>
+    <Version>1.4.19</Version>
+    <AssemblyVersion>1.4.19.0</AssemblyVersion>
+    <FileVersion>1.4.19.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

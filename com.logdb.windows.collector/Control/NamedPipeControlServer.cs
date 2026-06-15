@@ -31,6 +31,7 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IConfiguration _configuration;
     private readonly SendActivityTracker _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
     private readonly SemaphoreSlim _configGate = new(1, 1);
     private readonly ILogger<NamedPipeControlServer> _logger;
 
@@ -46,6 +47,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         IHostApplicationLifetime hostLifetime,
         IConfiguration configuration,
         SendActivityTracker sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<NamedPipeControlServer> logger)
     {
         _runtimeContext = runtimeContext;
@@ -59,6 +61,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         _hostLifetime = hostLifetime;
         _configuration = configuration;
         _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
         _logger = logger;
     }
 
@@ -313,6 +316,17 @@ public sealed class NamedPipeControlServer : BackgroundService
                         Message = $"Reset send-activity failed: {ex.GetType().Name}: {ex.Message}"
                     };
                 }
+
+            case ControlCommands.GetRecentRecords:
+            {
+                var maxRecords = ParseMaxDiagnostics(request.PayloadJson);
+                var records = _recentRecords.GetRecent(maxRecords);
+                return new ControlResponseDto
+                {
+                    Success = true,
+                    PayloadJson = JsonSerializer.Serialize(records, JsonOptions)
+                };
+            }
 
             case ControlCommands.GetResolvedEndpoint:
                 try

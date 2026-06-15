@@ -160,6 +160,9 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     /// <summary>Second sub-tab of the Online Console: send throughput charts.</summary>
     public ThroughputPageViewModel Throughput { get; }
 
+    /// <summary>Sub-tab: the most recent record documents shipped to the server.</summary>
+    public RecentRecordsPageViewModel RecentRecords { get; }
+
     public DiagnosticsPageViewModel(
         LocalCollectorAdminClient adminClient,
         Action<string, bool> statusCallback,
@@ -172,6 +175,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         _exportTextAsync = exportTextAsync;
         _copyToClipboardAsync = copyToClipboardAsync;
         Throughput = new ThroughputPageViewModel(adminClient, statusCallback);
+        RecentRecords = new RecentRecordsPageViewModel(adminClient, statusCallback, copyToClipboardAsync);
 
         OnlineConsoleRows = new ObservableCollection<OnlineDiagnosticRowViewModel>();
         OnlineModuleFilters = new ObservableCollection<OnlineModuleFilterItemViewModel>

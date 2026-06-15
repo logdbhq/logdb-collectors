@@ -43,8 +43,25 @@ public static class ControlCommands
     public const string GetResolvedEndpoint = "get-resolved-endpoint";
     public const string GetSendActivity = "send-activity";
     public const string ResetSendActivity = "reset-send-activity";
+    public const string GetRecentRecords = "recent-records";
 
     public const string ApplyFirewallRules = ApplyFirewall;
+}
+
+/// <summary>
+/// One record the collector shipped (or attempted to ship) to the server, kept in
+/// a small in-memory ring buffer for the admin UI's "Recent records" view. <see
+/// cref="Json"/> is the serialized log document exactly as handed to the SDK
+/// client. Not persisted — cleared on collector restart.
+/// </summary>
+public sealed class RecentRecordDto
+{
+    public DateTime WhenUtc { get; set; }
+    public string Module { get; set; } = string.Empty;
+    public string Host { get; set; } = string.Empty;
+    public string Collection { get; set; } = string.Empty;
+    public bool Success { get; set; }
+    public string Json { get; set; } = string.Empty;
 }
 
 /// <summary>
