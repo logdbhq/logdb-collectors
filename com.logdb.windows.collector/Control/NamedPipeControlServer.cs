@@ -27,6 +27,7 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly IRuntimeEndpointStore _endpointStore;
     private readonly ICollectorControlInspector _inspector;
     private readonly FirewallSyncEngine _firewallEngine;
+    private readonly FirewallRuleHistoryStore _firewallHistory;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IConfiguration _configuration;
     private readonly SemaphoreSlim _configGate = new(1, 1);
@@ -41,6 +42,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         IRuntimeEndpointStore endpointStore,
         ICollectorControlInspector inspector,
         FirewallSyncEngine firewallEngine,
+        FirewallRuleHistoryStore firewallHistory,
         IHostApplicationLifetime hostLifetime,
         IConfiguration configuration,
         ILogger<NamedPipeControlServer> logger)
@@ -53,6 +55,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         _endpointStore = endpointStore;
         _inspector = inspector;
         _firewallEngine = firewallEngine;
+        _firewallHistory = firewallHistory;
         _hostLifetime = hostLifetime;
         _configuration = configuration;
         _logger = logger;
@@ -268,6 +271,57 @@ public sealed class NamedPipeControlServer : BackgroundService
                 {
                     Success = applyResult.Success,
                     Message = applyResult.Message
+                };
+
+            case ControlCommands.GetFirewallRules:
+                var rules = await _firewallEngine.ListRulesAsync(_configMonitor.CurrentValue.Firewall, cancellationToken);
+                return new ControlResponseDto
+                {
+                    Success = true,
+                    PayloadJson = JsonSerializer.Serialize(rules, JsonOptions)
+                };
+
+            case ControlCommands.DeleteFirewallRule:
+                DeleteFirewallRuleRequestDto? deleteRequest = null;
+                if (!string.IsNullOrWhiteSpace(request.PayloadJson))
+                {
+                    try
+                    {
+                        deleteRequest = JsonSerializer.Deserialize<DeleteFirewallRuleRequestDto>(request.PayloadJson, JsonOptions);
+                    }
+                    catch (JsonException)
+                    {
+                        // fall through to the null check below
+                    }
+                }
+
+                if (deleteRequest == null || string.IsNullOrWhiteSpace(deleteRequest.RuleId))
+                {
+                    return new ControlResponseDto
+                    {
+                        Success = false,
+                        Message = "delete-firewall-rule requires a payload like {\"ruleId\":\"...\",\"removeFromBackend\":true}."
+                    };
+                }
+
+                var deleteResult = await _firewallEngine.DeleteRuleAsync(
+                    _configMonitor.CurrentValue.LogDB,
+                    _configMonitor.CurrentValue.Firewall,
+                    deleteRequest,
+                    cancellationToken);
+                return new ControlResponseDto
+                {
+                    Success = deleteResult.Success,
+                    Message = deleteResult.Message
+                };
+
+            case ControlCommands.GetFirewallHistory:
+                var historyMax = ParseMaxDiagnostics(request.PayloadJson);
+                var history = _firewallHistory.GetRecent(historyMax);
+                return new ControlResponseDto
+                {
+                    Success = true,
+                    PayloadJson = JsonSerializer.Serialize(history, JsonOptions)
                 };
 
             case ControlCommands.RemoveFirewall:

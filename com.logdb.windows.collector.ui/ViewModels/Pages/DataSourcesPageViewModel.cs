@@ -203,6 +203,22 @@ public sealed class DataSourceFirewallHistoryRow
     public string Details { get; set; } = string.Empty;
 }
 
+public sealed class DataSourceFirewallRuleRow
+{
+    public DataSourceFirewallRuleRow(Func<DataSourceFirewallRuleRow, Task> deleteAsync)
+    {
+        DeleteCommand = new AsyncRelayCommand(() => deleteAsync(this));
+    }
+
+    public string Id { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public string Source { get; init; } = string.Empty;
+    public string Direction { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public int IpCount { get; init; }
+    public AsyncRelayCommand DeleteCommand { get; }
+}
+
 public sealed class DataSourcesPageViewModel : PageViewModelBase
 {
     private static readonly HashSet<string> DraftPersistedPropertyNames = new(StringComparer.Ordinal)
@@ -349,7 +365,9 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private bool _metricsPaused;
     private string _firewallTabSummary = "Firewall: not loaded.";
     private string _firewallTabRuntime = "Runtime: unavailable.";
+    private string _firewallRulesSummary = "Active rules: not loaded.";
     private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
+    private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
 
     public DataSourcesPageViewModel(
         LocalCollectorAdminClient adminClient,
@@ -373,6 +391,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         MetricsPreviewRows = new ObservableCollection<MetricPreviewDisplayRow>();
         HeartbeatTags = new ObservableCollection<TagItemViewModel>();
         FirewallHistoryRows = new ObservableCollection<DataSourceFirewallHistoryRow>();
+        FirewallRuleRows = new ObservableCollection<DataSourceFirewallRuleRow>();
 
         AddCustomChannelCommand = new RelayCommand(AddCustomChannel);
         RemoveCustomChannelCommand = new RelayCommand(RemoveSelectedCustomChannel);
@@ -407,6 +426,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         PreviewMetricsCommand = new AsyncRelayCommand(PreviewMetricsAsync);
         ApplyMetricsCommand = new AsyncRelayCommand(ApplyMetricsAsync);
         RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
+        RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
 
         PauseEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", false));
         ResumeEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", true));
@@ -441,6 +461,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public ObservableCollection<MetricPreviewDisplayRow> MetricsPreviewRows { get; }
     public ObservableCollection<TagItemViewModel> HeartbeatTags { get; }
     public ObservableCollection<DataSourceFirewallHistoryRow> FirewallHistoryRows { get; }
+    public ObservableCollection<DataSourceFirewallRuleRow> FirewallRuleRows { get; }
 
     public StringItemViewModel? SelectedCustomChannel { get; set; }
     public StringItemViewModel? SelectedIisDirectory { get; set; }
@@ -844,6 +865,12 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         set => SetProperty(ref _firewallTabRuntime, value);
     }
 
+    public string FirewallRulesSummary
+    {
+        get => _firewallRulesSummary;
+        set => SetProperty(ref _firewallRulesSummary, value);
+    }
+
     public bool EventLogPaused
     {
         get => _eventLogPaused;
@@ -936,6 +963,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public AsyncRelayCommand PreviewMetricsCommand { get; }
     public AsyncRelayCommand ApplyMetricsCommand { get; }
     public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
+    public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
 
     public AsyncRelayCommand PauseEventLogCommand { get; }
     public AsyncRelayCommand ResumeEventLogCommand { get; }
@@ -1082,6 +1110,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
         await RefreshFirewallSummaryAsync();
         await RefreshFirewallHistoryAsync();
+        await RefreshFirewallRulesAsync();
         await RefreshModulePausedStatesAsync();
     }
 
@@ -1784,11 +1813,21 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
         try
         {
-            var diagnostics = (await _adminClient.GetDiagnosticsAsync(500))
-                .OrderByDescending(entry => entry.TimestampUtc)
-                .ToList();
+            var structured = await _adminClient.GetFirewallHistoryAsync(200);
+            if (structured != null)
+            {
+                RebuildFirewallHistory(structured);
+            }
+            else
+            {
+                // Service predates the firewall-history command — fall back to
+                // scraping the diagnostics ring like the UI always used to.
+                var diagnostics = (await _adminClient.GetDiagnosticsAsync(500))
+                    .OrderByDescending(entry => entry.TimestampUtc)
+                    .ToList();
+                RebuildFirewallHistoryFromDiagnostics(diagnostics);
+            }
 
-            RebuildFirewallHistory(diagnostics);
             await RefreshFirewallSummaryAsync();
         }
         catch (Exception ex)
@@ -1801,7 +1840,127 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    private void RebuildFirewallHistory(IReadOnlyList<DiagnosticEntryDto> diagnostics)
+    private async Task RefreshFirewallRulesAsync()
+    {
+        if (_adminClient.SelectedTarget == null)
+        {
+            FirewallRuleRows.Clear();
+            FirewallRulesSummary = "Active rules: no collector instance selected.";
+            return;
+        }
+
+        if (!await _firewallRulesRefreshLock.WaitAsync(0))
+        {
+            return;
+        }
+
+        try
+        {
+            var rules = await _adminClient.GetFirewallRulesAsync();
+            FirewallRuleRows.Clear();
+
+            if (rules == null)
+            {
+                FirewallRulesSummary = "Active rules: the running collector does not support rule listing (update the service).";
+                return;
+            }
+
+            foreach (var rule in rules.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase))
+            {
+                FirewallRuleRows.Add(new DataSourceFirewallRuleRow(DeleteFirewallRuleAsync)
+                {
+                    Id = rule.Id,
+                    DisplayName = rule.DisplayName,
+                    Source = rule.Source,
+                    Direction = rule.Direction,
+                    IpCount = rule.IpCount,
+                    Status = (rule.Enabled ? "Enabled" : "Disabled") + (rule.Legacy ? " (legacy)" : "")
+                });
+            }
+
+            var totalIps = rules.Sum(r => r.IpCount);
+            FirewallRulesSummary = rules.Count == 0
+                ? "Active rules: none applied to the OS firewall."
+                : $"Active rules: {rules.Count} rule(s) blocking {totalIps:N0} IPs/CIDRs, read live from the OS firewall.";
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Firewall rules refresh failed: {ex.Message}", false);
+        }
+        finally
+        {
+            _firewallRulesRefreshLock.Release();
+        }
+    }
+
+    private async Task DeleteFirewallRuleAsync(DataSourceFirewallRuleRow row)
+    {
+        try
+        {
+            var (success, message) = await _adminClient.DeleteFirewallRuleAsync(row.Id, removeFromBackend: true);
+            _statusCallback(message, success);
+
+            if (success)
+            {
+                await RefreshFirewallRulesAsync();
+                await RefreshFirewallHistoryAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Delete failed for '{row.DisplayName}': {ex.Message}", false);
+        }
+    }
+
+    private void RebuildFirewallHistory(IReadOnlyList<FirewallRuleHistoryEntryDto> entries)
+    {
+        FirewallHistoryRows.Clear();
+        foreach (var entry in entries)
+        {
+            FirewallHistoryRows.Add(new DataSourceFirewallHistoryRow
+            {
+                TimeLocal = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                Action = DescribeFirewallHistoryAction(entry.Action),
+                Result = entry.Success ? (entry.DryRun ? "Dry run" : "OK") : "Error",
+                Details = DescribeFirewallHistoryDetails(entry)
+            });
+        }
+    }
+
+    private static string DescribeFirewallHistoryAction(string action) => action switch
+    {
+        FirewallHistoryActions.RuleCreated => "Rule created",
+        FirewallHistoryActions.RuleUpdated => "Rule updated",
+        FirewallHistoryActions.RuleRemoved => "Rule removed",
+        FirewallHistoryActions.SyncCompleted => "Sync",
+        FirewallHistoryActions.SyncFailed => "Sync failed",
+        FirewallHistoryActions.RemoveAll => "Remove all",
+        _ => action
+    };
+
+    private static string DescribeFirewallHistoryDetails(FirewallRuleHistoryEntryDto entry)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(entry.RuleName))
+        {
+            parts.Add(entry.IpCount > 0 ? $"{entry.RuleName} ({entry.IpCount} IPs)" : entry.RuleName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Source) &&
+            !string.Equals(entry.Source, entry.RuleName, StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add($"source: {entry.Source}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Message))
+        {
+            parts.Add(entry.Message);
+        }
+
+        return SummarizeFirewallDetails(string.Join(" — ", parts));
+    }
+
+    private void RebuildFirewallHistoryFromDiagnostics(IReadOnlyList<DiagnosticEntryDto> diagnostics)
     {
         FirewallHistoryRows.Clear();
         var firewallEntries = diagnostics

@@ -32,6 +32,9 @@ public static class ControlCommands
     public const string TestConnection = "test-connection";
     public const string ApplyFirewall = "apply-firewall";
     public const string RemoveFirewall = "remove-firewall";
+    public const string GetFirewallHistory = "firewall-history";
+    public const string GetFirewallRules = "firewall-rules";
+    public const string DeleteFirewallRule = "delete-firewall-rule";
     public const string StopHost = "stop-host";
     public const string ValidateEventLogAccess = "validate-event-log-access";
     public const string ValidateIisPaths = "validate-iis-paths";

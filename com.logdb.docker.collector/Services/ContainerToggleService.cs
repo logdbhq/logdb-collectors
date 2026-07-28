@@ -170,16 +170,13 @@ public class ContainerToggleService
             if (!_logModes.TryGetValue(containerId, out var mode) || mode == LogMode.All)
                 return true;
 
-            // ErrorsOnly: allow stderr stream OR .NET parsed levels Error/Critical/Warning
-            if (stream.Equals("stderr", StringComparison.OrdinalIgnoreCase))
-                return true;
-
+            // ErrorsOnly: trust the parsed level when we have one (so stderr-everything
+            // containers like Postgres/CrowdSec are filtered by real severity), and fall
+            // back to the stream only when the level is unknown.
             if (parsedLevel is not null)
-            {
                 return parsedLevel is "Error" or "Critical" or "Warning";
-            }
 
-            return false;
+            return stream.Equals("stderr", StringComparison.OrdinalIgnoreCase);
         }
     }
 

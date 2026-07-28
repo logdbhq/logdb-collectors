@@ -681,7 +681,7 @@
             </TabItem>
 
             <TabItem Header="Firewall">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,*" RowSpacing="8">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="8">
                     <Border Classes="panel">
                         <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
                             <TextBlock Text="Configuration" Classes="muted" />
@@ -692,15 +692,52 @@
                     </Border>
 
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-                        <Button Content="Refresh Firewall History"
-                                Command="{Binding RefreshFirewallHistoryCommand}"
-                                ToolTip.Tip="Pull the latest firewall apply / remove diagnostic entries from the running collector and rebuild the table below." />
+                        <Button Content="Refresh Active Rules"
+                                Command="{Binding RefreshFirewallRulesCommand}"
+                                ToolTip.Tip="Re-read the collector-managed block rules currently applied to the OS firewall." />
                         <TextBlock VerticalAlignment="Center"
                                    Classes="muted"
-                                   Text="History is derived from local collector diagnostics." />
+                                   Text="{Binding FirewallRulesSummary}" />
                     </StackPanel>
 
                     <Border Grid.Row="2" Classes="panel">
+                        <dgrid:DataGrid ItemsSource="{Binding FirewallRuleRows}"
+                                        AutoGenerateColumns="False"
+                                        IsReadOnly="True"
+                                        CanUserSortColumns="False"
+                                        Height="200">
+                            <dgrid:DataGrid.Columns>
+                                <dgrid:DataGridTextColumn Header="Rule" Binding="{Binding DisplayName}" Width="*" />
+                                <dgrid:DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150" />
+                                <dgrid:DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="90" />
+                                <dgrid:DataGridTextColumn Header="IPs" Binding="{Binding IpCount}" Width="80" />
+                                <dgrid:DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
+                                <dgrid:DataGridTextColumn Header="Rule Id" Binding="{Binding Id}" Width="160" />
+                                <dgrid:DataGridTemplateColumn Header="" Width="90">
+                                    <dgrid:DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="Delete"
+                                                    Command="{Binding DeleteCommand}"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip.Tip="Remove this rule from the OS firewall. Guard-sourced rules also have their IPs removed from the LogDB backend; public-feed rules re-appear on the next sync." />
+                                        </DataTemplate>
+                                    </dgrid:DataGridTemplateColumn.CellTemplate>
+                                </dgrid:DataGridTemplateColumn>
+                            </dgrid:DataGrid.Columns>
+                        </dgrid:DataGrid>
+                    </Border>
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
+                        <Button Content="Refresh Firewall History"
+                                Command="{Binding RefreshFirewallHistoryCommand}"
+                                ToolTip.Tip="Pull the persisted firewall change history from the running collector and rebuild the table below." />
+                        <TextBlock VerticalAlignment="Center"
+                                   Classes="muted"
+                                   Text="History is persisted by the collector and survives service restarts." />
+                    </StackPanel>
+
+                    <Border Grid.Row="4" Classes="panel">
                         <dgrid:DataGrid ItemsSource="{Binding FirewallHistoryRows}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"

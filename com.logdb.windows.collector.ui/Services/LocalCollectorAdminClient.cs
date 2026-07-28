@@ -135,6 +135,41 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.GetDiagnosticsAsync(SelectedTarget.Value, maxEntries, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<FirewallRuleHistoryEntryDto>?> GetFirewallHistoryAsync(
+        int maxEntries = 100,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return Array.Empty<FirewallRuleHistoryEntryDto>();
+        }
+
+        return await _controlClient.GetFirewallHistoryAsync(SelectedTarget.Value, maxEntries, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<FirewallRuleInfoDto>?> GetFirewallRulesAsync(CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return Array.Empty<FirewallRuleInfoDto>();
+        }
+
+        return await _controlClient.GetFirewallRulesAsync(SelectedTarget.Value, cancellationToken);
+    }
+
+    public async Task<(bool Success, string Message)> DeleteFirewallRuleAsync(
+        string ruleId,
+        bool removeFromBackend,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return (false, "No collector instance selected.");
+        }
+
+        return await _controlClient.DeleteFirewallRuleAsync(SelectedTarget.Value, ruleId, removeFromBackend, cancellationToken);
+    }
+
     public async Task<CollectorConfigDto?> GetEffectiveRedactedConfigAsync(CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)

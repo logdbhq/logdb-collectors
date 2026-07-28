@@ -10,6 +10,17 @@ package guard;
 
 service GuardService {
   rpc GetBlockedIps(GetBlockedIpsRequest) returns (GetBlockedIpsResponse);
+  // Operator deleted a Guard-sourced rule on the host: remove the IPs from
+  // the backend blocklist too, so the next sync doesn't re-block them.
+  rpc RemoveBlockedIps(RemoveBlockedIpsRequest) returns (RemoveBlockedIpsResponse);
+}
+
+message RemoveBlockedIpsRequest {
+  repeated string ip_addresses = 1;
+}
+
+message RemoveBlockedIpsResponse {
+  int32 removed_count = 1;
 }
 
 message GetBlockedIpsRequest {

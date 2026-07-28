@@ -1,6 +1,8 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Text.Json;
 using com.logdb.windows.collector.shared.Contracts;
 
 namespace com.logdb.windows.collector.Services.Firewall;
@@ -25,20 +27,34 @@ namespace com.logdb.windows.collector.Services.Firewall;
 /// </summary>
 public sealed class FirewallSyncEngine
 {
+    /// <summary>Windows Firewall rule Group stamped on every rule we create —
+    /// the reliable "this is ours" marker, independent of display names an
+    /// operator might coincidentally reuse. Rules created before this shipped
+    /// carry no group and are matched by display-name prefix (Legacy=true).</summary>
+    public const string ManagedRuleGroup = "LogDB Collector";
+
+    private static readonly JsonSerializerOptions RuleJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private readonly PublicBlocklistFetcher _fetcher;
     private readonly FirewallWhitelistService _whitelist;
     private readonly GuardBlocklistClient _guardClient;
+    private readonly FirewallRuleHistoryStore _history;
     private readonly ILogger<FirewallSyncEngine> _logger;
 
     public FirewallSyncEngine(
         PublicBlocklistFetcher fetcher,
         FirewallWhitelistService whitelist,
         GuardBlocklistClient guardClient,
+        FirewallRuleHistoryStore history,
         ILogger<FirewallSyncEngine> logger)
     {
         _fetcher = fetcher;
         _whitelist = whitelist;
         _guardClient = guardClient;
+        _history = history;
         _logger = logger;
     }
 
@@ -67,42 +83,80 @@ public sealed class FirewallSyncEngine
         var whitelist = _whitelist.Load(config.WhitelistPath);
         var totalActiveRules = 0;
         var totalIps = 0;
+        var totalChanges = 0;
         var perFeed = new List<FirewallFeedSyncSummary>();
         var activeDisplayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (feedId, feed) in enabledFeeds)
+        try
         {
-            var ips = await _fetcher.FetchAsync(feedId, feed.Url, feed.MinScore, cancellationToken).ConfigureAwait(false);
-            var whitelisted = FirewallWhitelistService.Apply(ips, whitelist);
+            foreach (var (feedId, feed) in enabledFeeds)
+            {
+                var ips = await _fetcher.FetchAsync(feedId, feed.Url, feed.MinScore, cancellationToken).ConfigureAwait(false);
+                var whitelisted = FirewallWhitelistService.Apply(ips, whitelist);
 
-            var displayName = string.IsNullOrWhiteSpace(feed.DisplayName) ? feedId : feed.DisplayName;
-            var ruleCount = await SyncFeedAsync(config, displayName, ips, cancellationToken).ConfigureAwait(false);
+                var displayName = string.IsNullOrWhiteSpace(feed.DisplayName) ? feedId : feed.DisplayName;
+                var (ruleCount, changes) = await SyncFeedAsync(config, displayName, ips, cancellationToken).ConfigureAwait(false);
 
-            perFeed.Add(new FirewallFeedSyncSummary(feedId, displayName, ips.Count, ruleCount, whitelisted));
-            activeDisplayNames.Add(displayName);
-            totalActiveRules += ruleCount;
-            totalIps += ips.Count;
+                perFeed.Add(new FirewallFeedSyncSummary(feedId, displayName, ips.Count, ruleCount, whitelisted));
+                activeDisplayNames.Add(displayName);
+                totalActiveRules += ruleCount;
+                totalIps += ips.Count;
+                totalChanges += changes;
+            }
+
+            if (customEnabled)
+            {
+                var customDisplayName = string.IsNullOrWhiteSpace(config.CustomBlocklist.DisplayName)
+                    ? "LogDB Guard"
+                    : config.CustomBlocklist.DisplayName;
+                var guardIps = await _guardClient.FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken).ConfigureAwait(false);
+                var whitelisted = FirewallWhitelistService.Apply(guardIps, whitelist);
+                var (ruleCount, changes) = await SyncFeedAsync(config, customDisplayName, guardIps, cancellationToken).ConfigureAwait(false);
+
+                perFeed.Add(new FirewallFeedSyncSummary("custom_guard", customDisplayName, guardIps.Count, ruleCount, whitelisted));
+                activeDisplayNames.Add(customDisplayName);
+                totalActiveRules += ruleCount;
+                totalIps += guardIps.Count;
+                totalChanges += changes;
+            }
+
+            // Drop any rule whose source isn't in the active set anymore (a feed
+            // was disabled / removed, or the Guard mode was switched off) —
+            // otherwise stale rules linger forever.
+            totalChanges += await PruneOrphanedSourcesAsync(config, activeDisplayNames, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _history.Record(new FirewallRuleHistoryEntryDto
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Action = FirewallHistoryActions.SyncFailed,
+                Success = false,
+                DryRun = config.DryRun,
+                Message = ex.Message
+            });
+            _logger.LogError(ex, "Firewall sync cycle failed");
+            return FirewallSyncSummary.Failed($"Firewall sync failed: {ex.Message}");
         }
 
-        if (customEnabled)
+        // Only cycles that actually touched the firewall get a history entry —
+        // a no-op poll every 15 minutes would flood the capped history file.
+        if (totalChanges > 0)
         {
-            var customDisplayName = string.IsNullOrWhiteSpace(config.CustomBlocklist.DisplayName)
-                ? "LogDB Guard"
-                : config.CustomBlocklist.DisplayName;
-            var guardIps = await _guardClient.FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken).ConfigureAwait(false);
-            var whitelisted = FirewallWhitelistService.Apply(guardIps, whitelist);
-            var ruleCount = await SyncFeedAsync(config, customDisplayName, guardIps, cancellationToken).ConfigureAwait(false);
-
-            perFeed.Add(new FirewallFeedSyncSummary("custom_guard", customDisplayName, guardIps.Count, ruleCount, whitelisted));
-            activeDisplayNames.Add(customDisplayName);
-            totalActiveRules += ruleCount;
-            totalIps += guardIps.Count;
+            _history.Record(new FirewallRuleHistoryEntryDto
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Action = FirewallHistoryActions.SyncCompleted,
+                IpCount = totalIps,
+                Success = true,
+                DryRun = config.DryRun,
+                Message = $"{perFeed.Count} feed(s), {totalIps} IPs, {totalActiveRules} rule(s) active, {totalChanges} rule change(s)"
+            });
         }
-
-        // Drop any rule whose source isn't in the active set anymore (a feed
-        // was disabled / removed, or the Guard mode was switched off) —
-        // otherwise stale rules linger forever.
-        await PruneOrphanedSourcesAsync(config, activeDisplayNames, cancellationToken).ConfigureAwait(false);
 
         _logger.LogInformation(
             "Firewall sync done: {Feeds} feeds, {Ips} unique IPs, {Rules} rules active",
@@ -119,28 +173,204 @@ public sealed class FirewallSyncEngine
             return (false, "Elevation required to remove firewall rules.");
 
         var prefix = string.IsNullOrWhiteSpace(config.RuleNamePrefix) ? "LogDB Firewall" : config.RuleNamePrefix;
-        await RunPowerShellAsync(
-            $"Get-NetFirewallRule | Where-Object {{ $_.DisplayName -like '{EscapePs(prefix)}*' }} | Remove-NetFirewallRule -ErrorAction SilentlyContinue",
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RunPowerShellAsync(
+                $"Get-NetFirewallRule | Where-Object {{ $_.DisplayName -like '{EscapePs(prefix)}*' }} | Remove-NetFirewallRule -ErrorAction SilentlyContinue",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _history.Record(new FirewallRuleHistoryEntryDto
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Action = FirewallHistoryActions.RemoveAll,
+                Success = false,
+                Message = ex.Message
+            });
+            return (false, $"Failed to remove firewall rules: {ex.Message}");
+        }
 
+        _history.Record(new FirewallRuleHistoryEntryDto
+        {
+            TimestampUtc = DateTime.UtcNow,
+            Action = FirewallHistoryActions.RemoveAll,
+            Success = true,
+            Message = $"Removed all rules with prefix '{prefix}'"
+        });
         _logger.LogInformation("Removed all firewall rules with prefix '{Prefix}'", prefix);
         return (true, $"Removed all firewall rules with prefix '{prefix}'.");
     }
 
-    private async Task<int> SyncFeedAsync(
+    /// <summary>
+    /// Reads the collector-managed rules back from the live OS firewall —
+    /// group-tagged rules plus legacy display-name-prefix matches — so the UI
+    /// shows what is actually applied, not what we think we applied.
+    /// </summary>
+    public async Task<IReadOnlyList<FirewallRuleInfoDto>> ListRulesAsync(
+        FirewallConfigDto config,
+        CancellationToken cancellationToken = default)
+    {
+        var prefix = string.IsNullOrWhiteSpace(config.RuleNamePrefix) ? "LogDB Firewall" : config.RuleNamePrefix;
+        var command =
+            $"$rules = Get-NetFirewallRule | Where-Object {{ $_.Group -eq '{ManagedRuleGroup}' -or $_.DisplayName -like '{EscapePs(prefix)}*' }}; " +
+            "$out = foreach ($r in $rules) { " +
+            "$af = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $r; " +
+            "$ips = @($af.RemoteAddress | Where-Object { $_ -and $_ -ne 'Any' -and $_ -ne 'LocalSubnet' }); " +
+            $"[pscustomobject]@{{ id = $r.Name; displayName = $r.DisplayName; direction = [string]$r.Direction; enabled = ([string]$r.Enabled -eq 'True'); ipCount = $ips.Count; legacy = ($r.Group -ne '{ManagedRuleGroup}') }} }}; " +
+            "ConvertTo-Json -InputObject @($out) -Compress";
+
+        var output = await RunPowerShellWithOutputAsync(command, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(output)) return Array.Empty<FirewallRuleInfoDto>();
+
+        List<FirewallRuleInfoDto>? rules;
+        try
+        {
+            rules = JsonSerializer.Deserialize<List<FirewallRuleInfoDto>>(output.Trim(), RuleJsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse firewall rule listing");
+            return Array.Empty<FirewallRuleInfoDto>();
+        }
+
+        if (rules == null) return Array.Empty<FirewallRuleInfoDto>();
+        foreach (var rule in rules)
+            rule.Source = ExtractSourceFromDisplayName(rule.DisplayName, config.RuleNamePrefix);
+        return rules;
+    }
+
+    /// <summary>
+    /// Deletes one managed rule by its unique Name. For Guard-sourced rules
+    /// (and <paramref name="request"/>.RemoveFromBackend), the rule's IPs are
+    /// first removed from the Guard backend so the next sync cycle doesn't
+    /// immediately re-block them; public-feed rules will reappear on the next
+    /// sync as long as the feed still lists their IPs — the returned message
+    /// says which case applies.
+    /// </summary>
+    public async Task<(bool Success, string Message)> DeleteRuleAsync(
+        LogDbConfigDto logDbConfig,
+        FirewallConfigDto config,
+        DeleteFirewallRuleRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsElevated())
+            return (false, "Elevation required to delete firewall rules.");
+        if (string.IsNullOrWhiteSpace(request.RuleId))
+            return (false, "Rule id is required.");
+
+        var lookup =
+            $"$r = Get-NetFirewallRule -Name '{EscapePs(request.RuleId)}' -ErrorAction SilentlyContinue; " +
+            "if ($r) { $af = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $r; " +
+            "ConvertTo-Json -InputObject ([pscustomobject]@{ displayName = $r.DisplayName; ips = @($af.RemoteAddress | Where-Object { $_ -and $_ -ne 'Any' -and $_ -ne 'LocalSubnet' }) }) -Compress }";
+        var output = await RunPowerShellWithOutputAsync(lookup, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(output))
+            return (false, $"No firewall rule found with id '{request.RuleId}'.");
+
+        string displayName;
+        List<string> ips;
+        try
+        {
+            var details = JsonSerializer.Deserialize<RuleDeletionDetails>(output.Trim(), RuleJsonOptions);
+            displayName = details?.DisplayName ?? request.RuleId;
+            ips = details?.Ips ?? new List<string>();
+        }
+        catch (JsonException)
+        {
+            displayName = request.RuleId;
+            ips = new List<string>();
+        }
+
+        var source = ExtractSourceFromDisplayName(displayName, config.RuleNamePrefix);
+        var guardDisplayName = string.IsNullOrWhiteSpace(config.CustomBlocklist.DisplayName)
+            ? "LogDB Guard"
+            : config.CustomBlocklist.DisplayName;
+        var isGuardRule = string.Equals(source, guardDisplayName, StringComparison.OrdinalIgnoreCase);
+
+        string? backendNote = null;
+        if (isGuardRule && request.RemoveFromBackend)
+        {
+            var (backendOk, backendMessage) = await _guardClient
+                .RemoveBlockedIpsAsync(logDbConfig, config.CustomBlocklist, ips, cancellationToken)
+                .ConfigureAwait(false);
+            backendNote = backendOk
+                ? backendMessage
+                : $"WARNING: backend removal failed — the next sync may re-apply this rule. {backendMessage}";
+        }
+
+        try
+        {
+            await RunPowerShellAsync(
+                $"Remove-NetFirewallRule -Name '{EscapePs(request.RuleId)}'",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            RecordRuleChange(FirewallHistoryActions.RuleRemoved, displayName, source, ips.Count, success: false,
+                message: $"Operator delete failed: {ex.Message}");
+            return (false, $"Failed to delete rule '{displayName}': {ex.Message}");
+        }
+
+        var note = backendNote
+            ?? (isGuardRule
+                ? "Backend removal was skipped."
+                : "Public-feed rule: it will be re-created on the next sync while the feed still lists these IPs.");
+        RecordRuleChange(FirewallHistoryActions.RuleRemoved, displayName, source, ips.Count, success: true,
+            message: $"Deleted by operator. {note}");
+        _logger.LogInformation("Operator deleted firewall rule '{DisplayName}' (id {RuleId}). {Note}", displayName, request.RuleId, note);
+
+        return (true, $"Deleted rule '{displayName}'. {note}");
+    }
+
+    private sealed class RuleDeletionDetails
+    {
+        public string? DisplayName { get; set; }
+        public List<string>? Ips { get; set; }
+    }
+
+    /// <summary>Deterministic unique rule Name: same display name always maps
+    /// to the same id, so re-syncs stay idempotent and the UI has a stable
+    /// handle for deletion.</summary>
+    public static string UniqueRuleId(string ruleDisplayName)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ruleDisplayName));
+        return "LogDB-FW-" + Convert.ToHexString(hash, 0, 6);
+    }
+
+    /// <summary>Recovers the feed display name from a rule display name by
+    /// stripping the configured prefix and any " (n/m)" chunk suffix.</summary>
+    public static string ExtractSourceFromDisplayName(string ruleDisplayName, string ruleNamePrefix)
+    {
+        var prefix = string.IsNullOrWhiteSpace(ruleNamePrefix) ? "LogDB Firewall" : ruleNamePrefix;
+        var sourcePrefix = $"{prefix} - ";
+        var source = ruleDisplayName.StartsWith(sourcePrefix, StringComparison.OrdinalIgnoreCase)
+            ? ruleDisplayName[sourcePrefix.Length..]
+            : ruleDisplayName;
+
+        var openParen = source.LastIndexOf(" (", StringComparison.Ordinal);
+        if (openParen > 0 && source.EndsWith(")", StringComparison.Ordinal))
+            source = source[..openParen];
+        return source;
+    }
+
+    private async Task<(int RuleCount, int Changes)> SyncFeedAsync(
         FirewallConfigDto config,
         string displayName,
         HashSet<string> ips,
         CancellationToken cancellationToken)
     {
         var baseRuleName = $"{config.RuleNamePrefix} - {displayName}";
+        var changes = 0;
 
         if (ips.Count == 0)
         {
             var stale = await GetManagedRuleNamesAsync(baseRuleName, cancellationToken).ConfigureAwait(false);
             foreach (var ruleName in stale)
-                await RemoveRuleAsync(ruleName, config.DryRun, cancellationToken).ConfigureAwait(false);
-            return 0;
+            {
+                await RemoveRuleAsync(ruleName, displayName, config.DryRun, cancellationToken).ConfigureAwait(false);
+                changes++;
+            }
+            return (0, changes);
         }
 
         var chunkSize = config.MaxIpsPerRule > 0 ? config.MaxIpsPerRule : 5000;
@@ -159,9 +389,10 @@ public sealed class FirewallSyncEngine
                 continue;
 
             if (existing.Count > 0)
-                await UpdateRuleAsync(ruleName, chunks[i], config.DryRun, cancellationToken).ConfigureAwait(false);
+                await UpdateRuleAsync(ruleName, displayName, chunks[i], config.DryRun, cancellationToken).ConfigureAwait(false);
             else
-                await CreateRuleAsync(ruleName, chunks[i], config.Direction, config.DryRun, cancellationToken).ConfigureAwait(false);
+                await CreateRuleAsync(ruleName, displayName, chunks[i], config.Direction, config.DryRun, cancellationToken).ConfigureAwait(false);
+            changes++;
         }
 
         // Trim leftover sub-rules from when the feed was larger (e.g. shrank
@@ -180,19 +411,23 @@ public sealed class FirewallSyncEngine
         foreach (var existing in allExisting)
         {
             if (!keep.Contains(existing))
-                await RemoveRuleAsync(existing, config.DryRun, cancellationToken).ConfigureAwait(false);
+            {
+                await RemoveRuleAsync(existing, displayName, config.DryRun, cancellationToken).ConfigureAwait(false);
+                changes++;
+            }
         }
 
-        return chunks.Count;
+        return (chunks.Count, changes);
     }
 
-    private async Task PruneOrphanedSourcesAsync(
+    private async Task<int> PruneOrphanedSourcesAsync(
         FirewallConfigDto config,
         HashSet<string> enabledDisplayNames,
         CancellationToken cancellationToken)
     {
         var allManaged = await GetManagedRuleNamesAsync(config.RuleNamePrefix, cancellationToken).ConfigureAwait(false);
         var sourcePrefix = $"{config.RuleNamePrefix} - ";
+        var changes = 0;
 
         foreach (var rule in allManaged)
         {
@@ -206,8 +441,13 @@ public sealed class FirewallSyncEngine
                 displayName = displayName[..openParen];
 
             if (!enabledDisplayNames.Contains(displayName))
-                await RemoveRuleAsync(rule, config.DryRun, cancellationToken).ConfigureAwait(false);
+            {
+                await RemoveRuleAsync(rule, displayName, config.DryRun, cancellationToken).ConfigureAwait(false);
+                changes++;
+            }
         }
+
+        return changes;
     }
 
     private async Task<List<string>> GetManagedRuleNamesAsync(string prefixOrBaseName, CancellationToken cancellationToken)
@@ -241,11 +481,12 @@ public sealed class FirewallSyncEngine
         }
     }
 
-    private async Task CreateRuleAsync(string ruleName, List<string> ips, string direction, bool dryRun, CancellationToken cancellationToken)
+    private async Task CreateRuleAsync(string ruleName, string source, List<string> ips, string direction, bool dryRun, CancellationToken cancellationToken)
     {
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would create rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
+            RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true, dryRun: true);
             return;
         }
 
@@ -253,9 +494,15 @@ public sealed class FirewallSyncEngine
         try
         {
             await File.WriteAllLinesAsync(tempFile, ips, cancellationToken).ConfigureAwait(false);
-            var command = $"$ips = Get-Content '{EscapePs(tempFile)}'; New-NetFirewallRule -DisplayName '{EscapePs(ruleName)}' -Direction {direction} -Action Block -RemoteAddress $ips -Enabled True -Profile Any -Description 'Managed by LogDB Windows Collector' | Out-Null";
+            var command = $"$ips = Get-Content '{EscapePs(tempFile)}'; New-NetFirewallRule -Name '{EscapePs(UniqueRuleId(ruleName))}' -DisplayName '{EscapePs(ruleName)}' -Group '{ManagedRuleGroup}' -Direction {direction} -Action Block -RemoteAddress $ips -Enabled True -Profile Any -Description 'Managed by LogDB Windows Collector' | Out-Null";
             await RunPowerShellAsync(command, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
+            RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: false, message: ex.Message);
+            throw;
         }
         finally
         {
@@ -263,11 +510,12 @@ public sealed class FirewallSyncEngine
         }
     }
 
-    private async Task UpdateRuleAsync(string ruleName, List<string> ips, bool dryRun, CancellationToken cancellationToken)
+    private async Task UpdateRuleAsync(string ruleName, string source, List<string> ips, bool dryRun, CancellationToken cancellationToken)
     {
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would update rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
+            RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true, dryRun: true);
             return;
         }
 
@@ -278,6 +526,12 @@ public sealed class FirewallSyncEngine
             var command = $"$ips = Get-Content '{EscapePs(tempFile)}'; Set-NetFirewallRule -DisplayName '{EscapePs(ruleName)}' -RemoteAddress $ips";
             await RunPowerShellAsync(command, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Updated rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
+            RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: false, message: ex.Message);
+            throw;
         }
         finally
         {
@@ -285,18 +539,51 @@ public sealed class FirewallSyncEngine
         }
     }
 
-    private async Task RemoveRuleAsync(string ruleName, bool dryRun, CancellationToken cancellationToken)
+    private async Task RemoveRuleAsync(string ruleName, string source, bool dryRun, CancellationToken cancellationToken)
     {
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would remove rule '{RuleName}'", ruleName);
+            RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true, dryRun: true);
             return;
         }
 
-        await RunPowerShellAsync(
-            $"Remove-NetFirewallRule -DisplayName '{EscapePs(ruleName)}' -ErrorAction SilentlyContinue",
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RunPowerShellAsync(
+                $"Remove-NetFirewallRule -DisplayName '{EscapePs(ruleName)}' -ErrorAction SilentlyContinue",
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: false, message: ex.Message);
+            throw;
+        }
+
         _logger.LogInformation("Removed rule '{RuleName}'", ruleName);
+        RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true);
+    }
+
+    private void RecordRuleChange(
+        string action,
+        string ruleName,
+        string source,
+        int ipCount,
+        bool success,
+        bool dryRun = false,
+        string message = "")
+    {
+        _history.Record(new FirewallRuleHistoryEntryDto
+        {
+            TimestampUtc = DateTime.UtcNow,
+            Action = action,
+            RuleName = ruleName,
+            Source = source,
+            IpCount = ipCount,
+            Success = success,
+            DryRun = dryRun,
+            Message = message
+        });
     }
 
     private async Task RunPowerShellAsync(string command, CancellationToken cancellationToken)

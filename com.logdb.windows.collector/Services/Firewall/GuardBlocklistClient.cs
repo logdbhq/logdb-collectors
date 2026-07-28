@@ -92,6 +92,66 @@ public sealed class GuardBlocklistClient : IDisposable
         return ips;
     }
 
+    /// <summary>
+    /// Tells the Guard backend to drop the given IPs from its blocklist —
+    /// called when an operator deletes a Guard-sourced rule locally, so the
+    /// next sync doesn't just re-block them. Unlike <see cref="FetchAsync"/>
+    /// this reports failure to the caller: the operator needs to know the
+    /// backend still has the IPs.
+    /// </summary>
+    public async Task<(bool Success, string Message)> RemoveBlockedIpsAsync(
+        LogDbConfigDto logDbConfig,
+        CustomBlocklistConfigDto guardConfig,
+        IReadOnlyCollection<string> ips,
+        CancellationToken cancellationToken = default)
+    {
+        if (ips.Count == 0) return (true, "No IPs to remove.");
+        if (string.IsNullOrWhiteSpace(logDbConfig.ApiKey))
+            return (false, "LogDB:ApiKey is empty — cannot authenticate against the Guard backend.");
+
+        var endpoint = await ResolveEndpointAsync(logDbConfig, guardConfig, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(endpoint))
+            return (false, "Guard endpoint could not be resolved (GuardUrl empty and discovery failed).");
+
+        try
+        {
+            if (_channel is null || !string.Equals(_cachedEndpoint, endpoint, StringComparison.OrdinalIgnoreCase))
+            {
+                _channel?.Dispose();
+                _channel = GrpcChannel.ForAddress(endpoint);
+                _cachedEndpoint = endpoint;
+            }
+
+            var client = new GuardService.GuardServiceClient(_channel);
+            var headers = new Metadata { { "authorization", $"Bearer {logDbConfig.ApiKey}" } };
+
+            var request = new RemoveBlockedIpsRequest();
+            request.IpAddresses.AddRange(ips);
+
+            var response = await client.RemoveBlockedIpsAsync(
+                request,
+                headers: headers,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            _logger.LogInformation("Guard blocklist: removed {Count} IPs via {Endpoint}", response.RemovedCount, endpoint);
+            return (true, $"Removed {response.RemovedCount} IP(s) from the Guard backend.");
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
+        {
+            return (false, "Guard backend does not support IP removal yet (RemoveBlockedIps unimplemented).");
+        }
+        catch (RpcException ex)
+        {
+            _logger.LogError("Guard RemoveBlockedIps gRPC error: Status={Status}, Detail={Detail}", ex.StatusCode, ex.Status.Detail);
+            return (false, $"Guard backend removal failed: {ex.StatusCode} {ex.Status.Detail}".Trim());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Guard RemoveBlockedIps failed");
+            return (false, $"Guard backend removal failed: {ex.Message}");
+        }
+    }
+
     private async Task<string?> ResolveEndpointAsync(
         LogDbConfigDto logDbConfig,
         CustomBlocklistConfigDto guardConfig,

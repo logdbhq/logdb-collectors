@@ -104,6 +104,7 @@ builder.Services.AddSingleton<ICollectorControlInspector, CollectorControlInspec
 builder.Services.AddSingleton<PublicBlocklistFetcher>();
 builder.Services.AddSingleton<FirewallWhitelistService>();
 builder.Services.AddSingleton<GuardBlocklistClient>();
+builder.Services.AddSingleton<FirewallRuleHistoryStore>();
 builder.Services.AddSingleton<FirewallSyncEngine>();
 builder.Services.AddSingleton<IDiskSpooler, NullDiskSpooler>();
 builder.Services.AddSingleton<ModuleHostFactory>();

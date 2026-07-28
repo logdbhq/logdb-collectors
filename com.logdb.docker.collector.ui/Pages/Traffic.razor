@@ -227,7 +227,8 @@
                     {
                         var idx = rowIdx++;
                         var isStderr = r.Stream == "stderr";
-                        var isError = isStderr || r.ParsedLevel is "Error" or "Critical";
+                        // Mirror the exporter: trust the parsed level when present, fall back to stderr only when it's unknown.
+                        var isError = r.ParsedLevel is "Error" or "Critical" || (r.ParsedLevel is null && isStderr);
                         var isWarn = r.ParsedLevel is "Warning";
                         var filtered = !r.Exported;
                         var expanded = _expandedRows.Contains(idx);

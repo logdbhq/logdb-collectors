@@ -213,7 +213,7 @@ public class DockerFileTailService : IFileTailService
                     // Flush previous buffered record into batch
                     if (buffered is not null)
                     {
-                        NormalizeDotNetLoggerOutput(buffered);
+                        NormalizeLogLevel(buffered);
                         Interlocked.Increment(ref _recordsRead);
                         lock (_lock) { _lastRecordTimestamp = buffered.Timestamp; }
                         batch.Add(buffered);
@@ -231,7 +231,7 @@ public class DockerFileTailService : IFileTailService
             // Flush last buffered record into batch
             if (buffered is not null)
             {
-                NormalizeDotNetLoggerOutput(buffered);
+                NormalizeLogLevel(buffered);
                 Interlocked.Increment(ref _recordsRead);
                 lock (_lock) { _lastRecordTimestamp = buffered.Timestamp; }
                 batch.Add(buffered);
@@ -313,6 +313,88 @@ public class DockerFileTailService : IFileTailService
         ["trce"] = "Trace", ["dbug"] = "Debug", ["info"] = "Info",
         ["warn"] = "Warning", ["fail"] = "Error", ["crit"] = "Critical"
     };
+
+    /// <summary>
+    /// Derive a real severity from the message content so the stream-based fallback
+    /// (stderr -> Error) doesn't mislabel routine output. Tries the .NET ConsoleLogger
+    /// format, then logfmt (logrus: Go apps like CrowdSec/Traefik/Docker), then
+    /// PostgreSQL — all of which write non-error severities to stderr.
+    /// </summary>
+    internal static void NormalizeLogLevel(LogRecord record)
+    {
+        NormalizeDotNetLoggerOutput(record);
+        if (record.ParsedLevel is null)
+            NormalizeLogfmtLevel(record);
+        if (record.ParsedLevel is null)
+            NormalizePostgresLevel(record);
+    }
+
+    // logfmt / logrus line, e.g. 'time="..." level=info msg="..." module=lapi'.
+    // The first level=<word> token is the real severity (it precedes msg in logrus output).
+    private static readonly Regex LogfmtLevelRegex = new(
+        @"(?:^|\s)level=""?(\w+)""?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Dictionary<string, string> LogfmtLevelMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["trace"] = "Trace", ["debug"] = "Debug", ["info"] = "Info",
+        ["warn"] = "Warning", ["warning"] = "Warning",
+        ["error"] = "Error", ["err"] = "Error", ["fail"] = "Error",
+        ["fatal"] = "Critical", ["panic"] = "Critical", ["crit"] = "Critical"
+    };
+
+    /// <summary>
+    /// logrus and most Go services emit logfmt ('... level=info msg=...') and send
+    /// everything to stderr, so without this every line falls through to stderr -> Error.
+    /// Only sets a level when the token is a recognized severity, so arbitrary
+    /// "level=..." text in other output is left for the stream fallback.
+    /// </summary>
+    private static void NormalizeLogfmtLevel(LogRecord record)
+    {
+        var firstLine = record.Message;
+        var newlineIdx = firstLine.IndexOf('\n');
+        if (newlineIdx > 0) firstLine = firstLine[..newlineIdx];
+
+        var match = LogfmtLevelRegex.Match(firstLine);
+        if (!match.Success) return;
+
+        if (LogfmtLevelMap.TryGetValue(match.Groups[1].Value, out var level))
+            record.ParsedLevel = level;
+    }
+
+    // PostgreSQL line, e.g. "2026-06-05 11:33:40.438 UTC [127928] [local] admin db LOG:  ...".
+    // The severity token is the first "SEVERITY: " after the leading timestamp.
+    private static readonly Regex PostgresLogRegex = new(
+        @"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?.*?\b(DEBUG[1-5]|INFO|NOTICE|LOG|WARNING|ERROR|FATAL|PANIC):\s",
+        RegexOptions.Compiled);
+
+    private static readonly Dictionary<string, string> PostgresLevelMap = new(StringComparer.Ordinal)
+    {
+        ["DEBUG1"] = "Debug", ["DEBUG2"] = "Debug", ["DEBUG3"] = "Debug",
+        ["DEBUG4"] = "Debug", ["DEBUG5"] = "Debug",
+        ["INFO"] = "Info", ["NOTICE"] = "Info", ["LOG"] = "Info",
+        ["WARNING"] = "Warning", ["ERROR"] = "Error",
+        ["FATAL"] = "Critical", ["PANIC"] = "Critical"
+    };
+
+    /// <summary>
+    /// PostgreSQL sends LOG/INFO/WARNING/FATAL/etc. all to stderr, so without this
+    /// every Postgres line would fall through to the stderr -> Error default. Parse the
+    /// real severity (LOG -> Info, WARNING -> Warning, ERROR -> Error, FATAL/PANIC -> Critical).
+    /// </summary>
+    private static void NormalizePostgresLevel(LogRecord record)
+    {
+        // Only stderr carries the Postgres severity tokens we're correcting for.
+        if (record.Stream != "stderr") return;
+
+        var firstLine = record.Message;
+        var newlineIdx = firstLine.IndexOf('\n');
+        if (newlineIdx > 0) firstLine = firstLine[..newlineIdx];
+
+        var match = PostgresLogRegex.Match(firstLine);
+        if (!match.Success) return;
+
+        record.ParsedLevel = PostgresLevelMap.GetValueOrDefault(match.Groups[2].Value, "Info");
+    }
 
     /// <summary>
     /// After multiline merge, if the first line is a .NET ConsoleLogger header

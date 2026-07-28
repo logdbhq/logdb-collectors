@@ -131,6 +131,86 @@ public sealed class ControlChannelClient
         return entries ?? new List<DiagnosticEntryDto>();
     }
 
+    /// <summary>
+    /// Returns null (not empty) when the target collector predates the
+    /// firewall-history command, so callers can fall back to diagnostics
+    /// scraping instead of showing a blank history.
+    /// </summary>
+    public async Task<IReadOnlyList<FirewallRuleHistoryEntryDto>?> GetFirewallHistoryAsync(
+        CollectorInstanceMode mode,
+        int maxEntries = 100,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetFirewallHistory,
+            payloadJson: maxEntries.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<FirewallRuleHistoryEntryDto>>(response.PayloadJson, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Null when the target collector predates the firewall-rules
+    /// command; empty list means "no managed rules right now".</summary>
+    public async Task<IReadOnlyList<FirewallRuleInfoDto>?> GetFirewallRulesAsync(
+        CollectorInstanceMode mode,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetFirewallRules,
+            timeoutMilliseconds: 30000,
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<FirewallRuleInfoDto>>(response.PayloadJson, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public async Task<(bool Success, string Message)> DeleteFirewallRuleAsync(
+        CollectorInstanceMode mode,
+        string ruleId,
+        bool removeFromBackend,
+        CancellationToken cancellationToken = default)
+    {
+        var payload = JsonSerializer.Serialize(new DeleteFirewallRuleRequestDto
+        {
+            RuleId = ruleId,
+            RemoveFromBackend = removeFromBackend
+        }, JsonOptions);
+
+        var response = await SendAsync(
+            mode,
+            ControlCommands.DeleteFirewallRule,
+            payloadJson: payload,
+            timeoutMilliseconds: 30000,
+            cancellationToken: cancellationToken);
+
+        return (response.Success, response.Message ?? (response.Success ? "Rule deleted." : "Delete failed."));
+    }
+
     public async Task<CollectorConfigDto?> GetRedactedConfigAsync(
         CollectorInstanceMode mode,
         CancellationToken cancellationToken = default)
