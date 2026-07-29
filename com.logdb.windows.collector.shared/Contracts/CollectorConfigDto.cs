@@ -250,3 +250,26 @@ public class PublicBlocklistFeedDto
     /// include entries with score &gt;= this. 0 disables score filtering.</summary>
     public int MinScore { get; set; }
 }
+
+/// <summary>
+/// The stock public threat feeds, used whenever <see
+/// cref="FirewallConfigDto.PublicBlocklists"/> is empty — a config written by
+/// an older collector or UI has no feeds section at all, and without this
+/// fallback enabling the firewall module did nothing but log "no blocklists
+/// configured" every poll. An empty dictionary means "never configured", so it
+/// gets defaults; a dictionary where every feed is disabled is an explicit
+/// operator choice and is left alone. Mirrors appsettings.Example.json.
+/// </summary>
+public static class FirewallDefaults
+{
+    public static Dictionary<string, PublicBlocklistFeedDto> CreatePublicBlocklists() =>
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["firehol_level1"] = new() { Enabled = true, DisplayName = "FireHOL Level 1", Url = "https://iplists.firehol.org/files/firehol_level1.netset" },
+            ["firehol_level2"] = new() { Enabled = true, DisplayName = "FireHOL Level 2", Url = "https://iplists.firehol.org/files/firehol_level2.netset" },
+            ["tor_exits"] = new() { Enabled = true, DisplayName = "Tor Exit Nodes", Url = "https://check.torproject.org/torbulkexitlist" },
+            ["ipsum_score3"] = new() { Enabled = true, DisplayName = "IPsum (score >= 3)", Url = "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt", MinScore = 3 },
+            ["blocklist_de"] = new() { Enabled = false, DisplayName = "Blocklist.de", Url = "https://lists.blocklist.de/lists/all.txt" },
+            ["cins_army"] = new() { Enabled = false, DisplayName = "CINS Army", Url = "http://cinsscore.com/list/ci-badguys.txt" }
+        };
+}

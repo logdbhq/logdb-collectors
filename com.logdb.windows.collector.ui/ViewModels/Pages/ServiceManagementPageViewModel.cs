@@ -564,6 +564,14 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
 
     private void LoadBlocklistFeedsFromConfig(Dictionary<string, PublicBlocklistFeedDto> source)
     {
+        // Empty = feeds never configured; show the stock defaults the service
+        // will actually sync with (see FirewallDefaults), so what the operator
+        // sees matches what runs — and saving persists them into the config.
+        if (source.Count == 0)
+        {
+            source = FirewallDefaults.CreatePublicBlocklists();
+        }
+
         BlocklistFeeds.Clear();
         foreach (var (feedId, feed) in source.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
         {

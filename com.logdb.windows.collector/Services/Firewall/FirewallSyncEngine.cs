@@ -73,7 +73,13 @@ public sealed class FirewallSyncEngine
         if (!IsElevated())
             return FirewallSyncSummary.Failed("Elevation required to manage firewall rules.");
 
-        var enabledFeeds = config.PublicBlocklists
+        // Empty dictionary = feeds never configured (old config file) — fall
+        // back to the stock feeds so enabling the module actually does
+        // something. All-disabled is an explicit choice and is honored.
+        var publicBlocklists = config.PublicBlocklists.Count > 0
+            ? config.PublicBlocklists
+            : FirewallDefaults.CreatePublicBlocklists();
+        var enabledFeeds = publicBlocklists
             .Where(kvp => kvp.Value.Enabled && !string.IsNullOrWhiteSpace(kvp.Value.Url))
             .ToList();
         var customEnabled = config.CustomBlocklist.Enabled;
