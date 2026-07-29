@@ -35,12 +35,18 @@ public sealed class GuardBlocklistClient : IDisposable
         _logger = logger;
     }
 
-    public async Task<HashSet<string>> FetchAsync(
+    /// <summary>Operator-facing provenance of one Guard-blocked IP. Reason is
+    /// free text written (or template-generated) in the desktop Guard app /
+    /// FloodGuard console — unsanitized and unbounded server-side, so treat it
+    /// as display/audit text only: never parse it, cap it before rendering.</summary>
+    public sealed record GuardBlockedIpInfo(string Reason, string AddedBy);
+
+    public async Task<Dictionary<string, GuardBlockedIpInfo>> FetchAsync(
         LogDbConfigDto logDbConfig,
         CustomBlocklistConfigDto guardConfig,
         CancellationToken cancellationToken = default)
     {
-        var ips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ips = new Dictionary<string, GuardBlockedIpInfo>(StringComparer.OrdinalIgnoreCase);
         if (!guardConfig.Enabled) return ips;
         if (string.IsNullOrWhiteSpace(logDbConfig.ApiKey))
         {
@@ -75,7 +81,7 @@ public sealed class GuardBlocklistClient : IDisposable
             foreach (var entry in response.BlockedIps)
             {
                 if (!string.IsNullOrWhiteSpace(entry.IpAddress))
-                    ips.Add(entry.IpAddress);
+                    ips[entry.IpAddress] = new GuardBlockedIpInfo(entry.Reason ?? string.Empty, entry.AddedBy ?? string.Empty);
             }
 
             _logger.LogInformation("Guard blocklist: loaded {Count} IPs from {Endpoint}", ips.Count, endpoint);

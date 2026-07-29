@@ -118,9 +118,11 @@ public sealed class FirewallSyncEngine
                 var customDisplayName = string.IsNullOrWhiteSpace(config.CustomBlocklist.DisplayName)
                     ? "LogDB Guard"
                     : config.CustomBlocklist.DisplayName;
-                var guardIps = await _guardClient.FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken).ConfigureAwait(false);
+                var guardEntries = await _guardClient.FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken).ConfigureAwait(false);
+                var guardIps = guardEntries.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var whitelisted = FirewallWhitelistService.Apply(guardIps, whitelist);
-                var (ruleCount, changes) = await SyncFeedAsync(config, customDisplayName, guardIps, cancellationToken).ConfigureAwait(false);
+                var (ruleCount, changes) = await SyncFeedAsync(config, customDisplayName, guardIps, cancellationToken,
+                    BuildGuardAnnotations(guardEntries)).ConfigureAwait(false);
 
                 perFeed.Add(new FirewallFeedSyncSummary("custom_guard", customDisplayName, guardIps.Count, ruleCount, whitelisted));
                 activeDisplayNames.Add(customDisplayName);
@@ -296,6 +298,18 @@ public sealed class FirewallSyncEngine
             : config.CustomBlocklist.DisplayName;
         var isGuardRule = string.Equals(source, guardDisplayName, StringComparison.OrdinalIgnoreCase);
 
+        // Capture the operator comments BEFORE the backend removal — deleting a
+        // Guard row destroys its reason with no tombstone, so the history entry
+        // written below is the only surviving record of why each IP was blocked.
+        IReadOnlyDictionary<string, string>? annotations = null;
+        if (isGuardRule)
+        {
+            var guardEntries = await _guardClient
+                .FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken)
+                .ConfigureAwait(false);
+            if (guardEntries.Count > 0) annotations = BuildGuardAnnotations(guardEntries);
+        }
+
         string? backendNote = null;
         if (isGuardRule && request.RemoveFromBackend)
         {
@@ -325,7 +339,7 @@ public sealed class FirewallSyncEngine
                 ? "Backend removal was skipped."
                 : "Public-feed rule: it will be re-created on the next sync while the feed still lists these IPs.");
         RecordRuleChange(FirewallHistoryActions.RuleRemoved, displayName, source, ips.Count, success: true,
-            message: $"Deleted by operator. {note}", removed: ips);
+            message: $"Deleted by operator. {note}", removed: ips, annotations: annotations);
         _logger.LogInformation("Operator deleted firewall rule '{DisplayName}' (id {RuleId}). {Note}", displayName, request.RuleId, note);
 
         return (true, $"Deleted rule '{displayName}'. {note}");
@@ -402,7 +416,8 @@ public sealed class FirewallSyncEngine
         FirewallConfigDto config,
         string displayName,
         HashSet<string> ips,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? annotations = null)
     {
         var baseRuleName = $"{config.RuleNamePrefix} - {displayName}";
         var changes = 0;
@@ -412,7 +427,7 @@ public sealed class FirewallSyncEngine
             var stale = await GetManagedRuleNamesAsync(baseRuleName, cancellationToken).ConfigureAwait(false);
             foreach (var ruleName in stale)
             {
-                await RemoveRuleAsync(ruleName, displayName, config.DryRun, cancellationToken).ConfigureAwait(false);
+                await RemoveRuleAsync(ruleName, displayName, config.DryRun, cancellationToken, annotations).ConfigureAwait(false);
                 changes++;
             }
             return (0, changes);
@@ -437,11 +452,11 @@ public sealed class FirewallSyncEngine
             {
                 var added = desired.Where(ip => !existing.Contains(ip)).ToList();
                 var removed = existing.Where(ip => !desired.Contains(ip)).ToList();
-                await UpdateRuleAsync(ruleName, displayName, chunks[i], added, removed, config.DryRun, cancellationToken).ConfigureAwait(false);
+                await UpdateRuleAsync(ruleName, displayName, chunks[i], added, removed, config.DryRun, cancellationToken, annotations).ConfigureAwait(false);
             }
             else
             {
-                await CreateRuleAsync(ruleName, displayName, chunks[i], config.Direction, config.DryRun, cancellationToken).ConfigureAwait(false);
+                await CreateRuleAsync(ruleName, displayName, chunks[i], config.Direction, config.DryRun, cancellationToken, annotations).ConfigureAwait(false);
             }
             changes++;
         }
@@ -463,7 +478,7 @@ public sealed class FirewallSyncEngine
         {
             if (!keep.Contains(existing))
             {
-                await RemoveRuleAsync(existing, displayName, config.DryRun, cancellationToken).ConfigureAwait(false);
+                await RemoveRuleAsync(existing, displayName, config.DryRun, cancellationToken, annotations).ConfigureAwait(false);
                 changes++;
             }
         }
@@ -532,13 +547,13 @@ public sealed class FirewallSyncEngine
         }
     }
 
-    private async Task CreateRuleAsync(string ruleName, string source, List<string> ips, string direction, bool dryRun, CancellationToken cancellationToken)
+    private async Task CreateRuleAsync(string ruleName, string source, List<string> ips, string direction, bool dryRun, CancellationToken cancellationToken, IReadOnlyDictionary<string, string>? annotations = null)
     {
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would create rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
             RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true, dryRun: true,
-                added: ips);
+                added: ips, annotations: annotations);
             return;
         }
 
@@ -550,7 +565,7 @@ public sealed class FirewallSyncEngine
             await RunPowerShellAsync(command, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
             RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true,
-                added: ips);
+                added: ips, annotations: annotations);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -563,13 +578,13 @@ public sealed class FirewallSyncEngine
         }
     }
 
-    private async Task UpdateRuleAsync(string ruleName, string source, List<string> ips, List<string> added, List<string> removed, bool dryRun, CancellationToken cancellationToken)
+    private async Task UpdateRuleAsync(string ruleName, string source, List<string> ips, List<string> added, List<string> removed, bool dryRun, CancellationToken cancellationToken, IReadOnlyDictionary<string, string>? annotations = null)
     {
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would update rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
             RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true, dryRun: true,
-                added: added, removed: removed);
+                added: added, removed: removed, annotations: annotations);
             return;
         }
 
@@ -581,7 +596,7 @@ public sealed class FirewallSyncEngine
             await RunPowerShellAsync(command, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Updated rule '{RuleName}' with {Count} IPs (+{Added}/−{Removed})", ruleName, ips.Count, added.Count, removed.Count);
             RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true,
-                added: added, removed: removed);
+                added: added, removed: removed, annotations: annotations);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -594,7 +609,7 @@ public sealed class FirewallSyncEngine
         }
     }
 
-    private async Task RemoveRuleAsync(string ruleName, string source, bool dryRun, CancellationToken cancellationToken)
+    private async Task RemoveRuleAsync(string ruleName, string source, bool dryRun, CancellationToken cancellationToken, IReadOnlyDictionary<string, string>? annotations = null)
     {
         // Read the rule's IPs before removal so the history entry can say what
         // stopped being blocked; best-effort — an empty set just means no delta.
@@ -604,7 +619,7 @@ public sealed class FirewallSyncEngine
         {
             _logger.LogWarning("[DRY RUN] Would remove rule '{RuleName}'", ruleName);
             RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true, dryRun: true,
-                removed: removedIps.ToList());
+                removed: removedIps.ToList(), annotations: annotations);
             return;
         }
 
@@ -622,7 +637,7 @@ public sealed class FirewallSyncEngine
 
         _logger.LogInformation("Removed rule '{RuleName}'", ruleName);
         RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true,
-            removed: removedIps.ToList());
+            removed: removedIps.ToList(), annotations: annotations);
     }
 
     /// <summary>History entries store a capped sample of the changed IPs, plus
@@ -638,7 +653,8 @@ public sealed class FirewallSyncEngine
         bool dryRun = false,
         string message = "",
         List<string>? added = null,
-        List<string>? removed = null)
+        List<string>? removed = null,
+        IReadOnlyDictionary<string, string>? annotations = null)
     {
         _history.Record(new FirewallRuleHistoryEntryDto
         {
@@ -652,9 +668,53 @@ public sealed class FirewallSyncEngine
             Message = message,
             AddedCount = added?.Count ?? 0,
             RemovedCount = removed?.Count ?? 0,
-            AddedIps = added?.Take(MaxIpSampleSize).ToList() ?? new List<string>(),
-            RemovedIps = removed?.Take(MaxIpSampleSize).ToList() ?? new List<string>()
+            AddedIps = AnnotatedSample(added, annotations),
+            RemovedIps = AnnotatedSample(removed, annotations)
         });
+    }
+
+    /// <summary>Caps the sample and appends each IP's operator comment when one
+    /// is known (Guard-sourced IPs): "1.2.3.4 — SSH brute force (vladimir)".</summary>
+    private static List<string> AnnotatedSample(List<string>? ips, IReadOnlyDictionary<string, string>? annotations)
+    {
+        if (ips == null) return new List<string>();
+        return ips
+            .Take(MaxIpSampleSize)
+            .Select(ip => annotations != null && annotations.TryGetValue(ip, out var note) && note.Length > 0
+                ? $"{ip} — {note}"
+                : ip)
+            .ToList();
+    }
+
+    /// <summary>Turns Guard entries into per-IP display notes: the operator's
+    /// free-text reason plus who added it. Reason is unsanitized and unbounded
+    /// server-side, so it is whitespace-collapsed and capped here — display
+    /// text only, never parsed.</summary>
+    private static Dictionary<string, string> BuildGuardAnnotations(
+        Dictionary<string, GuardBlocklistClient.GuardBlockedIpInfo> entries)
+    {
+        var annotations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (ip, info) in entries)
+        {
+            var reason = CompactText(info.Reason, 120);
+            var addedBy = CompactText(info.AddedBy, 40);
+            var note = (reason, addedBy) switch
+            {
+                ("", "") => string.Empty,
+                ("", _) => $"added by {addedBy}",
+                (_, "") => reason,
+                _ => $"{reason} ({addedBy})"
+            };
+            if (note.Length > 0) annotations[ip] = note;
+        }
+        return annotations;
+    }
+
+    private static string CompactText(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var compact = System.Text.RegularExpressions.Regex.Replace(value, @"\s+", " ").Trim();
+        return compact.Length <= maxLength ? compact : compact[..maxLength] + "…";
     }
 
     private async Task RunPowerShellAsync(string command, CancellationToken cancellationToken)
