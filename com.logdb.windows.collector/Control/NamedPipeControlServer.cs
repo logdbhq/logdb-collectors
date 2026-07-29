@@ -375,6 +375,25 @@ public sealed class NamedPipeControlServer : BackgroundService
                     PayloadJson = JsonSerializer.Serialize(rules, JsonOptions)
                 };
 
+            case ControlCommands.GetFirewallRuleIps:
+                var ruleIpsId = ParseStringPayload(request.PayloadJson, "ruleId");
+                if (string.IsNullOrWhiteSpace(ruleIpsId))
+                {
+                    return new ControlResponseDto
+                    {
+                        Success = false,
+                        Message = "firewall-rule-ips requires a rule id payload (\"<id>\" or {\"ruleId\":\"...\"})."
+                    };
+                }
+
+                var ipsResult = await _firewallEngine.GetRuleIpsAsync(ruleIpsId, cancellationToken);
+                return new ControlResponseDto
+                {
+                    Success = ipsResult.Success,
+                    Message = ipsResult.Message,
+                    PayloadJson = ipsResult.Rule == null ? null : JsonSerializer.Serialize(ipsResult.Rule, JsonOptions)
+                };
+
             case ControlCommands.DeleteFirewallRule:
                 DeleteFirewallRuleRequestDto? deleteRequest = null;
                 if (!string.IsNullOrWhiteSpace(request.PayloadJson))
@@ -646,6 +665,42 @@ public sealed class NamedPipeControlServer : BackgroundService
     {
         error = message;
         return false;
+    }
+
+    /// <summary>Accepts a bare string, a JSON string literal, or {"<paramref name="propertyName"/>":"..."}.</summary>
+    private static string? ParseStringPayload(string? payloadJson, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return null;
+        }
+
+        var trimmed = payloadJson.Trim();
+        try
+        {
+            if (trimmed.StartsWith("{", StringComparison.Ordinal))
+            {
+                var node = JsonSerializer.Deserialize<JsonElement>(trimmed);
+                if (node.ValueKind == JsonValueKind.Object
+                    && node.TryGetProperty(propertyName, out var prop)
+                    && prop.ValueKind == JsonValueKind.String)
+                {
+                    return prop.GetString();
+                }
+                return null;
+            }
+
+            if (trimmed.StartsWith("\"", StringComparison.Ordinal))
+            {
+                return JsonSerializer.Deserialize<string>(trimmed);
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return trimmed;
     }
 
     private static int ParseMaxDiagnostics(string? payloadJson)

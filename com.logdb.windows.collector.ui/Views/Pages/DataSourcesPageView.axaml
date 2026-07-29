@@ -681,7 +681,7 @@
             </TabItem>
 
             <TabItem Header="Firewall">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="8">
+                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
                     <Border Classes="panel">
                         <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
                             <TextBlock Text="Configuration" Classes="muted" />
@@ -701,10 +701,13 @@
                     </StackPanel>
 
                     <Border Grid.Row="2" Classes="panel">
-                        <dgrid:DataGrid ItemsSource="{Binding FirewallRuleRows}"
+                        <dgrid:DataGrid x:Name="FirewallRulesDataGrid"
+                                        ItemsSource="{Binding FirewallRuleRows}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"
                                         CanUserSortColumns="False"
+                                        CanUserResizeColumns="True"
+                                        PointerReleased="FirewallGrid_OnPointerReleased"
                                         Height="200">
                             <dgrid:DataGrid.Columns>
                                 <dgrid:DataGridTextColumn Header="Rule" Binding="{Binding DisplayName}" Width="*" />
@@ -713,7 +716,18 @@
                                 <dgrid:DataGridTextColumn Header="IPs" Binding="{Binding IpCount}" Width="80" />
                                 <dgrid:DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
                                 <dgrid:DataGridTextColumn Header="Rule Id" Binding="{Binding Id}" Width="160" />
-                                <dgrid:DataGridTemplateColumn Header="" Width="90">
+                                <dgrid:DataGridTemplateColumn Header="" Width="70" CanUserResize="False">
+                                    <dgrid:DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="IPs"
+                                                    Command="{Binding ViewIpsCommand}"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip.Tip="Show the full list of IPs/CIDRs this rule blocks right now, read live from the OS firewall." />
+                                        </DataTemplate>
+                                    </dgrid:DataGridTemplateColumn.CellTemplate>
+                                </dgrid:DataGridTemplateColumn>
+                                <dgrid:DataGridTemplateColumn Header="" Width="90" CanUserResize="False">
                                     <dgrid:DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Button Content="Delete"
@@ -728,7 +742,24 @@
                         </dgrid:DataGrid>
                     </Border>
 
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
+                    <Border Grid.Row="3" Classes="panel" IsVisible="{Binding FirewallIpsPanelVisible}">
+                        <Grid RowDefinitions="Auto,Auto,140" RowSpacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="{Binding FirewallIpsTitle}" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Close" Command="{Binding CloseFirewallIpsCommand}" />
+                            </Grid>
+                            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <TextBox Text="{Binding FirewallIpsFilter, Mode=TwoWay}"
+                                         Watermark="Filter — type an IP or CIDR fragment, e.g. 45.155." />
+                                <TextBlock Grid.Column="1" Classes="muted" VerticalAlignment="Center"
+                                           Text="{Binding FirewallIpsCountText}" />
+                            </Grid>
+                            <ListBox Grid.Row="2" ItemsSource="{Binding FirewallIpsView}"
+                                     FontFamily="Consolas,Menlo,monospace" />
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
                         <Button Content="Refresh Firewall History"
                                 Command="{Binding RefreshFirewallHistoryCommand}"
                                 ToolTip.Tip="Pull the persisted firewall change history from the running collector and rebuild the table below." />
@@ -737,11 +768,14 @@
                                    Text="History is persisted by the collector and survives service restarts." />
                     </StackPanel>
 
-                    <Border Grid.Row="4" Classes="panel">
-                        <dgrid:DataGrid ItemsSource="{Binding FirewallHistoryRows}"
+                    <Border Grid.Row="5" Classes="panel">
+                        <dgrid:DataGrid x:Name="FirewallHistoryDataGrid"
+                                        ItemsSource="{Binding FirewallHistoryRows}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"
                                         CanUserSortColumns="False"
+                                        CanUserResizeColumns="True"
+                                        PointerReleased="FirewallGrid_OnPointerReleased"
                                         Height="320">
                             <dgrid:DataGrid.Columns>
                                 <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />

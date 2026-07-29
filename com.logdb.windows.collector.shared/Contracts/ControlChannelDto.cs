@@ -35,6 +35,7 @@ public static class ControlCommands
     public const string RemoveFirewall = "remove-firewall";
     public const string GetFirewallHistory = "firewall-history";
     public const string GetFirewallRules = "firewall-rules";
+    public const string GetFirewallRuleIps = "firewall-rule-ips";
     public const string DeleteFirewallRule = "delete-firewall-rule";
     public const string StopHost = "stop-host";
     public const string ValidateEventLogAccess = "validate-event-log-access";

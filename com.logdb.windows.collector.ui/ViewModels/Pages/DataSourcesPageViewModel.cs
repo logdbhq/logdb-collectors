@@ -205,9 +205,12 @@ public sealed class DataSourceFirewallHistoryRow
 
 public sealed class DataSourceFirewallRuleRow
 {
-    public DataSourceFirewallRuleRow(Func<DataSourceFirewallRuleRow, Task> deleteAsync)
+    public DataSourceFirewallRuleRow(
+        Func<DataSourceFirewallRuleRow, Task> deleteAsync,
+        Func<DataSourceFirewallRuleRow, Task> viewIpsAsync)
     {
         DeleteCommand = new AsyncRelayCommand(() => deleteAsync(this));
+        ViewIpsCommand = new AsyncRelayCommand(() => viewIpsAsync(this));
     }
 
     public string Id { get; init; } = string.Empty;
@@ -217,6 +220,7 @@ public sealed class DataSourceFirewallRuleRow
     public string Status { get; init; } = string.Empty;
     public int IpCount { get; init; }
     public AsyncRelayCommand DeleteCommand { get; }
+    public AsyncRelayCommand ViewIpsCommand { get; }
 }
 
 public sealed class DataSourcesPageViewModel : PageViewModelBase
@@ -366,6 +370,11 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private string _firewallTabSummary = "Firewall: not loaded.";
     private string _firewallTabRuntime = "Runtime: unavailable.";
     private string _firewallRulesSummary = "Active rules: not loaded.";
+    private bool _firewallIpsPanelVisible;
+    private string _firewallIpsTitle = string.Empty;
+    private string _firewallIpsFilter = string.Empty;
+    private string _firewallIpsCountText = string.Empty;
+    private List<string> _firewallIpsAll = new();
     private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
     private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
 
@@ -392,6 +401,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         HeartbeatTags = new ObservableCollection<TagItemViewModel>();
         FirewallHistoryRows = new ObservableCollection<DataSourceFirewallHistoryRow>();
         FirewallRuleRows = new ObservableCollection<DataSourceFirewallRuleRow>();
+        FirewallIpsView = new ObservableCollection<string>();
 
         AddCustomChannelCommand = new RelayCommand(AddCustomChannel);
         RemoveCustomChannelCommand = new RelayCommand(RemoveSelectedCustomChannel);
@@ -427,6 +437,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         ApplyMetricsCommand = new AsyncRelayCommand(ApplyMetricsAsync);
         RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
         RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
+        CloseFirewallIpsCommand = new RelayCommand(() => FirewallIpsPanelVisible = false);
 
         PauseEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", false));
         ResumeEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", true));
@@ -462,6 +473,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public ObservableCollection<TagItemViewModel> HeartbeatTags { get; }
     public ObservableCollection<DataSourceFirewallHistoryRow> FirewallHistoryRows { get; }
     public ObservableCollection<DataSourceFirewallRuleRow> FirewallRuleRows { get; }
+    public ObservableCollection<string> FirewallIpsView { get; }
 
     public StringItemViewModel? SelectedCustomChannel { get; set; }
     public StringItemViewModel? SelectedIisDirectory { get; set; }
@@ -889,6 +901,36 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         set => SetProperty(ref _firewallRulesSummary, value);
     }
 
+    public bool FirewallIpsPanelVisible
+    {
+        get => _firewallIpsPanelVisible;
+        set => SetProperty(ref _firewallIpsPanelVisible, value);
+    }
+
+    public string FirewallIpsTitle
+    {
+        get => _firewallIpsTitle;
+        set => SetProperty(ref _firewallIpsTitle, value);
+    }
+
+    public string FirewallIpsFilter
+    {
+        get => _firewallIpsFilter;
+        set
+        {
+            if (SetProperty(ref _firewallIpsFilter, value))
+            {
+                RefilterFirewallIps();
+            }
+        }
+    }
+
+    public string FirewallIpsCountText
+    {
+        get => _firewallIpsCountText;
+        set => SetProperty(ref _firewallIpsCountText, value);
+    }
+
     public bool EventLogPaused
     {
         get => _eventLogPaused;
@@ -982,6 +1024,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public AsyncRelayCommand ApplyMetricsCommand { get; }
     public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
     public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
+    public RelayCommand CloseFirewallIpsCommand { get; }
 
     public AsyncRelayCommand PauseEventLogCommand { get; }
     public AsyncRelayCommand ResumeEventLogCommand { get; }
@@ -1885,7 +1928,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
             foreach (var rule in rules.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase))
             {
-                FirewallRuleRows.Add(new DataSourceFirewallRuleRow(DeleteFirewallRuleAsync)
+                FirewallRuleRows.Add(new DataSourceFirewallRuleRow(DeleteFirewallRuleAsync, ViewFirewallRuleIpsAsync)
                 {
                     Id = rule.Id,
                     DisplayName = rule.DisplayName,
@@ -1909,6 +1952,50 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         {
             _firewallRulesRefreshLock.Release();
         }
+    }
+
+    private async Task ViewFirewallRuleIpsAsync(DataSourceFirewallRuleRow row)
+    {
+        try
+        {
+            var (success, message, rule) = await _adminClient.GetFirewallRuleIpsAsync(row.Id);
+            if (!success || rule == null)
+            {
+                _statusCallback(message, false);
+                return;
+            }
+
+            _firewallIpsAll = rule.Ips;
+            FirewallIpsTitle = $"{rule.DisplayName} — {rule.Ips.Count} IPs/CIDRs";
+            FirewallIpsFilter = string.Empty;
+            RefilterFirewallIps();
+            FirewallIpsPanelVisible = true;
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Failed to load IPs for '{row.DisplayName}': {ex.Message}", false);
+        }
+    }
+
+    private void RefilterFirewallIps()
+    {
+        // Cap the rendered list: a 5000-row ListBox is pointless to scroll and
+        // slow to build — the filter box is the way to find a specific address.
+        const int maxShown = 500;
+        var filter = _firewallIpsFilter.Trim();
+        var matches = string.IsNullOrEmpty(filter)
+            ? _firewallIpsAll
+            : _firewallIpsAll.Where(ip => ip.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        FirewallIpsView.Clear();
+        foreach (var ip in matches.Take(maxShown))
+        {
+            FirewallIpsView.Add(ip);
+        }
+
+        FirewallIpsCountText = matches.Count <= maxShown
+            ? $"{matches.Count} shown"
+            : $"showing first {maxShown} of {matches.Count} — refine the filter";
     }
 
     private async Task DeleteFirewallRuleAsync(DataSourceFirewallRuleRow row)
@@ -1970,12 +2057,35 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             parts.Add($"source: {entry.Source}");
         }
 
+        if (entry.AddedCount > 0)
+        {
+            parts.Add(DescribeIpDelta("+", entry.AddedCount, entry.AddedIps));
+        }
+
+        if (entry.RemovedCount > 0)
+        {
+            parts.Add(DescribeIpDelta("−", entry.RemovedCount, entry.RemovedIps));
+        }
+
         if (!string.IsNullOrWhiteSpace(entry.Message))
         {
             parts.Add(entry.Message);
         }
 
         return SummarizeFirewallDetails(string.Join(" — ", parts));
+    }
+
+    /// <summary>"+3: 1.2.3.4, 5.6.7.8, 9.9.9.9" or "+120: 1.2.3.4, … (+115 more)".
+    /// Entries written by pre-delta collector builds have counts of 0 and render
+    /// no delta segment at all.</summary>
+    private static string DescribeIpDelta(string sign, int totalCount, IReadOnlyList<string> sample)
+    {
+        const int shown = 5;
+        var head = string.Join(", ", sample.Take(shown));
+        var rest = totalCount - Math.Min(shown, sample.Count);
+        return rest > 0
+            ? $"{sign}{totalCount}: {head}, … (+{rest} more)"
+            : $"{sign}{totalCount}: {head}";
     }
 
     private void RebuildFirewallHistoryFromDiagnostics(IReadOnlyList<DiagnosticEntryDto> diagnostics)
@@ -2063,13 +2173,14 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
     private static string SummarizeFirewallDetails(string message)
     {
+        // 400, not 220: delta entries carry IP samples and got clipped at the old cap.
         var compact = Regex.Replace(message, @"\s+", " ").Trim();
-        if (compact.Length <= 220)
+        if (compact.Length <= 400)
         {
             return compact;
         }
 
-        return compact[..220] + "...";
+        return compact[..400] + "...";
     }
 
     private void OnDataSourcesPropertyChanged(object? sender, PropertyChangedEventArgs e)

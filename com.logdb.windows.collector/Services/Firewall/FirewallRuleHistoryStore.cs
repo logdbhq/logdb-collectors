@@ -50,7 +50,12 @@ public sealed class FirewallRuleHistoryStore
                 var directory = Path.GetDirectoryName(_path);
                 if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-                File.AppendAllText(_path, JsonSerializer.Serialize(entry, JsonOptions) + Environment.NewLine);
+                // A crash mid-append can leave a torn line with no trailing
+                // newline; appending straight onto it would corrupt THIS entry
+                // too. Heal by terminating the torn line first.
+                var payload = JsonSerializer.Serialize(entry, JsonOptions) + Environment.NewLine;
+                if (!FileEndsWithNewline()) payload = Environment.NewLine + payload;
+                File.AppendAllText(_path, payload);
 
                 if (++_appendsSinceTrimCheck >= TrimThreshold - MaxEntries)
                 {
@@ -73,6 +78,25 @@ public sealed class FirewallRuleHistoryStore
             entries.Reverse();
             if (entries.Count > max) entries.RemoveRange(max, entries.Count - max);
             return entries;
+        }
+    }
+
+    private bool FileEndsWithNewline()
+    {
+        try
+        {
+            using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            if (stream.Length == 0) return true;
+            stream.Seek(-1, SeekOrigin.End);
+            return stream.ReadByte() == '\n';
+        }
+        catch (FileNotFoundException)
+        {
+            return true;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return true;
         }
     }
 

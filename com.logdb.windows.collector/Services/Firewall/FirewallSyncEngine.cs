@@ -325,10 +325,46 @@ public sealed class FirewallSyncEngine
                 ? "Backend removal was skipped."
                 : "Public-feed rule: it will be re-created on the next sync while the feed still lists these IPs.");
         RecordRuleChange(FirewallHistoryActions.RuleRemoved, displayName, source, ips.Count, success: true,
-            message: $"Deleted by operator. {note}");
+            message: $"Deleted by operator. {note}", removed: ips);
         _logger.LogInformation("Operator deleted firewall rule '{DisplayName}' (id {RuleId}). {Note}", displayName, request.RuleId, note);
 
         return (true, $"Deleted rule '{displayName}'. {note}");
+    }
+
+    /// <summary>
+    /// Reads one managed rule's live RemoteAddress list from the OS firewall
+    /// by its unique Name — the on-demand answer to "which IPs does this rule
+    /// block right now?", with nothing persisted.
+    /// </summary>
+    public async Task<(bool Success, string Message, FirewallRuleIpsDto? Rule)> GetRuleIpsAsync(
+        string ruleId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(ruleId))
+            return (false, "Rule id is required.", null);
+
+        var lookup =
+            $"$r = Get-NetFirewallRule -Name '{EscapePs(ruleId)}' -ErrorAction SilentlyContinue; " +
+            "if ($r) { $af = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $r; " +
+            "ConvertTo-Json -InputObject ([pscustomobject]@{ displayName = $r.DisplayName; ips = @($af.RemoteAddress | Where-Object { $_ -and $_ -ne 'Any' -and $_ -ne 'LocalSubnet' }) }) -Compress }";
+        var output = await RunPowerShellWithOutputAsync(lookup, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(output))
+            return (false, $"No firewall rule found with id '{ruleId}'.", null);
+
+        try
+        {
+            var details = JsonSerializer.Deserialize<RuleDeletionDetails>(output.Trim(), RuleJsonOptions);
+            return (true, string.Empty, new FirewallRuleIpsDto
+            {
+                Id = ruleId,
+                DisplayName = details?.DisplayName ?? ruleId,
+                Ips = details?.Ips ?? new List<string>()
+            });
+        }
+        catch (JsonException ex)
+        {
+            return (false, $"Failed to parse rule address list: {ex.Message}", null);
+        }
     }
 
     private sealed class RuleDeletionDetails
@@ -398,9 +434,15 @@ public sealed class FirewallSyncEngine
                 continue;
 
             if (existing.Count > 0)
-                await UpdateRuleAsync(ruleName, displayName, chunks[i], config.DryRun, cancellationToken).ConfigureAwait(false);
+            {
+                var added = desired.Where(ip => !existing.Contains(ip)).ToList();
+                var removed = existing.Where(ip => !desired.Contains(ip)).ToList();
+                await UpdateRuleAsync(ruleName, displayName, chunks[i], added, removed, config.DryRun, cancellationToken).ConfigureAwait(false);
+            }
             else
+            {
                 await CreateRuleAsync(ruleName, displayName, chunks[i], config.Direction, config.DryRun, cancellationToken).ConfigureAwait(false);
+            }
             changes++;
         }
 
@@ -495,7 +537,8 @@ public sealed class FirewallSyncEngine
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would create rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
-            RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true, dryRun: true);
+            RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true, dryRun: true,
+                added: ips);
             return;
         }
 
@@ -506,7 +549,8 @@ public sealed class FirewallSyncEngine
             var command = $"$ips = Get-Content '{EscapePs(tempFile)}'; New-NetFirewallRule -Name '{EscapePs(UniqueRuleId(ruleName))}' -DisplayName '{EscapePs(ruleName)}' -Group '{ManagedRuleGroup}' -Direction {direction} -Action Block -RemoteAddress $ips -Enabled True -Profile Any -Description 'Managed by LogDB Windows Collector' | Out-Null";
             await RunPowerShellAsync(command, cancellationToken).ConfigureAwait(false);
             _logger.LogInformation("Created rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
-            RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true);
+            RecordRuleChange(FirewallHistoryActions.RuleCreated, ruleName, source, ips.Count, success: true,
+                added: ips);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -519,12 +563,13 @@ public sealed class FirewallSyncEngine
         }
     }
 
-    private async Task UpdateRuleAsync(string ruleName, string source, List<string> ips, bool dryRun, CancellationToken cancellationToken)
+    private async Task UpdateRuleAsync(string ruleName, string source, List<string> ips, List<string> added, List<string> removed, bool dryRun, CancellationToken cancellationToken)
     {
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would update rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
-            RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true, dryRun: true);
+            RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true, dryRun: true,
+                added: added, removed: removed);
             return;
         }
 
@@ -534,8 +579,9 @@ public sealed class FirewallSyncEngine
             await File.WriteAllLinesAsync(tempFile, ips, cancellationToken).ConfigureAwait(false);
             var command = $"$ips = Get-Content '{EscapePs(tempFile)}'; Set-NetFirewallRule -DisplayName '{EscapePs(ruleName)}' -RemoteAddress $ips";
             await RunPowerShellAsync(command, cancellationToken).ConfigureAwait(false);
-            _logger.LogInformation("Updated rule '{RuleName}' with {Count} IPs", ruleName, ips.Count);
-            RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true);
+            _logger.LogInformation("Updated rule '{RuleName}' with {Count} IPs (+{Added}/−{Removed})", ruleName, ips.Count, added.Count, removed.Count);
+            RecordRuleChange(FirewallHistoryActions.RuleUpdated, ruleName, source, ips.Count, success: true,
+                added: added, removed: removed);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -550,10 +596,15 @@ public sealed class FirewallSyncEngine
 
     private async Task RemoveRuleAsync(string ruleName, string source, bool dryRun, CancellationToken cancellationToken)
     {
+        // Read the rule's IPs before removal so the history entry can say what
+        // stopped being blocked; best-effort — an empty set just means no delta.
+        var removedIps = await GetRuleRemoteAddressesAsync(ruleName, cancellationToken).ConfigureAwait(false);
+
         if (dryRun)
         {
             _logger.LogWarning("[DRY RUN] Would remove rule '{RuleName}'", ruleName);
-            RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true, dryRun: true);
+            RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true, dryRun: true,
+                removed: removedIps.ToList());
             return;
         }
 
@@ -570,8 +621,13 @@ public sealed class FirewallSyncEngine
         }
 
         _logger.LogInformation("Removed rule '{RuleName}'", ruleName);
-        RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true);
+        RecordRuleChange(FirewallHistoryActions.RuleRemoved, ruleName, source, ipCount: 0, success: true,
+            removed: removedIps.ToList());
     }
+
+    /// <summary>History entries store a capped sample of the changed IPs, plus
+    /// exact counts — the full 5000-IP chunk would bloat the JSONL file.</summary>
+    private const int MaxIpSampleSize = 50;
 
     private void RecordRuleChange(
         string action,
@@ -580,7 +636,9 @@ public sealed class FirewallSyncEngine
         int ipCount,
         bool success,
         bool dryRun = false,
-        string message = "")
+        string message = "",
+        List<string>? added = null,
+        List<string>? removed = null)
     {
         _history.Record(new FirewallRuleHistoryEntryDto
         {
@@ -591,7 +649,11 @@ public sealed class FirewallSyncEngine
             IpCount = ipCount,
             Success = success,
             DryRun = dryRun,
-            Message = message
+            Message = message,
+            AddedCount = added?.Count ?? 0,
+            RemovedCount = removed?.Count ?? 0,
+            AddedIps = added?.Take(MaxIpSampleSize).ToList() ?? new List<string>(),
+            RemovedIps = removed?.Take(MaxIpSampleSize).ToList() ?? new List<string>()
         });
     }
 

@@ -31,6 +31,20 @@ public sealed class FirewallRuleHistoryEntryDto
 
     /// <summary>Failure detail, or extra context for cycle-level entries.</summary>
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>Total IPs/CIDRs added by this change (not just the sample).</summary>
+    public int AddedCount { get; set; }
+
+    /// <summary>Total IPs/CIDRs removed by this change (not just the sample).</summary>
+    public int RemovedCount { get; set; }
+
+    /// <summary>Sample of the added IPs, capped at 50 — the full list of a
+    /// 5000-IP chunk would bloat the history file by orders of magnitude.
+    /// Older entries (pre-delta builds) deserialize with empty lists.</summary>
+    public List<string> AddedIps { get; set; } = new();
+
+    /// <summary>Sample of the removed IPs, capped at 50.</summary>
+    public List<string> RemovedIps { get; set; } = new();
 }
 
 public static class FirewallHistoryActions

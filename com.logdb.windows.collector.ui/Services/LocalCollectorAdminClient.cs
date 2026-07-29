@@ -218,6 +218,18 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.DeleteFirewallRuleAsync(SelectedTarget.Value, ruleId, removeFromBackend, cancellationToken);
     }
 
+    public async Task<(bool Success, string Message, FirewallRuleIpsDto? Rule)> GetFirewallRuleIpsAsync(
+        string ruleId,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return (false, "No collector instance selected.", null);
+        }
+
+        return await _controlClient.GetFirewallRuleIpsAsync(SelectedTarget.Value, ruleId, cancellationToken);
+    }
+
     public async Task<CollectorConfigDto?> GetEffectiveRedactedConfigAsync(CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)

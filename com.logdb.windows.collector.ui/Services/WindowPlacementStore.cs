@@ -126,6 +126,35 @@ public static class WindowPlacementStore
         SaveSettings(settings);
     }
 
+    /// <summary>
+    /// Generic per-grid column widths, keyed by a stable grid id (e.g.
+    /// "dataSources.firewallRules"). Widths are positional — restore only when
+    /// the saved count still matches the grid's column count, so a redesigned
+    /// grid silently falls back to its XAML defaults instead of mis-sizing.
+    /// (DiagnosticsOnlineColumns predates this and keeps its named DTO.)
+    /// </summary>
+    public static double[]? LoadGridColumnWidths(string gridKey)
+    {
+        try
+        {
+            var settings = LoadSettings();
+            if (settings?.GridColumns == null) return null;
+            return settings.GridColumns.TryGetValue(gridKey, out var widths) ? widths : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static void SaveGridColumnWidths(string gridKey, double[] widths)
+    {
+        var settings = LoadSettings() ?? new UserSettingsDto();
+        settings.GridColumns ??= new Dictionary<string, double[]>();
+        settings.GridColumns[gridKey] = widths;
+        SaveSettings(settings);
+    }
+
     private static UserSettingsDto? LoadSettings()
     {
         if (!File.Exists(SettingsPath))
@@ -167,6 +196,7 @@ public static class WindowPlacementStore
         public DiagnosticsOnlineColumnsDto? DiagnosticsOnlineColumns { get; set; }
         public bool? IsDarkTheme { get; set; }
         public Dictionary<string, string>? ThroughputColors { get; set; }
+        public Dictionary<string, double[]>? GridColumns { get; set; }
     }
 
     public sealed class MainWindowPlacementDto

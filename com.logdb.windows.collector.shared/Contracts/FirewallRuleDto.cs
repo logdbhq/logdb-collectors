@@ -25,6 +25,16 @@ public sealed class FirewallRuleInfoDto
     public bool Legacy { get; set; }
 }
 
+/// <summary>Live RemoteAddress list of one managed rule, read from the OS
+/// firewall on demand via ControlCommands.GetFirewallRuleIps — full list,
+/// nothing persisted.</summary>
+public sealed class FirewallRuleIpsDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public List<string> Ips { get; set; } = new();
+}
+
 public sealed class DeleteFirewallRuleRequestDto
 {
     /// <summary>The rule's unique Name (<see cref="FirewallRuleInfoDto.Id"/>).</summary>

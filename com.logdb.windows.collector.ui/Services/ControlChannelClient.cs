@@ -231,6 +231,36 @@ public sealed class ControlChannelClient
         return (response.Success, response.Message ?? (response.Success ? "Rule deleted." : "Delete failed."));
     }
 
+    public async Task<(bool Success, string Message, FirewallRuleIpsDto? Rule)> GetFirewallRuleIpsAsync(
+        CollectorInstanceMode mode,
+        string ruleId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetFirewallRuleIps,
+            payloadJson: JsonSerializer.Serialize(ruleId, JsonOptions),
+            timeoutMilliseconds: 30000,
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return (false, response.Message ?? "Failed to load rule IPs (older collector version?).", null);
+        }
+
+        try
+        {
+            var rule = JsonSerializer.Deserialize<FirewallRuleIpsDto>(response.PayloadJson, JsonOptions);
+            return rule == null
+                ? (false, "Failed to parse rule IPs payload.", null)
+                : (true, string.Empty, rule);
+        }
+        catch (JsonException)
+        {
+            return (false, "Failed to parse rule IPs payload.", null);
+        }
+    }
+
     public async Task<CollectorConfigDto?> GetRedactedConfigAsync(
         CollectorInstanceMode mode,
         CancellationToken cancellationToken = default)
