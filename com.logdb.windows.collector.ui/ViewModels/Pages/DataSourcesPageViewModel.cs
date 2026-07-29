@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.ui.Services;
@@ -375,6 +377,10 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private string _firewallIpsFilter = string.Empty;
     private string _firewallIpsCountText = string.Empty;
     private List<string> _firewallIpsAll = new();
+    private bool _eventLogDrift;
+    private bool _iisDrift;
+    private bool _metricsDrift;
+    private bool _heartbeatDrift;
     private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
     private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
 
@@ -458,6 +464,17 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         TestHeartbeatCommand = new AsyncRelayCommand(() => SendTestLogAsync("Heartbeat"));
 
         PropertyChanged += OnDataSourcesPropertyChanged;
+
+        // List/tag edits don't raise PropertyChanged on the page VM, so hook the
+        // collections directly to keep the drift flags honest.
+        foreach (var collection in new INotifyCollectionChanged[]
+                 { CustomChannels, EventLogFilterRules, IisDirectories, IisFilterRules, MetricTags, HeartbeatTags })
+        {
+            collection.CollectionChanged += (_, _) =>
+            {
+                if (!_suppressDraftPersistence) UpdateDriftFlags();
+            };
+        }
     }
 
     public ObservableCollection<StringItemViewModel> CustomChannels { get; }
@@ -975,10 +992,63 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    public string EventLogTabHeader => _eventLogPaused ? "Windows Event Logs (PAUSED)" : "Windows Event Logs";
-    public string IisTabHeader => _iisPaused ? "IIS Logs (PAUSED)" : "IIS Logs";
-    public string MetricsTabHeader => _metricsPaused ? "Windows Metrics (PAUSED)" : "Windows Metrics";
-    public string HeartbeatTabHeader => _heartbeatPaused ? "Heartbeat (PAUSED)" : "Heartbeat";
+    public string EventLogTabHeader => (_eventLogPaused ? "Windows Event Logs (PAUSED)" : "Windows Event Logs") + (_eventLogDrift ? " ●" : "");
+    public string IisTabHeader => (_iisPaused ? "IIS Logs (PAUSED)" : "IIS Logs") + (_iisDrift ? " ●" : "");
+    public string MetricsTabHeader => (_metricsPaused ? "Windows Metrics (PAUSED)" : "Windows Metrics") + (_metricsDrift ? " ●" : "");
+    public string HeartbeatTabHeader => (_heartbeatPaused ? "Heartbeat (PAUSED)" : "Heartbeat") + (_heartbeatDrift ? " ●" : "");
+
+    /// <summary>True when this tab's edited state differs from the config the
+    /// service is actually running with — e.g. the debounced auto-apply was
+    /// interrupted (app closed within its 800 ms window) or the apply failed.
+    /// Without this the UI shows selections (like a checked Security channel)
+    /// that the service never received, with no visual hint at all.</summary>
+    public bool EventLogHasUnappliedChanges
+    {
+        get => _eventLogDrift;
+        private set { if (SetProperty(ref _eventLogDrift, value)) NotifyDriftChanged(nameof(EventLogTabHeader)); }
+    }
+
+    public bool IisHasUnappliedChanges
+    {
+        get => _iisDrift;
+        private set { if (SetProperty(ref _iisDrift, value)) NotifyDriftChanged(nameof(IisTabHeader)); }
+    }
+
+    public bool MetricsHasUnappliedChanges
+    {
+        get => _metricsDrift;
+        private set { if (SetProperty(ref _metricsDrift, value)) NotifyDriftChanged(nameof(MetricsTabHeader)); }
+    }
+
+    public bool HeartbeatHasUnappliedChanges
+    {
+        get => _heartbeatDrift;
+        private set { if (SetProperty(ref _heartbeatDrift, value)) NotifyDriftChanged(nameof(HeartbeatTabHeader)); }
+    }
+
+    public bool AnyUnappliedChanges => _eventLogDrift || _iisDrift || _metricsDrift || _heartbeatDrift;
+
+    public string UnappliedChangesText
+    {
+        get
+        {
+            var tabs = new List<string>();
+            if (_eventLogDrift) tabs.Add("Windows Event Logs");
+            if (_iisDrift) tabs.Add("IIS Logs");
+            if (_metricsDrift) tabs.Add("Windows Metrics");
+            if (_heartbeatDrift) tabs.Add("Heartbeat");
+            return tabs.Count == 0
+                ? string.Empty
+                : $"Unapplied changes on: {string.Join(", ", tabs)} — the selection shown differs from the running configuration. Open the tab and click Apply to make it live.";
+        }
+    }
+
+    private void NotifyDriftChanged(string tabHeaderProperty)
+    {
+        NotifyPropertyChanged(tabHeaderProperty);
+        NotifyPropertyChanged(nameof(AnyUnappliedChanges));
+        NotifyPropertyChanged(nameof(UnappliedChangesText));
+    }
 
     public bool EventLogConfigEditable => !_collectorConnected || _eventLogPaused;
     public bool IisConfigEditable => !_collectorConnected || _iisPaused;
@@ -1169,6 +1239,10 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             _suppressDraftPersistence = false;
         }
 
+        // The draft overlay above may have restored selections that were never
+        // applied to the service — surface that instead of silently lying.
+        UpdateDriftFlags();
+
         await RefreshFirewallSummaryAsync();
         await RefreshFirewallHistoryAsync();
         await RefreshFirewallRulesAsync();
@@ -1186,9 +1260,11 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         AddIisDirectory();
     }
 
-    private async Task ApplyEventLogsAsync()
+    /// <summary>Writes this tab's UI state into <paramref name="config"/> —
+    /// shared by Apply and by drift detection, so "what would be applied" and
+    /// "what Apply actually writes" can never disagree.</summary>
+    private void WriteEventLogTo(CollectorConfigDto config)
     {
-        var config = _adminClient.SnapshotWorkingConfig();
         config.Modules.EventLog.Enabled = EventLogEnabled;
         config.Modules.EventLog.PollIntervalSeconds = Math.Max(5, EventLogPollIntervalSeconds);
         config.Modules.EventLog.SourcesChannels = BuildEventLogChannels();
@@ -1205,6 +1281,12 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         config.Modules.EventLog.ServerNameOverride = string.IsNullOrWhiteSpace(EventLogServerNameOverride)
             ? null
             : EventLogServerNameOverride.Trim();
+    }
+
+    private async Task ApplyEventLogsAsync()
+    {
+        var config = _adminClient.SnapshotWorkingConfig();
+        WriteEventLogTo(config);
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Message, result.Success);
@@ -1215,9 +1297,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    private async Task ApplyIisAsync()
+    private void WriteIisTo(CollectorConfigDto config)
     {
-        var config = _adminClient.SnapshotWorkingConfig();
         config.Modules.IIS.Enabled = IisEnabled;
         config.Modules.IIS.PollIntervalSeconds = Math.Max(5, IisPollIntervalSeconds);
         config.Modules.IIS.LogDirectories = IisDirectories
@@ -1238,6 +1319,12 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         config.Modules.IIS.ServerNameOverride = string.IsNullOrWhiteSpace(IisServerNameOverride)
             ? null
             : IisServerNameOverride.Trim();
+    }
+
+    private async Task ApplyIisAsync()
+    {
+        var config = _adminClient.SnapshotWorkingConfig();
+        WriteIisTo(config);
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Message, result.Success);
@@ -1248,9 +1335,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    private async Task ApplyMetricsAsync()
+    private void WriteMetricsTo(CollectorConfigDto config)
     {
-        var config = _adminClient.SnapshotWorkingConfig();
         config.Modules.Metrics.Enabled = MetricsEnabled;
         config.Modules.Metrics.PollIntervalSeconds = Math.Max(5, MetricsPollIntervalSeconds);
         config.Modules.Metrics.IncludeCpu = MetricsCpu;
@@ -1263,6 +1349,12 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         config.Modules.Metrics.Tags = MetricTags
             .Where(item => !string.IsNullOrWhiteSpace(item.Key))
             .ToDictionary(item => item.Key.Trim(), item => item.Value.Trim(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task ApplyMetricsAsync()
+    {
+        var config = _adminClient.SnapshotWorkingConfig();
+        WriteMetricsTo(config);
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Message, result.Success);
@@ -1273,9 +1365,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    private async Task ApplyHeartbeatAsync()
+    private void WriteHeartbeatTo(CollectorConfigDto config)
     {
-        var config = _adminClient.SnapshotWorkingConfig();
         config.Modules.Heartbeat.Enabled = HeartbeatEnabled;
         config.Modules.Heartbeat.PollIntervalSeconds = Math.Max(5, HeartbeatPollIntervalSeconds);
         config.Modules.Heartbeat.Measurement = string.IsNullOrWhiteSpace(HeartbeatMeasurement)
@@ -1296,6 +1387,12 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         config.Modules.Heartbeat.Tags = HeartbeatTags
             .Where(item => !string.IsNullOrWhiteSpace(item.Key))
             .ToDictionary(item => item.Key.Trim(), item => item.Value.Trim(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task ApplyHeartbeatAsync()
+    {
+        var config = _adminClient.SnapshotWorkingConfig();
+        WriteHeartbeatTo(config);
 
         var result = await _adminClient.ApplyConfigAsync(config);
         _statusCallback(result.Message, result.Success);
@@ -2183,6 +2280,58 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         return compact[..400] + "...";
     }
 
+    /// <summary>
+    /// Recomputes the per-tab "unapplied changes" flags by writing the current
+    /// UI state into a clone of the working (on-disk, service-facing) config
+    /// via the same WriteXTo methods Apply uses, then comparing each module's
+    /// JSON against the untouched clone. Lists whose order carries no meaning
+    /// (channels, levels, directories, tags) are canonicalized first so a mere
+    /// ordering difference never reads as drift.
+    /// </summary>
+    private void UpdateDriftFlags()
+    {
+        try
+        {
+            var applied = _adminClient.SnapshotWorkingConfig();
+            var candidate = _adminClient.SnapshotWorkingConfig();
+            WriteEventLogTo(candidate);
+            WriteIisTo(candidate);
+            WriteMetricsTo(candidate);
+            WriteHeartbeatTo(candidate);
+
+            CanonicalizeForComparison(applied);
+            CanonicalizeForComparison(candidate);
+
+            EventLogHasUnappliedChanges = !ModuleJsonEquals(applied.Modules.EventLog, candidate.Modules.EventLog);
+            IisHasUnappliedChanges = !ModuleJsonEquals(applied.Modules.IIS, candidate.Modules.IIS);
+            MetricsHasUnappliedChanges = !ModuleJsonEquals(applied.Modules.Metrics, candidate.Modules.Metrics);
+            HeartbeatHasUnappliedChanges = !ModuleJsonEquals(applied.Modules.Heartbeat, candidate.Modules.Heartbeat);
+        }
+        catch
+        {
+            // Drift detection is advisory — never let it break the page.
+        }
+    }
+
+    private static void CanonicalizeForComparison(CollectorConfigDto config)
+    {
+        static List<string> Sorted(IEnumerable<string> values) =>
+            values.OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToList();
+
+        static Dictionary<string, string> SortedTags(Dictionary<string, string> tags) =>
+            tags.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+
+        config.Modules.EventLog.SourcesChannels = Sorted(config.Modules.EventLog.SourcesChannels);
+        config.Modules.EventLog.LevelFilters = Sorted(config.Modules.EventLog.LevelFilters);
+        config.Modules.IIS.LogDirectories = Sorted(config.Modules.IIS.LogDirectories);
+        config.Modules.Metrics.Tags = SortedTags(config.Modules.Metrics.Tags);
+        config.Modules.Heartbeat.Tags = SortedTags(config.Modules.Heartbeat.Tags);
+    }
+
+    private static bool ModuleJsonEquals<T>(T left, T right) =>
+        JsonSerializer.Serialize(left) == JsonSerializer.Serialize(right);
+
     private void OnDataSourcesPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (_suppressDraftPersistence || string.IsNullOrWhiteSpace(e.PropertyName))
@@ -2193,6 +2342,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         if (DraftPersistedPropertyNames.Contains(e.PropertyName))
         {
             PersistDraft();
+            UpdateDriftFlags();
         }
 
         if (EventLogAutoApplyProperties.Contains(e.PropertyName))
