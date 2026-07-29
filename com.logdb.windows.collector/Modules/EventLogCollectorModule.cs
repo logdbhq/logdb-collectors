@@ -1,5 +1,7 @@
+using com.logdb.windows.collector.Activity;
 using com.logdb.windows.collector.Configuration;
 using com.logdb.windows.collector.Health;
+using com.logdb.windows.collector.Hosting;
 using com.logdb.windows.collector.Services;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.eventviewer.Services;
@@ -13,6 +15,9 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<EventLogCollectorModule> _logger;
+    private readonly CollectorRuntimeContext _runtimeContext;
+    private readonly ISendActivitySink _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
 
     public EventLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -20,11 +25,17 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
+        CollectorRuntimeContext runtimeContext,
+        ISendActivitySink sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<EventLogCollectorModule> logger)
         : base("EventLog", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
+        _runtimeContext = runtimeContext;
+        _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
         _logger = logger;
     }
 
@@ -53,6 +64,13 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
     {
         var values = LegacyExporterConfigMapper.BuildEventLogConfig(config);
 
+        // Never harvest our own Windows event-log Source (the EventLog logging
+        // provider writes under SourceName = ServiceName). Without this the
+        // collector re-ingests its own status/warning lines from the Application
+        // channel as data — a feedback loop that bloated windows_events.db.
+        if (!string.IsNullOrWhiteSpace(_runtimeContext.ServiceName))
+            values["EventViewer:SelfExcludeProviders:0"] = _runtimeContext.ServiceName;
+
         // Diagnostic: log the effective Server:ServerName (this is what
         // EventViewerExportService uses for the Computer field on every row)
         // plus both DTO override fields so an operator can verify at boot
@@ -74,7 +92,9 @@ public sealed class EventLogCollectorModule : ExporterModuleBase
         // the zombie-long-lived-channel class of bugs where a stale HTTP/2
         // connection silently swallows rows.
         builder.Services.AddSingleton<ILogDBClient>(_ =>
-            new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)));
+            new RecordingLogDbClient(
+                new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)),
+                _sendActivity, "EventLog", Environment.MachineName, _recentRecords));
 
         builder.Services.AddSingleton<EventLogReader>();
         builder.Services.AddSingleton<EventLogFilter>();

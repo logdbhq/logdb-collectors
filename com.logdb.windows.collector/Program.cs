@@ -86,17 +86,46 @@ builder.Logging.AddProvider(new CollectorLoggerProvider(logSink));
 builder.Logging.AddEventLog(new EventLogSettings
 {
     LogName = "Application",
-    SourceName = runtimeContext.ServiceName
+    SourceName = runtimeContext.ServiceName,
+    // Only Warning+ reaches the Windows Event Log. The EventLog module logs one
+    // Information line per harvested event; routing those into the Application
+    // log — which this collector also harvests — was an amplification loop that
+    // grew the events DB to 21M+ rows in weeks. Operational detail still goes to
+    // the collector's own file/UI sink (CollectorLoggerProvider) above.
+    Filter = (category, level) => level >= LogLevel.Warning
 });
+
+// Keep the SDK's own chatter out of the Windows Event Log. The LogDB.Client
+// SDK logs transient send retries at Warning ("Retry N after Xms") via Polly;
+// those are self-healing noise, not collector faults. They still go to the
+// collector's file/UI sink (CollectorLoggerProvider) for diagnostics — real
+// module failures are surfaced separately through the collector's own
+// (com.logdb.windows.collector.*) categories and the status registry.
+builder.Logging.AddFilter<Microsoft.Extensions.Logging.EventLog.EventLogLoggerProvider>(
+    "LogDB", LogLevel.None);
 
 builder.Services.AddSingleton(runtimeContext);
 builder.Services.AddHttpClient();
+
+// Throughput telemetry: persisted hourly record of what each module shipped,
+// split by outcome. Registered as both the concrete tracker (queried by the
+// control channel) and the sink (recorded into by each module's client wrapper).
+var sendActivityTracker = new com.logdb.windows.collector.Activity.SendActivityTracker();
+builder.Services.AddSingleton(sendActivityTracker);
+builder.Services.AddSingleton<com.logdb.windows.collector.Activity.ISendActivitySink>(sendActivityTracker);
+
+// In-memory ring buffer of the most recent shipped records (bodies, not just
+// counts). Captured by each module's RecordingLogDbClient; queried by the control
+// channel for the admin UI's "Recent records" view. Not persisted.
+builder.Services.AddSingleton<com.logdb.windows.collector.Activity.RecentRecordsBuffer>();
+
 builder.Services.AddSingleton<CollectorStatusRegistry>(_ => new CollectorStatusRegistry(
     runtimeContext.ConfigPath,
     runtimeContext.Mode,
     runtimeContext.ControlPipeName,
     runtimeContext.ProcessId,
-    runtimeContext.ServiceName));
+    runtimeContext.ServiceName,
+    CollectorPathDefaults.FailureLogPath));
 builder.Services.AddSingleton<ILogDbServiceUrlResolver, LogDbServiceUrlResolver>();
 builder.Services.AddSingleton<IRuntimeEndpointStore, RuntimeEndpointStore>();
 builder.Services.AddSingleton<ILogDbConnectionTester, LogDbConnectionTester>();

@@ -131,6 +131,26 @@ public sealed class ControlChannelClient
         return entries ?? new List<DiagnosticEntryDto>();
     }
 
+    public async Task<IReadOnlyList<CollectorFailureDto>> GetFailuresAsync(
+        CollectorInstanceMode mode,
+        int maxEntries = 250,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetFailures,
+            payloadJson: maxEntries.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return Array.Empty<CollectorFailureDto>();
+        }
+
+        var failures = JsonSerializer.Deserialize<List<CollectorFailureDto>>(response.PayloadJson, JsonOptions);
+        return failures ?? new List<CollectorFailureDto>();
+    }
+
     /// <summary>
     /// Returns null (not empty) when the target collector predates the
     /// firewall-history command, so callers can fall back to diagnostics
@@ -222,5 +242,44 @@ public sealed class ControlChannelClient
         }
 
         return JsonSerializer.Deserialize<CollectorConfigDto>(response.PayloadJson, JsonOptions);
+    }
+
+    public async Task<IReadOnlyList<RecentRecordDto>> GetRecentRecordsAsync(
+        CollectorInstanceMode mode,
+        int maxEntries = 200,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetRecentRecords,
+            payloadJson: maxEntries.ToString(),
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return Array.Empty<RecentRecordDto>();
+        }
+
+        var records = JsonSerializer.Deserialize<List<RecentRecordDto>>(response.PayloadJson, JsonOptions);
+        return records ?? new List<RecentRecordDto>();
+    }
+
+    public async Task<SendActivityDto?> GetSendActivityAsync(
+        CollectorInstanceMode mode,
+        SendActivityQueryDto query,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetSendActivity,
+            payloadJson: JsonSerializer.Serialize(query, JsonOptions),
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<SendActivityDto>(response.PayloadJson, JsonOptions);
     }
 }

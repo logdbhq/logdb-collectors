@@ -2,7 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.OverviewPageView">
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="10">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" RowSpacing="10">
         <StackPanel Orientation="Horizontal" Spacing="10">
             <Border Classes="softPill">
                 <TextBlock Text="Last 30 days" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
@@ -71,10 +71,23 @@
                 </StackPanel>
             </Border>
             <Border Grid.Column="2" Classes="card">
-                <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Classes="cardLabel" Text="Critical Issues" />
-                    <TextBlock Classes="megaNumberDanger" Text="{Binding TotalFailed}" />
-                </StackPanel>
+                <Button Command="{Binding ShowFailuresCommand}"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Padding="0"
+                        Cursor="Hand"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        ToolTip.Tip="View the recent failures behind this count">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock Classes="cardLabel" Text="Critical Issues" />
+                        <TextBlock Classes="megaNumberDanger" Text="{Binding TotalFailed}" />
+                        <TextBlock Text="View details ›"
+                                   HorizontalAlignment="Center"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource AccentBrushTheme}" />
+                    </StackPanel>
+                </Button>
             </Border>
             <Border Grid.Column="3" Classes="card">
                 <StackPanel HorizontalAlignment="Center">
@@ -124,10 +137,15 @@
                     </Border>
                 </Grid>
 
-                <TextBlock Grid.Row="2"
-                           Text="Modules"
-                           FontWeight="SemiBold"
-                           Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+                <Grid Grid.Row="2" ColumnDefinitions="Auto,*,Auto">
+                    <TextBlock Text="Modules"
+                               VerticalAlignment="Center"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+                    <CheckBox Grid.Column="2"
+                              Content="Show only modules with failures"
+                              IsChecked="{Binding ShowFailedOnly}" />
+                </Grid>
 
                 <Border Grid.Row="3" Classes="card">
                     <dgrid:DataGrid ItemsSource="{Binding Modules}"
@@ -142,6 +160,39 @@
                             <dgrid:DataGridTextColumn Header="Last Error" Binding="{Binding LastError}" Width="*" />
                             <dgrid:DataGridTextColumn Header="Sent" Binding="{Binding SentCount}" Width="85" />
                             <dgrid:DataGridTextColumn Header="Failed" Binding="{Binding FailedCount}" Width="85" />
+                        </dgrid:DataGrid.Columns>
+                    </dgrid:DataGrid>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="5"
+                x:Name="FailuresPanel"
+                Classes="panel"
+                IsVisible="{Binding IsFailuresVisible}">
+            <Grid RowDefinitions="Auto,*" RowSpacing="8">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Recent Failures" FontSize="20" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding FailuresSummary}"
+                                   Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+                    </StackPanel>
+                    <Button Grid.Column="1"
+                            Content="Hide"
+                            VerticalAlignment="Top"
+                            Command="{Binding ClearFailureFilterCommand}" />
+                </Grid>
+
+                <Border Grid.Row="1" Classes="card">
+                    <dgrid:DataGrid ItemsSource="{Binding Failures}"
+                                    AutoGenerateColumns="False"
+                                    IsReadOnly="True"
+                                    CanUserResizeColumns="True"
+                                    Height="260">
+                        <dgrid:DataGrid.Columns>
+                            <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="180" />
+                            <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="150" />
+                            <dgrid:DataGridTextColumn Header="Error" Binding="{Binding Error}" Width="*" />
                         </dgrid:DataGrid.Columns>
                     </dgrid:DataGrid>
                 </Border>

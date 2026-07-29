@@ -1,5 +1,6 @@
 using System.IO.Pipes;
 using System.Text.Json;
+using com.logdb.windows.collector.Activity;
 using com.logdb.windows.collector.Diagnostics;
 using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Hosting;
@@ -30,6 +31,8 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly FirewallRuleHistoryStore _firewallHistory;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IConfiguration _configuration;
+    private readonly SendActivityTracker _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
     private readonly SemaphoreSlim _configGate = new(1, 1);
     private readonly ILogger<NamedPipeControlServer> _logger;
 
@@ -45,6 +48,8 @@ public sealed class NamedPipeControlServer : BackgroundService
         FirewallRuleHistoryStore firewallHistory,
         IHostApplicationLifetime hostLifetime,
         IConfiguration configuration,
+        SendActivityTracker sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<NamedPipeControlServer> logger)
     {
         _runtimeContext = runtimeContext;
@@ -58,6 +63,8 @@ public sealed class NamedPipeControlServer : BackgroundService
         _firewallHistory = firewallHistory;
         _hostLifetime = hostLifetime;
         _configuration = configuration;
+        _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
         _logger = logger;
     }
 
@@ -134,11 +141,36 @@ public sealed class NamedPipeControlServer : BackgroundService
         switch (request.Command)
         {
             case ControlCommands.GetStatus:
+            {
+                // The registry's SentCount only counts module-start cycles (always 1
+                // for a running module). Surface the real records-shipped totals from
+                // the send-activity tracker instead. Modules that don't ship via the
+                // log client (e.g. Firewall) have no entry → 0.
+                var snapshot = _statusRegistry.Snapshot();
+                var totals = _sendActivity.GetTotalsByModule();
+                foreach (var module in snapshot.Modules)
+                {
+                    if (totals.TryGetValue(module.Name, out var t))
+                    {
+                        // Records that shipped vs records that failed to ship — so
+                        // "Sent 0 / Failed 349" reads as "delivery is failing" rather
+                        // than the misleading "0 / 0".
+                        module.SentCount = t.Sent;
+                        module.FailedCount = t.Failed;
+                    }
+                    else
+                    {
+                        // Module ships nothing via the log client (e.g. Firewall) —
+                        // leave its registry FailedCount (module-cycle errors) intact.
+                        module.SentCount = 0;
+                    }
+                }
                 return new ControlResponseDto
                 {
                     Success = true,
-                    PayloadJson = JsonSerializer.Serialize(_statusRegistry.Snapshot(), JsonOptions)
+                    PayloadJson = JsonSerializer.Serialize(snapshot, JsonOptions)
                 };
+            }
 
             case ControlCommands.GetConfig:
             case "redacted-config":
@@ -173,6 +205,15 @@ public sealed class NamedPipeControlServer : BackgroundService
                 {
                     Success = true,
                     PayloadJson = JsonSerializer.Serialize(diagnostics, JsonOptions)
+                };
+
+            case ControlCommands.GetFailures:
+                var maxFailures = ParseMaxDiagnostics(request.PayloadJson);
+                var failures = _statusRegistry.RecentFailures(maxFailures);
+                return new ControlResponseDto
+                {
+                    Success = true,
+                    PayloadJson = JsonSerializer.Serialize(failures, JsonOptions)
                 };
 
             case ControlCommands.TestConnection:
@@ -236,6 +277,59 @@ public sealed class NamedPipeControlServer : BackgroundService
                     Message = metricsPreview.Message,
                     PayloadJson = JsonSerializer.Serialize(metricsPreview, JsonOptions)
                 };
+
+            case ControlCommands.GetSendActivity:
+                try
+                {
+                    var query = string.IsNullOrWhiteSpace(request.PayloadJson)
+                        ? new SendActivityQueryDto
+                        {
+                            FromUtc = DateTime.UtcNow.AddDays(-7),
+                            ToUtc = DateTime.UtcNow
+                        }
+                        : JsonSerializer.Deserialize<SendActivityQueryDto>(request.PayloadJson, JsonOptions)
+                          ?? new SendActivityQueryDto();
+                    var activity = _sendActivity.GetActivity(query);
+                    return new ControlResponseDto
+                    {
+                        Success = true,
+                        PayloadJson = JsonSerializer.Serialize(activity, JsonOptions)
+                    };
+                }
+                catch (Exception ex)
+                {
+                    return new ControlResponseDto
+                    {
+                        Success = false,
+                        Message = $"Send-activity query failed: {ex.GetType().Name}: {ex.Message}"
+                    };
+                }
+
+            case ControlCommands.ResetSendActivity:
+                try
+                {
+                    _sendActivity.Reset();
+                    return new ControlResponseDto { Success = true, Message = "Send statistics cleared." };
+                }
+                catch (Exception ex)
+                {
+                    return new ControlResponseDto
+                    {
+                        Success = false,
+                        Message = $"Reset send-activity failed: {ex.GetType().Name}: {ex.Message}"
+                    };
+                }
+
+            case ControlCommands.GetRecentRecords:
+            {
+                var maxRecords = ParseMaxDiagnostics(request.PayloadJson);
+                var records = _recentRecords.GetRecent(maxRecords);
+                return new ControlResponseDto
+                {
+                    Success = true,
+                    PayloadJson = JsonSerializer.Serialize(records, JsonOptions)
+                };
+            }
 
             case ControlCommands.GetResolvedEndpoint:
                 try

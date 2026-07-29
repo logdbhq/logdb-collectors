@@ -119,6 +119,12 @@ public class IISLogReader
             
             newPosition = fileStream.Position;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Read aborted by our own cancellation (module restart on config change,
+            // or service shutdown) — expected, not an error. Return the progress made
+            // so far; the next cycle resumes from the saved position.
+        }
         catch (Exception ex)
         {
             _logger?.LogError(ex, "Error reading log file: {FilePath}", filePath);

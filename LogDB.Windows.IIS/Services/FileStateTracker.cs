@@ -60,8 +60,9 @@ public class FileStateTracker
                 return (true, fileState.LastBytePosition, fileState.LastLogTimestamp);
             }
 
-            // New file
-            _logger?.LogInformation("New file detected: {FilePath}", filePath);
+            // New file. Debug, not Information: on a reset/first run every historical
+            // log file is "new", which floods the live console with one line each.
+            _logger?.LogDebug("New file detected: {FilePath}", filePath);
             return (true, 0, null);
         }
     }

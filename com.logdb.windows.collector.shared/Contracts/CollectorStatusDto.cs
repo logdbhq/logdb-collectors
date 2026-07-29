@@ -24,6 +24,18 @@ public class ModuleStatusDto
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
+/// <summary>
+/// A single recorded delivery/collection failure, retained in a bounded
+/// history so the UI can drill into the "Critical Issues" counter rather than
+/// only seeing the per-module <see cref="ModuleStatusDto.LastError"/>.
+/// </summary>
+public class CollectorFailureDto
+{
+    public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
+    public string Module { get; set; } = string.Empty;
+    public string Error { get; set; } = string.Empty;
+}
+
 public class DiagnosticEntryDto
 {
     public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;

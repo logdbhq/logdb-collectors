@@ -109,4 +109,34 @@ public sealed class SharedContractsUnitTests
         Assert.Single(output.Modules);
         Assert.Equal("Metrics", output.Modules[0].Name);
     }
+
+    [Fact]
+    public void CollectorFailureDto_SerializesAndDeserializes()
+    {
+        var input = new List<CollectorFailureDto>
+        {
+            new()
+            {
+                TimestampUtc = new DateTime(2026, 6, 7, 11, 0, 51, DateTimeKind.Utc),
+                Module = "Metrics",
+                Error = "gRPC channel unreachable: 503"
+            }
+        };
+
+        var json = JsonSerializer.Serialize(input, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+
+        var output = JsonSerializer.Deserialize<List<CollectorFailureDto>>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        });
+
+        Assert.NotNull(output);
+        var failure = Assert.Single(output!);
+        Assert.Equal(input[0].TimestampUtc, failure.TimestampUtc);
+        Assert.Equal("Metrics", failure.Module);
+        Assert.Equal("gRPC channel unreachable: 503", failure.Error);
+    }
 }

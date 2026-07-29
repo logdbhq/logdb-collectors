@@ -27,6 +27,9 @@ public sealed class FirewallRuleModule : BackgroundService
     private readonly FirewallSyncEngine _engine;
     private readonly ILogger<FirewallRuleModule> _logger;
 
+    // Last status message actually written, for change-only logging.
+    private string? _lastStatusLog;
+
     public FirewallRuleModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
         CollectorStatusRegistry statusRegistry,
@@ -60,16 +63,25 @@ public sealed class FirewallRuleModule : BackgroundService
             try
             {
                 var summary = await _engine.SyncAsync(config.LogDB, config.Firewall, stoppingToken).ConfigureAwait(false);
-                if (summary.Success)
+                if (summary.IsIdle)
+                {
+                    // Module is on but nothing is configured to sync — benign idle,
+                    // not an error. Log only when the state first changes (see
+                    // LogStatusChange) so we don't pour an identical warning into the
+                    // Windows event log every poll cycle.
+                    _statusRegistry.MarkStopped(moduleName, "Idle");
+                    LogStatusChange(LogLevel.Information, summary.Message);
+                }
+                else if (summary.Success)
                 {
                     _statusRegistry.MarkRunning(moduleName);
                     _statusRegistry.MarkHeartbeat(moduleName);
-                    _logger.LogInformation("Firewall sync: {Message}", summary.Message);
+                    LogStatusChange(LogLevel.Information, $"Firewall sync: {summary.Message}");
                 }
                 else
                 {
                     _statusRegistry.MarkError(moduleName, summary.Message);
-                    _logger.LogWarning("Firewall sync failed: {Message}", summary.Message);
+                    LogStatusChange(LogLevel.Warning, $"Firewall sync failed: {summary.Message}");
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -79,7 +91,7 @@ public sealed class FirewallRuleModule : BackgroundService
             catch (Exception ex)
             {
                 _statusRegistry.MarkError(moduleName, ex.Message);
-                _logger.LogError(ex, "Firewall module poll cycle threw");
+                LogStatusChange(LogLevel.Error, $"Firewall module poll cycle threw: {ex.Message}", ex);
             }
 
             // Minimum 10s to avoid pounding upstream blocklist hosts if someone
@@ -88,5 +100,24 @@ public sealed class FirewallRuleModule : BackgroundService
             var interval = Math.Max(10, _configMonitor.CurrentValue.Firewall.PollIntervalSeconds);
             await Task.Delay(TimeSpan.FromSeconds(interval), stoppingToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// Emit a log line only when the message differs from the previous cycle. A
+    /// persistent condition (idle, elevation-required, an upstream feed down)
+    /// then logs once on entry instead of every <c>PollInterval</c> — which is
+    /// what flooded the Windows event log with tens of thousands of identical
+    /// warnings (and, because the collector harvests its own Application channel,
+    /// bloated the events database with re-ingested copies of them).
+    /// </summary>
+    private void LogStatusChange(LogLevel level, string message, Exception? ex = null)
+    {
+        if (message == _lastStatusLog)
+            return;
+        _lastStatusLog = message;
+        if (ex != null)
+            _logger.Log(level, ex, "{Message}", message);
+        else
+            _logger.Log(level, "{Message}", message);
     }
 }

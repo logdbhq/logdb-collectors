@@ -135,6 +135,54 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.GetDiagnosticsAsync(SelectedTarget.Value, maxEntries, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<CollectorFailureDto>> GetFailuresAsync(
+        int maxEntries = 250,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return Array.Empty<CollectorFailureDto>();
+        }
+
+        return await _controlClient.GetFailuresAsync(SelectedTarget.Value, maxEntries, cancellationToken);
+    }
+
+    public async Task<SendActivityDto?> GetSendActivityAsync(
+        SendActivityQueryDto query,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return null;
+        }
+
+        return await _controlClient.GetSendActivityAsync(SelectedTarget.Value, query, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<RecentRecordDto>> GetRecentRecordsAsync(
+        int maxEntries = 200,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return Array.Empty<RecentRecordDto>();
+        }
+
+        return await _controlClient.GetRecentRecordsAsync(SelectedTarget.Value, maxEntries, cancellationToken);
+    }
+
+    public async Task<(bool Success, string Message)> ResetSendActivityAsync(CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return (false, "No collector instance selected.");
+        }
+
+        var response = await _controlClient.SendAsync(
+            SelectedTarget.Value, ControlCommands.ResetSendActivity, cancellationToken: cancellationToken);
+        return (response.Success, response.Message ?? (response.Success ? "Send statistics cleared." : "Reset failed."));
+    }
+
     public async Task<IReadOnlyList<FirewallRuleHistoryEntryDto>?> GetFirewallHistoryAsync(
         int maxEntries = 100,
         CancellationToken cancellationToken = default)
@@ -315,11 +363,11 @@ public sealed class LocalCollectorAdminClient
     /// </summary>
     public async Task<EndpointResolution> ResolveGrpcLoggerEndpointAsync(CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(_apiKeySecret))
-        {
-            DebugLog("ResolveGrpcLoggerEndpointAsync: no API key, skipping");
-            return EndpointResolution.None;
-        }
+        // NOTE: the API key is only needed for the direct-discovery fallback below.
+        // Asking a RUNNING instance for its locked endpoint needs no key, so that
+        // path must come first — the old key-guard short-circuited here and made the
+        // Destination page show "Discovery unreachable" even when a healthy
+        // service/console instance was selected and knew its endpoint.
 
         // PREFERRED PATH: if a collector instance is running, ask it directly.
         // This guarantees Test uses the same endpoint production is using —
@@ -357,7 +405,14 @@ public sealed class LocalCollectorAdminClient
         string? lastError = null;
         int? lastStatusCode = null;
 
-        if (!string.IsNullOrWhiteSpace(discoveryUrl))
+        if (string.IsNullOrWhiteSpace(_apiKeySecret))
+        {
+            // Discovery resolves per API key — without one a direct call is
+            // meaningless. Fall through to the service's endpoint cache.
+            DebugLog("ResolveGrpcLoggerEndpointAsync: no API key for direct discovery — trying service cache");
+            lastError = "no API key configured in the UI";
+        }
+        else if (!string.IsNullOrWhiteSpace(discoveryUrl))
         {
             DebugLog($"ResolveGrpcLoggerEndpointAsync: calling {discoveryUrl} (apiKey={Mask(_apiKeySecret)})");
             try

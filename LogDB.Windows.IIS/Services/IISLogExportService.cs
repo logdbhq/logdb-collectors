@@ -357,8 +357,15 @@ public class IISLogExportService : BackgroundService
         {
             var siteFolder = Path.GetFileName(Path.GetDirectoryName(logFile)) ?? "?";
             Console.WriteLine($"  Site {siteFolder} / {fileName}: read {totalRead} | sent {totalSent}");
-            _logger.LogInformation("Site {Site} file {File}: read {Read}, sent {Sent}",
-                siteFolder, fileName, totalRead, totalSent);
+            // Keep every per-file scan visible, but make the message state plainly
+            // how many rows went to the server, so a reset / future-start-date scan
+            // (reads a lot, sends nothing) can never be mistaken for live delivery.
+            if (totalSent > 0)
+                _logger.LogInformation("Site {Site} file {File}: read {Read}, {Sent} sent to server",
+                    siteFolder, fileName, totalRead, totalSent);
+            else
+                _logger.LogInformation("Site {Site} file {File}: read {Read}, 0 sent to server (filtered — not shipped)",
+                    siteFolder, fileName, totalRead);
         }
 
         return totalSent;

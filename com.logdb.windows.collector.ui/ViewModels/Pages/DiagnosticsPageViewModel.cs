@@ -15,6 +15,9 @@ public sealed class OnlineDiagnosticRowViewModel
     private static readonly IBrush MetricsBrush = new SolidColorBrush(Color.Parse("#FFB74D"));
     private static readonly IBrush HeartbeatBrush = new SolidColorBrush(Color.Parse("#BA68C8"));
 
+    private static readonly IBrush SentTagBrush = new SolidColorBrush(Color.Parse("#2E7D32"));
+    private static readonly IBrush NotSentTagBrush = new SolidColorBrush(Color.Parse("#616161"));
+
     public string TimeLocal { get; set; } = string.Empty;
     public string EventTimeLocal { get; set; } = string.Empty;
     public string Level { get; set; } = string.Empty;
@@ -23,8 +26,72 @@ public sealed class OnlineDiagnosticRowViewModel
     public IBrush? RowForeground { get; set; }
     public AsyncRelayCommand? CopyCommand { get; set; }
 
+    /// <summary>
+    /// First line of <see cref="Message"/> for grid display. Exception stack
+    /// traces are appended to the message by the collector's logger; in a grid
+    /// cell they render crushed, so the grid shows the headline and the Errors
+    /// tab's detail pane shows the full text.
+    /// </summary>
+    public string MessageFirstLine
+    {
+        get
+        {
+            var idx = Message.IndexOfAny(new[] { '\r', '\n' });
+            return idx < 0 ? Message : Message[..idx] + "  …";
+        }
+    }
+
+    /// <summary>
+    /// "SENT" / "NOT SENT" / "" — derived from a "&lt;N&gt; sent to server" phrase
+    /// in the message (currently emitted by the IIS exporter). Drives a coloured
+    /// chip in the console so a scan that shipped nothing can't be mistaken for a
+    /// real send. "" = ordinary line with no chip.
+    /// </summary>
+    public string SendTag
+    {
+        get
+        {
+            const string needle = " sent to server";
+            var idx = Message.IndexOf(needle, StringComparison.Ordinal);
+            if (idx <= 0) return string.Empty;
+            var start = idx;
+            while (start > 0 && char.IsDigit(Message[start - 1])) start--;
+            if (start == idx) return string.Empty; // no count directly before the phrase
+            return Message.Substring(start, idx - start) == "0" ? "NOT SENT" : "SENT";
+        }
+    }
+
+    public bool HasSendTag => SendTag.Length > 0;
+
+    public IBrush SendTagBrush => SendTag == "SENT" ? SentTagBrush : NotSentTagBrush;
+
+    /// <summary>True for levels that belong on the Errors tab.</summary>
+    public bool IsErrorLike =>
+        Level.Equals("Warning", StringComparison.OrdinalIgnoreCase)
+        || Level.Equals("Error", StringComparison.OrdinalIgnoreCase)
+        || Level.Equals("Critical", StringComparison.OrdinalIgnoreCase);
+
     public string ToLogLine() =>
         $"[{TimeLocal}] [{Level}] {Module}: {Message}";
+
+    /// <summary>
+    /// Full, untruncated detail for the clicked Console row: every field plus the
+    /// complete (possibly multi-line) message. Shown in the Console detail pane.
+    /// </summary>
+    public string ToDetailText()
+    {
+        var sb = new StringBuilder();
+        sb.Append("Time:       ").AppendLine(TimeLocal);
+        if (!string.IsNullOrEmpty(EventTimeLocal))
+            sb.Append("Event Time: ").AppendLine(EventTimeLocal);
+        sb.Append("Level:      ").AppendLine(Level);
+        sb.Append("Module:     ").AppendLine(Module);
+        if (HasSendTag)
+            sb.Append("Status:     ").AppendLine(SendTag);
+        sb.AppendLine();
+        sb.Append(Message);
+        return sb.ToString();
+    }
 
     public static (string Module, IBrush? Brush) ResolveModule(string category)
     {
@@ -90,6 +157,12 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     public const string OnlineModuleFilterAll = "(All)";
     public const string OnlineModuleFilterOther = "Other";
 
+    /// <summary>Second sub-tab of the Online Console: send throughput charts.</summary>
+    public ThroughputPageViewModel Throughput { get; }
+
+    /// <summary>Sub-tab: the most recent record documents shipped to the server.</summary>
+    public RecentRecordsPageViewModel RecentRecords { get; }
+
     public DiagnosticsPageViewModel(
         LocalCollectorAdminClient adminClient,
         Action<string, bool> statusCallback,
@@ -101,6 +174,8 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         _statusCallback = statusCallback;
         _exportTextAsync = exportTextAsync;
         _copyToClipboardAsync = copyToClipboardAsync;
+        Throughput = new ThroughputPageViewModel(adminClient, statusCallback);
+        RecentRecords = new RecentRecordsPageViewModel(adminClient, statusCallback, copyToClipboardAsync);
 
         OnlineConsoleRows = new ObservableCollection<OnlineDiagnosticRowViewModel>();
         OnlineModuleFilters = new ObservableCollection<OnlineModuleFilterItemViewModel>
@@ -116,9 +191,105 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
         CopySupportBundleCommand = new AsyncRelayCommand(CopySupportBundleAsync);
         RefreshOnlineConsoleCommand = new AsyncRelayCommand(RefreshOnlineConsoleAsync);
         ClearOnlineConsoleCommand = new RelayCommand(ClearOnlineConsole);
+        CopyOnlineDetailCommand = new AsyncRelayCommand(async () =>
+        {
+            if (!string.IsNullOrEmpty(SelectedOnlineDetail))
+            {
+                await _copyToClipboardAsync(SelectedOnlineDetail);
+                _statusCallback("Record detail copied to clipboard.", true);
+            }
+        });
+
+        ErrorRows = new ObservableCollection<OnlineDiagnosticRowViewModel>();
+        CopyErrorDetailCommand = new AsyncRelayCommand(async () =>
+        {
+            if (!string.IsNullOrEmpty(SelectedErrorDetail))
+            {
+                await _copyToClipboardAsync(SelectedErrorDetail);
+                _statusCallback("Error detail copied to clipboard.", true);
+            }
+        });
+    }
+
+    // ── Errors sub-tab: warnings/errors only, with full-detail pane ────────
+
+    /// <summary>Warning/Error/Critical rows from the live tail, newest first.</summary>
+    public ObservableCollection<OnlineDiagnosticRowViewModel> ErrorRows { get; }
+
+    public AsyncRelayCommand CopyErrorDetailCommand { get; }
+
+    private OnlineDiagnosticRowViewModel? _selectedErrorRow;
+    public OnlineDiagnosticRowViewModel? SelectedErrorRow
+    {
+        get => _selectedErrorRow;
+        set
+        {
+            if (SetProperty(ref _selectedErrorRow, value))
+            {
+                NotifyPropertyChanged(nameof(SelectedErrorDetail));
+            }
+        }
+    }
+
+    /// <summary>Full multi-line text (incl. stack trace) of the selected error.</summary>
+    public string SelectedErrorDetail => _selectedErrorRow?.Message ?? string.Empty;
+
+    private string _errorsTabHeader = "Errors";
+    public string ErrorsTabHeader
+    {
+        get => _errorsTabHeader;
+        private set => SetProperty(ref _errorsTabHeader, value);
+    }
+
+    /// <summary>
+    /// Rebuilds the Errors tab from the freshly fetched tail. Ignores the module
+    /// filter on purpose — an error should never be hidden by a view filter.
+    /// Keeps the current selection when the same entry is still present.
+    /// </summary>
+    private void UpdateErrorRows()
+    {
+        var selectedKey = _selectedErrorRow is { } sel ? sel.TimeLocal + "" + sel.Message : null;
+
+        ErrorRows.Clear();
+        OnlineDiagnosticRowViewModel? reselect = null;
+        foreach (var row in _allOnlineRows.Where(r => r.IsErrorLike))
+        {
+            ErrorRows.Add(row);
+            if (selectedKey != null && reselect == null
+                && row.TimeLocal + "" + row.Message == selectedKey)
+            {
+                reselect = row;
+            }
+        }
+
+        ErrorsTabHeader = ErrorRows.Count == 0 ? "Errors" : $"Errors ({ErrorRows.Count})";
+        if (reselect != null)
+        {
+            SelectedErrorRow = reselect;
+        }
     }
 
     public ObservableCollection<OnlineDiagnosticRowViewModel> OnlineConsoleRows { get; }
+
+    public AsyncRelayCommand CopyOnlineDetailCommand { get; }
+
+    private OnlineDiagnosticRowViewModel? _selectedOnlineRow;
+
+    /// <summary>The Console row the user clicked; drives the detail pane.</summary>
+    public OnlineDiagnosticRowViewModel? SelectedOnlineRow
+    {
+        get => _selectedOnlineRow;
+        set
+        {
+            if (SetProperty(ref _selectedOnlineRow, value))
+            {
+                NotifyPropertyChanged(nameof(SelectedOnlineDetail));
+            }
+        }
+    }
+
+    /// <summary>Full untruncated detail of the selected Console row.</summary>
+    public string SelectedOnlineDetail => _selectedOnlineRow?.ToDetailText() ?? string.Empty;
 
     public bool OnlineAutoRefresh
     {
@@ -270,11 +441,25 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
             ? _allOnlineRows
             : _allOnlineRows.Where(r => MatchesSelectedFilters(r.Module, selectedNames));
 
+        // A refresh rebuilds the row instances, so remember the selection by value
+        // and restore it afterwards — otherwise the detail pane clears every 3s.
+        var selectedKey = _selectedOnlineRow is { } sel ? sel.TimeLocal + "" + sel.Message : null;
+
         OnlineConsoleRows.Clear();
+        OnlineDiagnosticRowViewModel? reselect = null;
         foreach (var row in visible)
         {
             OnlineConsoleRows.Add(row);
+            if (selectedKey != null && reselect == null
+                && row.TimeLocal + "" + row.Message == selectedKey)
+            {
+                reselect = row;
+            }
         }
+
+        SelectedOnlineRow = reselect;
+
+        UpdateErrorRows();
 
         var suffix = filterAll
             ? string.Empty
@@ -302,6 +487,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
 
         _allOnlineRows.Clear();
         OnlineConsoleRows.Clear();
+        SelectedOnlineRow = null;
         OnlineStatusText = "Live tail cleared.";
     }
 

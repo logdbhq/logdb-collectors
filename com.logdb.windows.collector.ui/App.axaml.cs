@@ -34,12 +34,41 @@ public partial class App : Application
 
     private static async Task CheckForUpdatesAsync(Window owner)
     {
+        // Anonymous GitHub API access is 60 req/hour. Without a persisted stamp the
+        // old behaviour re-checked on every launch, burned the quota, and produced a
+        // popup → UAC → silently-failing-install loop once rate-limited.
+        if (!UpdateCheckThrottle.ShouldAutoCheck())
+            return;
+
         // Give the UI a beat to settle before doing network I/O.
         await Task.Delay(5000);
 
         var updater = new UpdaterService();
-        var info = await updater.CheckAsync();
+        var (info, error) = await updater.CheckWithErrorAsync();
+        if (UpdateCheckThrottle.LooksRateLimited(error))
+        {
+            // Back off instead of re-prompting into a doomed install.
+            UpdateCheckThrottle.MarkRateLimited();
+            return;
+        }
+
+        UpdateCheckThrottle.MarkChecked();
         if (info == null) return; // up-to-date, not in a Velopack install, or feed unreachable
+
+        // Download in THIS (non-elevated) instance before prompting — staging the
+        // package needs no admin rights, and it means the elevated apply step can
+        // succeed even if GitHub rate-limits between the prompt and the apply.
+        try
+        {
+            await updater.DownloadAsync(info);
+        }
+        catch
+        {
+            // Download failed (likely the same rate limit) — skip the prompt this
+            // round rather than offering an install that cannot complete.
+            UpdateCheckThrottle.MarkRateLimited();
+            return;
+        }
 
         var newVersion = info.TargetFullRelease.Version.ToString();
         var currentVersion = updater.CurrentVersion ?? "(unknown)";

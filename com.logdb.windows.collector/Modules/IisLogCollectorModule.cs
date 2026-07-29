@@ -1,3 +1,4 @@
+using com.logdb.windows.collector.Activity;
 using com.logdb.windows.collector.Configuration;
 using com.logdb.windows.collector.Health;
 using com.logdb.windows.collector.Services;
@@ -13,6 +14,8 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
     private readonly ModuleHostFactory _moduleHostFactory;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<IisLogCollectorModule> _logger;
+    private readonly ISendActivitySink _sendActivity;
+    private readonly RecentRecordsBuffer _recentRecords;
 
     public IisLogCollectorModule(
         IOptionsMonitor<CollectorConfigDto> configMonitor,
@@ -20,11 +23,15 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
         IRuntimeEndpointStore endpointStore,
         ModuleHostFactory moduleHostFactory,
         ILoggerFactory loggerFactory,
+        ISendActivitySink sendActivity,
+        RecentRecordsBuffer recentRecords,
         ILogger<IisLogCollectorModule> logger)
         : base("IIS", configMonitor, statusRegistry, endpointStore, logger)
     {
         _moduleHostFactory = moduleHostFactory;
         _loggerFactory = loggerFactory;
+        _sendActivity = sendActivity;
+        _recentRecords = recentRecords;
         _logger = logger;
     }
 
@@ -78,7 +85,9 @@ public sealed class IisLogCollectorModule : ExporterModuleBase
         // the zombie-long-lived-channel class of bugs where a stale HTTP/2
         // connection silently swallows rows.
         builder.Services.AddSingleton<ILogDBClient>(_ =>
-            new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)));
+            new RecordingLogDbClient(
+                new EphemeralLogDbClient(() => LogDbClientFactory.Create(config.LogDB, endpoint, _loggerFactory)),
+                _sendActivity, "IIS", Environment.MachineName, _recentRecords));
 
         builder.Services.AddSingleton<IISLogReader>();
         builder.Services.AddSingleton<AzureAppServiceJsonReader>();
