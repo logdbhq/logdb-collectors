@@ -13,6 +13,7 @@ public static class CollectorPathDefaults
     public static string LogDirectory => Path.Combine(BaseDirectory, "logs");
     public static string EndpointCachePath => Path.Combine(BaseDirectory, "endpoint-cache.json");
     public static string FirewallHistoryPath => Path.Combine(BaseDirectory, "firewall-history.jsonl");
+    public static string FirewallBlockedIpIndexPath => Path.Combine(BaseDirectory, "firewall-blocked-ips.json");
     public static string FailureLogPath => Path.Combine(BaseDirectory, "failures.json");
     public static string SendActivityPath => Path.Combine(BaseDirectory, "send-activity.json");
 }

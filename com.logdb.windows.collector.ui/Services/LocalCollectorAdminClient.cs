@@ -219,6 +219,19 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.DeleteFirewallRuleAsync(SelectedTarget.Value, ruleId, removeFromBackend, cancellationToken);
     }
 
+    public async Task<BlockedIpListResponseDto?> GetFirewallBlockedIpsAsync(
+        string filter,
+        int max = 500,
+        CancellationToken cancellationToken = default)
+    {
+        if (SelectedTarget == null)
+        {
+            return null;
+        }
+
+        return await _controlClient.GetFirewallBlockedIpsAsync(SelectedTarget.Value, filter, max, cancellationToken);
+    }
+
     public async Task<(bool Success, string Message, FirewallRuleIpsDto? Rule)> GetFirewallRuleIpsAsync(
         string ruleId,
         CancellationToken cancellationToken = default)

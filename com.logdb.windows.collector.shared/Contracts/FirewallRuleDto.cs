@@ -35,6 +35,38 @@ public sealed class FirewallRuleIpsDto
     public List<string> Ips { get; set; } = new();
 }
 
+/// <summary>One entry of the collector-maintained blocked-IP index: which
+/// IP/CIDR is blocked, which feed put it there, and since when. BlockedAtUtc
+/// is exact for IPs added after the index shipped; IPs that were already in
+/// rules when the index first ran carry the first-observed timestamp.</summary>
+public sealed class BlockedIpEntryDto
+{
+    public string Ip { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public DateTime BlockedAtUtc { get; set; }
+}
+
+public sealed class BlockedIpQueryDto
+{
+    /// <summary>Case-insensitive substring matched against IP and source; empty = all.</summary>
+    public string Filter { get; set; } = string.Empty;
+
+    /// <summary>Cap on returned entries (server clamps to 1–2000).</summary>
+    public int Max { get; set; } = 500;
+}
+
+public sealed class BlockedIpListResponseDto
+{
+    /// <summary>All indexed entries, before filtering.</summary>
+    public int Total { get; set; }
+
+    /// <summary>Entries matching the filter (may exceed Entries.Count when capped).</summary>
+    public int Matched { get; set; }
+
+    /// <summary>Newest-blocked first.</summary>
+    public List<BlockedIpEntryDto> Entries { get; set; } = new();
+}
+
 public sealed class DeleteFirewallRuleRequestDto
 {
     /// <summary>The rule's unique Name (<see cref="FirewallRuleInfoDto.Id"/>).</summary>

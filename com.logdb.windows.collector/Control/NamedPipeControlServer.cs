@@ -29,6 +29,7 @@ public sealed class NamedPipeControlServer : BackgroundService
     private readonly ICollectorControlInspector _inspector;
     private readonly FirewallSyncEngine _firewallEngine;
     private readonly FirewallRuleHistoryStore _firewallHistory;
+    private readonly FirewallBlockedIpIndex _firewallBlockedIndex;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IConfiguration _configuration;
     private readonly SendActivityTracker _sendActivity;
@@ -46,6 +47,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         ICollectorControlInspector inspector,
         FirewallSyncEngine firewallEngine,
         FirewallRuleHistoryStore firewallHistory,
+        FirewallBlockedIpIndex firewallBlockedIndex,
         IHostApplicationLifetime hostLifetime,
         IConfiguration configuration,
         SendActivityTracker sendActivity,
@@ -61,6 +63,7 @@ public sealed class NamedPipeControlServer : BackgroundService
         _inspector = inspector;
         _firewallEngine = firewallEngine;
         _firewallHistory = firewallHistory;
+        _firewallBlockedIndex = firewallBlockedIndex;
         _hostLifetime = hostLifetime;
         _configuration = configuration;
         _sendActivity = sendActivity;
@@ -373,6 +376,27 @@ public sealed class NamedPipeControlServer : BackgroundService
                 {
                     Success = true,
                     PayloadJson = JsonSerializer.Serialize(rules, JsonOptions)
+                };
+
+            case ControlCommands.GetFirewallBlockedIps:
+                BlockedIpQueryDto? blockedQuery = null;
+                if (!string.IsNullOrWhiteSpace(request.PayloadJson))
+                {
+                    try
+                    {
+                        blockedQuery = JsonSerializer.Deserialize<BlockedIpQueryDto>(request.PayloadJson, JsonOptions);
+                    }
+                    catch (JsonException)
+                    {
+                        // fall through to defaults
+                    }
+                }
+
+                var blockedResult = _firewallBlockedIndex.Query(blockedQuery?.Filter, blockedQuery?.Max ?? 500);
+                return new ControlResponseDto
+                {
+                    Success = true,
+                    PayloadJson = JsonSerializer.Serialize(blockedResult, JsonOptions)
                 };
 
             case ControlCommands.GetFirewallRuleIps:

@@ -716,6 +716,9 @@
                         <Button Content="Refresh Active Rules"
                                 Command="{Binding RefreshFirewallRulesCommand}"
                                 ToolTip.Tip="Re-read the collector-managed block rules currently applied to the OS firewall." />
+                        <Button Content="Blocked IPs"
+                                Command="{Binding OpenFirewallBlockedIpsCommand}"
+                                ToolTip.Tip="Browse every IP/CIDR currently blocked, with the date it was first blocked and the feed that supplied it." />
                         <TextBlock VerticalAlignment="Center"
                                    Classes="muted"
                                    Text="{Binding FirewallRulesSummary}" />
@@ -867,6 +870,32 @@
                                      Watermark="Filter — type an IP or CIDR fragment, e.g. 45.155." />
                             <TextBlock Grid.Row="2" Classes="muted" Text="{Binding FirewallIpsCountText}" />
                             <ListBox Grid.Row="3" ItemsSource="{Binding FirewallIpsView}"
+                                     FontFamily="Consolas,Menlo,monospace"
+                                     MinHeight="160" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Blocked IPs drawer: every currently blocked IP/CIDR with
+                         its first-blocked date and source feed, from the
+                         collector-maintained index (the OS firewall itself has
+                         no per-address dates). Shares the column/splitter/width
+                         with the other drawers; mutually exclusive with them. -->
+                    <Border x:Name="FirewallBlockedDrawer"
+                            Grid.Column="2"
+                            Classes="detail-panel"
+                            IsVisible="{Binding FirewallBlockedVisible}"
+                            VerticalAlignment="Top"
+                            Margin="0,8,8,8">
+                        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                <TextBlock Text="Blocked IPs" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallBlockedCommand}" />
+                            </Grid>
+                            <TextBox Grid.Row="1" Text="{Binding FirewallBlockedFilter, Mode=TwoWay}"
+                                     Watermark="Filter — IP/CIDR fragment or feed name, e.g. 45.155. or Tor" />
+                            <TextBlock Grid.Row="2" Classes="muted" TextWrapping="Wrap"
+                                       Text="{Binding FirewallBlockedCountText}" />
+                            <ListBox Grid.Row="3" ItemsSource="{Binding FirewallBlockedRows}"
                                      FontFamily="Consolas,Menlo,monospace"
                                      MinHeight="160" />
                         </Grid>

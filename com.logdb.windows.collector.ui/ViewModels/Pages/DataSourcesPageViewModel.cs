@@ -396,6 +396,10 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private string _firewallDetailRemovedHeader = string.Empty;
     private DataSourceFirewallHistoryRow? _selectedFirewallHistoryRow;
     private DataSourceFirewallRuleRow? _selectedFirewallRuleRow;
+    private bool _firewallBlockedVisible;
+    private string _firewallBlockedFilter = string.Empty;
+    private string _firewallBlockedCountText = string.Empty;
+    private CancellationTokenSource? _firewallBlockedQueryCts;
     private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
     private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
 
@@ -425,6 +429,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         FirewallIpsView = new ObservableCollection<string>();
         FirewallDetailAddedIps = new ObservableCollection<string>();
         FirewallDetailRemovedIps = new ObservableCollection<string>();
+        FirewallBlockedRows = new ObservableCollection<string>();
 
         AddCustomChannelCommand = new RelayCommand(AddCustomChannel);
         RemoveCustomChannelCommand = new RelayCommand(RemoveSelectedCustomChannel);
@@ -462,6 +467,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
         CloseFirewallIpsCommand = new RelayCommand(() => FirewallIpsPanelVisible = false);
         CloseFirewallDetailCommand = new RelayCommand(() => FirewallDetailVisible = false);
+        OpenFirewallBlockedIpsCommand = new AsyncRelayCommand(OpenFirewallBlockedIpsAsync);
+        CloseFirewallBlockedCommand = new RelayCommand(() => FirewallBlockedVisible = false);
 
         PauseEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", false));
         ResumeEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", true));
@@ -511,6 +518,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public ObservableCollection<string> FirewallIpsView { get; }
     public ObservableCollection<string> FirewallDetailAddedIps { get; }
     public ObservableCollection<string> FirewallDetailRemovedIps { get; }
+    public ObservableCollection<string> FirewallBlockedRows { get; }
 
     public StringItemViewModel? SelectedCustomChannel { get; set; }
     public StringItemViewModel? SelectedIisDirectory { get; set; }
@@ -950,9 +958,106 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    /// <summary>True when either right-hand drawer (history detail or rule IPs)
-    /// is open — drives the shared drawer column and splitter.</summary>
-    public bool FirewallSidePanelVisible => _firewallDetailVisible || _firewallIpsPanelVisible;
+    /// <summary>True when any right-hand drawer (history detail, rule IPs, or
+    /// blocked-IP list) is open — drives the shared drawer column and splitter.</summary>
+    public bool FirewallSidePanelVisible => _firewallDetailVisible || _firewallIpsPanelVisible || _firewallBlockedVisible;
+
+    public bool FirewallBlockedVisible
+    {
+        get => _firewallBlockedVisible;
+        set
+        {
+            if (SetProperty(ref _firewallBlockedVisible, value))
+            {
+                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
+            }
+        }
+    }
+
+    public string FirewallBlockedFilter
+    {
+        get => _firewallBlockedFilter;
+        set
+        {
+            if (SetProperty(ref _firewallBlockedFilter, value))
+            {
+                ScheduleFirewallBlockedQuery();
+            }
+        }
+    }
+
+    public string FirewallBlockedCountText
+    {
+        get => _firewallBlockedCountText;
+        set => SetProperty(ref _firewallBlockedCountText, value);
+    }
+
+    private async Task OpenFirewallBlockedIpsAsync()
+    {
+        FirewallDetailVisible = false;      // the drawers share one column
+        FirewallIpsPanelVisible = false;
+        FirewallBlockedVisible = true;
+        await RefreshFirewallBlockedIpsAsync();
+    }
+
+    /// <summary>Filter keystrokes re-query the service; debounced so a fast
+    /// typist causes one pipe round-trip, not one per character.</summary>
+    private void ScheduleFirewallBlockedQuery()
+    {
+        if (!FirewallBlockedVisible)
+        {
+            return;
+        }
+
+        _firewallBlockedQueryCts?.Cancel();
+        _firewallBlockedQueryCts = new CancellationTokenSource();
+        var token = _firewallBlockedQueryCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(350, token);
+                if (!token.IsCancellationRequested)
+                {
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(RefreshFirewallBlockedIpsAsync);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // debounced
+            }
+        }, token);
+    }
+
+    private async Task RefreshFirewallBlockedIpsAsync()
+    {
+        try
+        {
+            var result = await _adminClient.GetFirewallBlockedIpsAsync(FirewallBlockedFilter, 500);
+            FirewallBlockedRows.Clear();
+
+            if (result == null)
+            {
+                FirewallBlockedCountText = "Not available — the running collector predates the blocked-IP index (update the service).";
+                return;
+            }
+
+            foreach (var entry in result.Entries)
+            {
+                FirewallBlockedRows.Add(
+                    $"{entry.Ip}   ·   {entry.BlockedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}   ·   {entry.Source}");
+            }
+
+            FirewallBlockedCountText = result.Matched > result.Entries.Count
+                ? $"showing first {result.Entries.Count} of {result.Matched} matched ({result.Total} blocked in total) — refine the filter"
+                : $"{result.Matched} shown · {result.Total} blocked in total";
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Blocked IPs refresh failed: {ex.Message}", false);
+        }
+    }
 
     public string FirewallIpsTitle
     {
@@ -1097,7 +1202,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             FirewallDetailRemovedHeader = string.Empty;
         }
 
-        FirewallIpsPanelVisible = false;   // the two drawers share one column
+        FirewallIpsPanelVisible = false;   // the drawers share one column
+        FirewallBlockedVisible = false;
         FirewallDetailVisible = true;
     }
 
@@ -1283,6 +1389,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
     public RelayCommand CloseFirewallIpsCommand { get; }
     public RelayCommand CloseFirewallDetailCommand { get; }
+    public AsyncRelayCommand OpenFirewallBlockedIpsCommand { get; }
+    public RelayCommand CloseFirewallBlockedCommand { get; }
 
     public AsyncRelayCommand PauseEventLogCommand { get; }
     public AsyncRelayCommand ResumeEventLogCommand { get; }
@@ -2256,7 +2364,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             FirewallIpsTitle = $"{rule.DisplayName} — {rule.Ips.Count} IPs/CIDRs";
             FirewallIpsFilter = string.Empty;
             RefilterFirewallIps();
-            FirewallDetailVisible = false;   // the two drawers share one column
+            FirewallDetailVisible = false;   // the drawers share one column
+            FirewallBlockedVisible = false;
             FirewallIpsPanelVisible = true;
         }
         catch (Exception ex)

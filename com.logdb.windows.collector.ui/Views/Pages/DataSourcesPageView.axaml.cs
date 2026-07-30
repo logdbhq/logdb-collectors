@@ -92,6 +92,7 @@ public partial class DataSourcesPageView : UserControl
         var maxHeight = Math.Max(320, _topLevel.ClientSize.Height - 180);
         FirewallDetailDrawer.MaxHeight = maxHeight;
         FirewallIpsDrawer.MaxHeight = maxHeight;
+        FirewallBlockedDrawer.MaxHeight = maxHeight;
     }
 
     private void AttachViewModel()

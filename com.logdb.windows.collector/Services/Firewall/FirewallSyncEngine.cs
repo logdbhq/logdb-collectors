@@ -42,6 +42,7 @@ public sealed class FirewallSyncEngine
     private readonly FirewallWhitelistService _whitelist;
     private readonly GuardBlocklistClient _guardClient;
     private readonly FirewallRuleHistoryStore _history;
+    private readonly FirewallBlockedIpIndex _blockedIndex;
     private readonly ILogger<FirewallSyncEngine> _logger;
 
     public FirewallSyncEngine(
@@ -49,12 +50,14 @@ public sealed class FirewallSyncEngine
         FirewallWhitelistService whitelist,
         GuardBlocklistClient guardClient,
         FirewallRuleHistoryStore history,
+        FirewallBlockedIpIndex blockedIndex,
         ILogger<FirewallSyncEngine> logger)
     {
         _fetcher = fetcher;
         _whitelist = whitelist;
         _guardClient = guardClient;
         _history = history;
+        _blockedIndex = blockedIndex;
         _logger = logger;
     }
 
@@ -95,6 +98,7 @@ public sealed class FirewallSyncEngine
         var totalChanges = 0;
         var perFeed = new List<FirewallFeedSyncSummary>();
         var activeDisplayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var activeSetsBySource = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -108,6 +112,7 @@ public sealed class FirewallSyncEngine
 
                 perFeed.Add(new FirewallFeedSyncSummary(feedId, displayName, ips.Count, ruleCount, whitelisted));
                 activeDisplayNames.Add(displayName);
+                activeSetsBySource[displayName] = ips.Select(NormalizeAddress).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 totalActiveRules += ruleCount;
                 totalIps += ips.Count;
                 totalChanges += changes;
@@ -126,6 +131,7 @@ public sealed class FirewallSyncEngine
 
                 perFeed.Add(new FirewallFeedSyncSummary("custom_guard", customDisplayName, guardIps.Count, ruleCount, whitelisted));
                 activeDisplayNames.Add(customDisplayName);
+                activeSetsBySource[customDisplayName] = guardIps.Select(NormalizeAddress).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 totalActiveRules += ruleCount;
                 totalIps += guardIps.Count;
                 totalChanges += changes;
@@ -167,6 +173,18 @@ public sealed class FirewallSyncEngine
                 DryRun = config.DryRun,
                 Message = $"{perFeed.Count} feed(s), {totalIps} IPs, {totalActiveRules} rule(s) active, {totalChanges} rule change(s)"
             });
+        }
+
+        // Keep the per-IP block index aligned with what is now actually applied.
+        // Dry-run cycles never touch the firewall, so they must not touch the
+        // index either. Index errors are logged inside and never break a sync.
+        if (!config.DryRun)
+        {
+            var (indexAdded, indexRemoved) = _blockedIndex.Reconcile(activeSetsBySource, DateTime.UtcNow);
+            if (indexAdded > 0 || indexRemoved > 0)
+            {
+                _logger.LogInformation("Blocked-IP index: +{Added} / −{Removed}", indexAdded, indexRemoved);
+            }
         }
 
         _logger.LogInformation(

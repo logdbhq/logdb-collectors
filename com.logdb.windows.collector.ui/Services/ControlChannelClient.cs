@@ -247,6 +247,36 @@ public sealed class ControlChannelClient
         return (response.Success, response.Message ?? (response.Success ? "Rule deleted." : "Delete failed."));
     }
 
+    /// <summary>Null when the target collector predates the blocked-ips index.</summary>
+    public async Task<BlockedIpListResponseDto?> GetFirewallBlockedIpsAsync(
+        CollectorInstanceMode mode,
+        string filter,
+        int max = 500,
+        CancellationToken cancellationToken = default)
+    {
+        var payload = JsonSerializer.Serialize(new BlockedIpQueryDto { Filter = filter, Max = max }, JsonOptions);
+        var response = await SendAsync(
+            mode,
+            ControlCommands.GetFirewallBlockedIps,
+            payloadJson: payload,
+            timeoutMilliseconds: 30000,
+            cancellationToken: cancellationToken);
+
+        if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<BlockedIpListResponseDto>(response.PayloadJson, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public async Task<(bool Success, string Message, FirewallRuleIpsDto? Rule)> GetFirewallRuleIpsAsync(
         CollectorInstanceMode mode,
         string ruleId,
