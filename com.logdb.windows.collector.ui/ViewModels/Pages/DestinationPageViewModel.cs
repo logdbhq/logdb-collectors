@@ -207,6 +207,11 @@ public sealed class DestinationPageViewModel : PageViewModelBase
 
         ResolvedEndpointDisplay = result.Source switch
         {
+            // Preferred path: the running collector reported the endpoint it has
+            // locked in. Before this case existed, the SUCCESS outcome fell into
+            // the default arm and displayed as "Discovery unreachable".
+            LocalCollectorAdminClient.EndpointResolutionSource.RunningService =>
+                $"{result.Endpoint}  (in use by the running collector{FormatCacheAge(result.ResolvedAtUtc)})",
             LocalCollectorAdminClient.EndpointResolutionSource.Discovery =>
                 result.Endpoint!,
             LocalCollectorAdminClient.EndpointResolutionSource.ServiceCache =>
