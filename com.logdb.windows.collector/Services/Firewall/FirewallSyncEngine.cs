@@ -284,7 +284,9 @@ public sealed class FirewallSyncEngine
         {
             var details = JsonSerializer.Deserialize<RuleDeletionDetails>(output.Trim(), RuleJsonOptions);
             displayName = details?.DisplayName ?? request.RuleId;
-            ips = details?.Ips ?? new List<string>();
+            // Normalized so backend removal matches Guard's stored form and the
+            // history entry shows CIDR rather than dotted netmasks.
+            ips = (details?.Ips ?? new List<string>()).Select(NormalizeAddress).ToList();
         }
         catch (JsonException)
         {
@@ -372,7 +374,7 @@ public sealed class FirewallSyncEngine
             {
                 Id = ruleId,
                 DisplayName = details?.DisplayName ?? ruleId,
-                Ips = details?.Ips ?? new List<string>()
+                Ips = (details?.Ips ?? new List<string>()).Select(NormalizeAddress).ToList()
             });
         }
         catch (JsonException ex)
@@ -394,6 +396,55 @@ public sealed class FirewallSyncEngine
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ruleDisplayName));
         return "LogDB-FW-" + Convert.ToHexString(hash, 0, 6);
+    }
+
+    /// <summary>
+    /// Canonicalizes an address for comparison and display: Windows Firewall
+    /// returns rule addresses in dotted-netmask form ("2.57.122.188/255.255.255.252")
+    /// while feeds use CIDR ("2.57.122.188/30"). Without normalization the
+    /// existing-vs-desired set comparison never matched for CIDR entries, so
+    /// every sync cycle rewrote every rule and logged the whole feed as
+    /// +N/−N churn. Full-host masks (/32, /128) collapse to the bare IP.
+    /// Unparseable or non-contiguous masks are returned unchanged.
+    /// </summary>
+    public static string NormalizeAddress(string value)
+    {
+        var v = value.Trim();
+        var slash = v.IndexOf('/');
+        if (slash < 0) return v;
+
+        var ip = v[..slash];
+        var suffix = v[(slash + 1)..];
+        if (!System.Net.IPAddress.TryParse(ip, out var address)) return v;
+        var maxPrefix = address.GetAddressBytes().Length * 8;
+
+        if (int.TryParse(suffix, out var numericPrefix))
+        {
+            if (numericPrefix < 0 || numericPrefix > maxPrefix) return v;
+            return numericPrefix == maxPrefix ? ip : $"{ip}/{numericPrefix}";
+        }
+
+        if (!System.Net.IPAddress.TryParse(suffix, out var mask)) return v;
+        var bytes = mask.GetAddressBytes();
+        var prefix = 0;
+        var zeroSeen = false;
+        foreach (var b in bytes)
+        {
+            for (var bit = 7; bit >= 0; bit--)
+            {
+                if ((b >> bit & 1) == 1)
+                {
+                    if (zeroSeen) return v;   // non-contiguous mask — leave as-is
+                    prefix++;
+                }
+                else
+                {
+                    zeroSeen = true;
+                }
+            }
+        }
+
+        return prefix == bytes.Length * 8 ? ip : $"{ip}/{prefix}";
     }
 
     /// <summary>Recovers the feed display name from a rule display name by
@@ -443,7 +494,7 @@ public sealed class FirewallSyncEngine
         {
             var ruleName = chunks.Count == 1 ? baseRuleName : $"{baseRuleName} ({i + 1}/{chunks.Count})";
             var existing = await GetRuleRemoteAddressesAsync(ruleName, cancellationToken).ConfigureAwait(false);
-            var desired = chunks[i].ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var desired = chunks[i].Select(NormalizeAddress).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             if (existing.SetEquals(desired))
                 continue;
@@ -539,6 +590,7 @@ public sealed class FirewallSyncEngine
                 .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
                 .Select(line => line.Trim())
                 .Where(line => !string.IsNullOrEmpty(line) && line != "Any" && line != "LocalSubnet")
+                .Select(NormalizeAddress)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
         catch
