@@ -65,13 +65,13 @@
             <Border Classes="card">
                 <StackPanel Spacing="2">
                     <TextBlock Classes="cardLabel" Text="Sent (range)" />
-                    <TextBlock Classes="cardValue" Text="{Binding TotalSent}" />
+                    <TextBlock Classes="cardValue" Text="{Binding TotalSent, StringFormat={}{0:N0}}" />
                 </StackPanel>
             </Border>
             <Border Classes="card">
                 <StackPanel Spacing="2">
                     <TextBlock Classes="cardLabel" Text="Failed (range)" />
-                    <TextBlock Classes="cardValue" Text="{Binding TotalFailed}" />
+                    <TextBlock Classes="cardValue" Text="{Binding TotalFailed, StringFormat={}{0:N0}}" />
                 </StackPanel>
             </Border>
         </StackPanel>

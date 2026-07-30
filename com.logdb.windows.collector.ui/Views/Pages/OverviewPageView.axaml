@@ -61,7 +61,7 @@
             <Border Classes="card">
                 <StackPanel HorizontalAlignment="Center">
                     <TextBlock Classes="cardLabel" Text="Total Sent" />
-                    <TextBlock Classes="megaNumber" Text="{Binding TotalSent}" />
+                    <TextBlock Classes="megaNumber" Text="{Binding TotalSent, StringFormat={}{0:N0}}" />
                 </StackPanel>
             </Border>
             <Border Grid.Column="1" Classes="card">
@@ -81,7 +81,7 @@
                         ToolTip.Tip="View the recent failures behind this count">
                     <StackPanel HorizontalAlignment="Center">
                         <TextBlock Classes="cardLabel" Text="Critical Issues" />
-                        <TextBlock Classes="megaNumberDanger" Text="{Binding TotalFailed}" />
+                        <TextBlock Classes="megaNumberDanger" Text="{Binding TotalFailed, StringFormat={}{0:N0}}" />
                         <TextBlock Text="View details ›"
                                    HorizontalAlignment="Center"
                                    FontSize="12"
@@ -158,8 +158,8 @@
                             <dgrid:DataGridTextColumn Header="State" Binding="{Binding State}" Width="90" />
                             <dgrid:DataGridTextColumn Header="Last Poll" Binding="{Binding LastPoll}" Width="170" />
                             <dgrid:DataGridTextColumn Header="Last Error" Binding="{Binding LastError}" Width="*" />
-                            <dgrid:DataGridTextColumn Header="Sent" Binding="{Binding SentCount}" Width="85" />
-                            <dgrid:DataGridTextColumn Header="Failed" Binding="{Binding FailedCount}" Width="85" />
+                            <dgrid:DataGridTextColumn Header="Sent" Binding="{Binding SentCount, StringFormat={}{0:N0}}" Width="85" />
+                            <dgrid:DataGridTextColumn Header="Failed" Binding="{Binding FailedCount, StringFormat={}{0:N0}}" Width="85" />
                         </dgrid:DataGrid.Columns>
                     </dgrid:DataGrid>
                 </Border>
