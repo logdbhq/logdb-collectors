@@ -43,6 +43,28 @@ public partial class DataSourcesPageView : UserControl
         PersistFirewallGridColumns();
     }
 
+    private void FirewallHistoryDataGrid_OnDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (DataContext is DataSourcesPageViewModel viewModel)
+        {
+            viewModel.OpenFirewallHistoryDetail();
+        }
+    }
+
+    private async void FirewallDetailCopy_OnClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not DataSourcesPageViewModel viewModel)
+        {
+            return;
+        }
+
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard != null)
+        {
+            await clipboard.SetTextAsync(viewModel.BuildFirewallDetailClipboardText());
+        }
+    }
+
     private void PersistFirewallGridColumns()
     {
         PersistGridColumnWidths(FirewallRulesDataGrid, RulesGridKey);

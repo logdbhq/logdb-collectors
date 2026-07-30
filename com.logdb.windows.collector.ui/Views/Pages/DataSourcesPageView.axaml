@@ -783,11 +783,13 @@
                     <Border Grid.Row="5" Classes="panel">
                         <dgrid:DataGrid x:Name="FirewallHistoryDataGrid"
                                         ItemsSource="{Binding FirewallHistoryRows}"
+                                        SelectedItem="{Binding SelectedFirewallHistoryRow, Mode=TwoWay}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"
                                         CanUserSortColumns="False"
                                         CanUserResizeColumns="True"
                                         PointerReleased="FirewallGrid_OnPointerReleased"
+                                        DoubleTapped="FirewallHistoryDataGrid_OnDoubleTapped"
                                         Height="320">
                             <dgrid:DataGrid.Columns>
                                 <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
@@ -796,6 +798,48 @@
                                 <dgrid:DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*" />
                             </dgrid:DataGrid.Columns>
                         </dgrid:DataGrid>
+                    </Border>
+
+                    <!-- Right-hand detail drawer for a double-clicked history row.
+                         Overlays all tab rows; opaque frosted style per App.axaml. -->
+                    <Border Grid.Row="0" Grid.RowSpan="6"
+                            Classes="detail-panel"
+                            IsVisible="{Binding FirewallDetailVisible}"
+                            HorizontalAlignment="Right"
+                            Width="460"
+                            Margin="0,0,0,0">
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,*" RowSpacing="6">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                <TextBlock Text="{Binding FirewallDetailTitle}"
+                                           FontWeight="Bold"
+                                           TextWrapping="Wrap"
+                                           VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Copy"
+                                        Click="FirewallDetailCopy_OnClick"
+                                        ToolTip.Tip="Copy the full detail, including all sampled IPs, as plain text." />
+                                <Button Grid.Column="2" Content="✕" Command="{Binding CloseFirewallDetailCommand}" />
+                            </Grid>
+
+                            <TextBlock Grid.Row="1" Classes="muted" Text="{Binding FirewallDetailTime}" />
+                            <TextBlock Grid.Row="2" Text="{Binding FirewallDetailResult}" />
+                            <TextBlock Grid.Row="3" Classes="muted" Text="{Binding FirewallDetailMeta}"
+                                       IsVisible="{Binding FirewallDetailMeta, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            <TextBlock Grid.Row="4" Text="{Binding FirewallDetailMessage}" TextWrapping="Wrap"
+                                       IsVisible="{Binding FirewallDetailMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+                            <Grid Grid.Row="5" RowDefinitions="Auto,*" RowSpacing="4"
+                                  IsVisible="{Binding FirewallDetailAddedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                <TextBlock FontWeight="SemiBold" Text="{Binding FirewallDetailAddedHeader}" />
+                                <ListBox Grid.Row="1" ItemsSource="{Binding FirewallDetailAddedIps}"
+                                         FontFamily="Consolas,Menlo,monospace" />
+                            </Grid>
+
+                            <TextBlock Grid.Row="6" FontWeight="SemiBold" Text="{Binding FirewallDetailRemovedHeader}"
+                                       IsVisible="{Binding FirewallDetailRemovedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                            <ListBox Grid.Row="7" ItemsSource="{Binding FirewallDetailRemovedIps}"
+                                     FontFamily="Consolas,Menlo,monospace"
+                                     IsVisible="{Binding FirewallDetailRemovedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                        </Grid>
                     </Border>
                 </Grid>
             </TabItem>

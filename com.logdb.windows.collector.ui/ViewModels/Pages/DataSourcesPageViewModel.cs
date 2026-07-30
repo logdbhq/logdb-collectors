@@ -203,6 +203,11 @@ public sealed class DataSourceFirewallHistoryRow
     public string Action { get; set; } = string.Empty;
     public string Result { get; set; } = string.Empty;
     public string Details { get; set; } = string.Empty;
+
+    /// <summary>Full structured entry backing this row — null when the row was
+    /// scraped from diagnostics (older collector fallback), in which case the
+    /// detail drawer only has the display strings to show.</summary>
+    public FirewallRuleHistoryEntryDto? Entry { get; init; }
 }
 
 public sealed class DataSourceFirewallRuleRow
@@ -381,6 +386,15 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private bool _iisDrift;
     private bool _metricsDrift;
     private bool _heartbeatDrift;
+    private bool _firewallDetailVisible;
+    private string _firewallDetailTitle = string.Empty;
+    private string _firewallDetailTime = string.Empty;
+    private string _firewallDetailResult = string.Empty;
+    private string _firewallDetailMeta = string.Empty;
+    private string _firewallDetailMessage = string.Empty;
+    private string _firewallDetailAddedHeader = string.Empty;
+    private string _firewallDetailRemovedHeader = string.Empty;
+    private DataSourceFirewallHistoryRow? _selectedFirewallHistoryRow;
     private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
     private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
 
@@ -408,6 +422,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         FirewallHistoryRows = new ObservableCollection<DataSourceFirewallHistoryRow>();
         FirewallRuleRows = new ObservableCollection<DataSourceFirewallRuleRow>();
         FirewallIpsView = new ObservableCollection<string>();
+        FirewallDetailAddedIps = new ObservableCollection<string>();
+        FirewallDetailRemovedIps = new ObservableCollection<string>();
 
         AddCustomChannelCommand = new RelayCommand(AddCustomChannel);
         RemoveCustomChannelCommand = new RelayCommand(RemoveSelectedCustomChannel);
@@ -444,6 +460,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
         RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
         CloseFirewallIpsCommand = new RelayCommand(() => FirewallIpsPanelVisible = false);
+        CloseFirewallDetailCommand = new RelayCommand(() => FirewallDetailVisible = false);
 
         PauseEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", false));
         ResumeEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", true));
@@ -491,6 +508,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public ObservableCollection<DataSourceFirewallHistoryRow> FirewallHistoryRows { get; }
     public ObservableCollection<DataSourceFirewallRuleRow> FirewallRuleRows { get; }
     public ObservableCollection<string> FirewallIpsView { get; }
+    public ObservableCollection<string> FirewallDetailAddedIps { get; }
+    public ObservableCollection<string> FirewallDetailRemovedIps { get; }
 
     public StringItemViewModel? SelectedCustomChannel { get; set; }
     public StringItemViewModel? SelectedIisDirectory { get; set; }
@@ -948,6 +967,139 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         set => SetProperty(ref _firewallIpsCountText, value);
     }
 
+    public bool FirewallDetailVisible
+    {
+        get => _firewallDetailVisible;
+        set => SetProperty(ref _firewallDetailVisible, value);
+    }
+
+    public string FirewallDetailTitle
+    {
+        get => _firewallDetailTitle;
+        set => SetProperty(ref _firewallDetailTitle, value);
+    }
+
+    public string FirewallDetailTime
+    {
+        get => _firewallDetailTime;
+        set => SetProperty(ref _firewallDetailTime, value);
+    }
+
+    public string FirewallDetailResult
+    {
+        get => _firewallDetailResult;
+        set => SetProperty(ref _firewallDetailResult, value);
+    }
+
+    public string FirewallDetailMeta
+    {
+        get => _firewallDetailMeta;
+        set => SetProperty(ref _firewallDetailMeta, value);
+    }
+
+    public string FirewallDetailMessage
+    {
+        get => _firewallDetailMessage;
+        set => SetProperty(ref _firewallDetailMessage, value);
+    }
+
+    public string FirewallDetailAddedHeader
+    {
+        get => _firewallDetailAddedHeader;
+        set => SetProperty(ref _firewallDetailAddedHeader, value);
+    }
+
+    public string FirewallDetailRemovedHeader
+    {
+        get => _firewallDetailRemovedHeader;
+        set => SetProperty(ref _firewallDetailRemovedHeader, value);
+    }
+
+    public DataSourceFirewallHistoryRow? SelectedFirewallHistoryRow
+    {
+        get => _selectedFirewallHistoryRow;
+        set => SetProperty(ref _selectedFirewallHistoryRow, value);
+    }
+
+    /// <summary>Fills and shows the detail drawer for the selected history row
+    /// (invoked by the view on double-click).</summary>
+    public void OpenFirewallHistoryDetail()
+    {
+        var row = SelectedFirewallHistoryRow;
+        if (row == null)
+        {
+            return;
+        }
+
+        FirewallDetailAddedIps.Clear();
+        FirewallDetailRemovedIps.Clear();
+
+        if (row.Entry is { } entry)
+        {
+            FirewallDetailTitle = $"{DescribeFirewallHistoryAction(entry.Action)}" +
+                                  (string.IsNullOrWhiteSpace(entry.RuleName) ? "" : $" — {entry.RuleName}");
+            FirewallDetailTime = $"{entry.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} local · {entry.TimestampUtc:yyyy-MM-dd HH:mm:ss} UTC";
+            FirewallDetailResult = entry.Success ? (entry.DryRun ? "Dry run — firewall untouched" : "OK") : "Error";
+            var meta = new List<string>();
+            if (!string.IsNullOrWhiteSpace(entry.Source)) meta.Add($"source: {entry.Source}");
+            if (entry.IpCount > 0) meta.Add($"{entry.IpCount} IPs in rule");
+            FirewallDetailMeta = string.Join(" · ", meta);
+            FirewallDetailMessage = entry.Message;
+
+            FirewallDetailAddedHeader = BuildDeltaHeader("Added", entry.AddedCount, entry.AddedIps.Count);
+            FirewallDetailRemovedHeader = BuildDeltaHeader("Removed", entry.RemovedCount, entry.RemovedIps.Count);
+            foreach (var ip in entry.AddedIps) FirewallDetailAddedIps.Add(ip);
+            foreach (var ip in entry.RemovedIps) FirewallDetailRemovedIps.Add(ip);
+        }
+        else
+        {
+            // Diagnostics-scraped row (older collector) — display strings only.
+            FirewallDetailTitle = row.Action;
+            FirewallDetailTime = $"{row.TimeLocal} local";
+            FirewallDetailResult = row.Result;
+            FirewallDetailMeta = string.Empty;
+            FirewallDetailMessage = row.Details;
+            FirewallDetailAddedHeader = string.Empty;
+            FirewallDetailRemovedHeader = string.Empty;
+        }
+
+        FirewallDetailVisible = true;
+    }
+
+    private static string BuildDeltaHeader(string label, int totalCount, int sampleCount)
+    {
+        if (totalCount <= 0) return string.Empty;
+        return totalCount > sampleCount
+            ? $"{label} — {totalCount} (sample of first {sampleCount})"
+            : $"{label} — {totalCount}";
+    }
+
+    /// <summary>Plain-text rendering of the open detail drawer for the Copy button.</summary>
+    public string BuildFirewallDetailClipboardText()
+    {
+        var lines = new List<string>
+        {
+            FirewallDetailTitle,
+            FirewallDetailTime,
+            $"Result: {FirewallDetailResult}"
+        };
+        if (!string.IsNullOrWhiteSpace(FirewallDetailMeta)) lines.Add(FirewallDetailMeta);
+        if (!string.IsNullOrWhiteSpace(FirewallDetailMessage)) lines.Add($"Message: {FirewallDetailMessage}");
+        if (!string.IsNullOrWhiteSpace(FirewallDetailAddedHeader))
+        {
+            lines.Add(string.Empty);
+            lines.Add(FirewallDetailAddedHeader);
+            lines.AddRange(FirewallDetailAddedIps);
+        }
+        if (!string.IsNullOrWhiteSpace(FirewallDetailRemovedHeader))
+        {
+            lines.Add(string.Empty);
+            lines.Add(FirewallDetailRemovedHeader);
+            lines.AddRange(FirewallDetailRemovedIps);
+        }
+        return string.Join(Environment.NewLine, lines);
+    }
+
     public bool EventLogPaused
     {
         get => _eventLogPaused;
@@ -1095,6 +1247,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
     public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
     public RelayCommand CloseFirewallIpsCommand { get; }
+    public RelayCommand CloseFirewallDetailCommand { get; }
 
     public AsyncRelayCommand PauseEventLogCommand { get; }
     public AsyncRelayCommand ResumeEventLogCommand { get; }
@@ -2014,12 +2167,14 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
         try
         {
-            var rules = await _adminClient.GetFirewallRulesAsync();
+            var (rules, error, unsupported) = await _adminClient.GetFirewallRulesAsync();
             FirewallRuleRows.Clear();
 
             if (rules == null)
             {
-                FirewallRulesSummary = "Active rules: the running collector does not support rule listing (update the service).";
+                FirewallRulesSummary = unsupported
+                    ? "Active rules: the running collector does not support rule listing (update the service)."
+                    : $"Active rules: refresh failed — {error}";
                 return;
             }
 
@@ -2124,7 +2279,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
                 TimeLocal = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
                 Action = DescribeFirewallHistoryAction(entry.Action),
                 Result = entry.Success ? (entry.DryRun ? "Dry run" : "OK") : "Error",
-                Details = DescribeFirewallHistoryDetails(entry)
+                Details = DescribeFirewallHistoryDetails(entry),
+                Entry = entry
             });
         }
     }

@@ -182,30 +182,46 @@ public sealed class ControlChannelClient
         }
     }
 
-    /// <summary>Null when the target collector predates the firewall-rules
-    /// command; empty list means "no managed rules right now".</summary>
-    public async Task<IReadOnlyList<FirewallRuleInfoDto>?> GetFirewallRulesAsync(
+    /// <summary>
+    /// Rules == null means the call failed; then Unsupported distinguishes
+    /// "old service without the firewall-rules command" from a real error
+    /// (timeout, busy service, parse failure) whose text is in Error — the
+    /// two used to be conflated, telling operators on a current service to
+    /// "update the service" when the call had merely timed out. The 90 s
+    /// timeout is deliberate: listing queries the address filters of
+    /// 5000-IP rules, which is slow while a sync is rewriting them.
+    /// </summary>
+    public async Task<(IReadOnlyList<FirewallRuleInfoDto>? Rules, string Error, bool Unsupported)> GetFirewallRulesAsync(
         CollectorInstanceMode mode,
         CancellationToken cancellationToken = default)
     {
         var response = await SendAsync(
             mode,
             ControlCommands.GetFirewallRules,
-            timeoutMilliseconds: 30000,
+            timeoutMilliseconds: 90000,
             cancellationToken: cancellationToken);
 
         if (!response.Success || string.IsNullOrWhiteSpace(response.PayloadJson))
         {
-            return null;
+            var message = string.IsNullOrWhiteSpace(response.Message) ? "The collector returned no response." : response.Message;
+            var unsupported = message.Contains("Unknown command", StringComparison.OrdinalIgnoreCase);
+            if (message.Contains("canceled", StringComparison.OrdinalIgnoreCase))
+            {
+                message = "timed out — the service may be busy applying rules right now; try again shortly";
+            }
+            return (null, message, unsupported);
         }
 
         try
         {
-            return JsonSerializer.Deserialize<List<FirewallRuleInfoDto>>(response.PayloadJson, JsonOptions);
+            var rules = JsonSerializer.Deserialize<List<FirewallRuleInfoDto>>(response.PayloadJson, JsonOptions);
+            return rules == null
+                ? (null, "Failed to parse the rule listing payload.", false)
+                : (rules, string.Empty, false);
         }
         catch (JsonException)
         {
-            return null;
+            return (null, "Failed to parse the rule listing payload.", false);
         }
     }
 

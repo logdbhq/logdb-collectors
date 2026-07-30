@@ -195,11 +195,12 @@ public sealed class LocalCollectorAdminClient
         return await _controlClient.GetFirewallHistoryAsync(SelectedTarget.Value, maxEntries, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<FirewallRuleInfoDto>?> GetFirewallRulesAsync(CancellationToken cancellationToken = default)
+    public async Task<(IReadOnlyList<FirewallRuleInfoDto>? Rules, string Error, bool Unsupported)> GetFirewallRulesAsync(
+        CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)
         {
-            return Array.Empty<FirewallRuleInfoDto>();
+            return (Array.Empty<FirewallRuleInfoDto>(), string.Empty, false);
         }
 
         return await _controlClient.GetFirewallRulesAsync(SelectedTarget.Value, cancellationToken);
