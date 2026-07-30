@@ -693,7 +693,16 @@
             </TabItem>
 
             <TabItem Header="Firewall">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
+                <Grid x:Name="FirewallTabLayout">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="420" />
+                        <ColumnDefinition Width="Auto" />
+                        <!-- Detail drawer column. Width is managed from code-behind:
+                             0 when closed, the persisted user width when open. -->
+                        <ColumnDefinition Width="0" />
+                    </Grid.ColumnDefinitions>
+
+                    <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="8">
                     <Border Classes="panel">
                         <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
                             <TextBlock Text="Configuration" Classes="muted" />
@@ -715,11 +724,13 @@
                     <Border Grid.Row="2" Classes="panel">
                         <dgrid:DataGrid x:Name="FirewallRulesDataGrid"
                                         ItemsSource="{Binding FirewallRuleRows}"
+                                        SelectedItem="{Binding SelectedFirewallRuleRow, Mode=TwoWay}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"
                                         CanUserSortColumns="False"
                                         CanUserResizeColumns="True"
                                         PointerReleased="FirewallGrid_OnPointerReleased"
+                                        DoubleTapped="FirewallRulesDataGrid_OnDoubleTapped"
                                         Height="200">
                             <dgrid:DataGrid.Columns>
                                 <dgrid:DataGridTextColumn Header="Rule" Binding="{Binding DisplayName}" Width="*" />
@@ -754,24 +765,7 @@
                         </dgrid:DataGrid>
                     </Border>
 
-                    <Border Grid.Row="3" Classes="panel" IsVisible="{Binding FirewallIpsPanelVisible}">
-                        <Grid RowDefinitions="Auto,Auto,140" RowSpacing="6">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="{Binding FirewallIpsTitle}" FontWeight="Bold" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Close" Command="{Binding CloseFirewallIpsCommand}" />
-                            </Grid>
-                            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                <TextBox Text="{Binding FirewallIpsFilter, Mode=TwoWay}"
-                                         Watermark="Filter — type an IP or CIDR fragment, e.g. 45.155." />
-                                <TextBlock Grid.Column="1" Classes="muted" VerticalAlignment="Center"
-                                           Text="{Binding FirewallIpsCountText}" />
-                            </Grid>
-                            <ListBox Grid.Row="2" ItemsSource="{Binding FirewallIpsView}"
-                                     FontFamily="Consolas,Menlo,monospace" />
-                        </Grid>
-                    </Border>
-
-                    <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
                         <Button Content="Refresh Firewall History"
                                 Command="{Binding RefreshFirewallHistoryCommand}"
                                 ToolTip.Tip="Pull the persisted firewall change history from the running collector and rebuild the table below." />
@@ -780,7 +774,7 @@
                                    Text="History is persisted by the collector and survives service restarts." />
                     </StackPanel>
 
-                    <Border Grid.Row="5" Classes="panel">
+                    <Border Grid.Row="4" Classes="panel">
                         <dgrid:DataGrid x:Name="FirewallHistoryDataGrid"
                                         ItemsSource="{Binding FirewallHistoryRows}"
                                         SelectedItem="{Binding SelectedFirewallHistoryRow, Mode=TwoWay}"
@@ -790,7 +784,7 @@
                                         CanUserResizeColumns="True"
                                         PointerReleased="FirewallGrid_OnPointerReleased"
                                         DoubleTapped="FirewallHistoryDataGrid_OnDoubleTapped"
-                                        Height="320">
+                                        VerticalAlignment="Stretch">
                             <dgrid:DataGrid.Columns>
                                 <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
                                 <dgrid:DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="100" />
@@ -800,14 +794,25 @@
                         </dgrid:DataGrid>
                     </Border>
 
+                    </Grid>
+
                     <!-- Right-hand detail drawer for a double-clicked history row.
-                         Overlays all tab rows; opaque frosted style per App.axaml. -->
-                    <Border Grid.Row="0" Grid.RowSpan="6"
+                         Lives in its own column rather than overlaying the tab —
+                         overlaying made the underlying DataGrid intermittently
+                         blank out. Resizable via the splitter; the chosen width
+                         persists in user settings across restarts. -->
+                    <GridSplitter Grid.Column="1"
+                                  Width="6"
+                                  IsVisible="{Binding FirewallSidePanelVisible}"
+                                  Background="Transparent"
+                                  DragCompleted="FirewallDetailSplitter_OnDragCompleted" />
+
+                    <Border x:Name="FirewallDetailDrawer"
+                            Grid.Column="2"
                             Classes="detail-panel"
                             IsVisible="{Binding FirewallDetailVisible}"
-                            HorizontalAlignment="Right"
-                            Width="460"
-                            Margin="0,0,0,0">
+                            VerticalAlignment="Top"
+                            Margin="0,8,8,8">
                         <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,*" RowSpacing="6">
                             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
                                 <TextBlock Text="{Binding FirewallDetailTitle}"
@@ -839,6 +844,31 @@
                             <ListBox Grid.Row="7" ItemsSource="{Binding FirewallDetailRemovedIps}"
                                      FontFamily="Consolas,Menlo,monospace"
                                      IsVisible="{Binding FirewallDetailRemovedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Rule IPs drawer: same column, same splitter and persisted
+                         width as the history detail drawer; the two are mutually
+                         exclusive (opening one closes the other). Opened by the
+                         IPs button or double-clicking an Active Rules row. -->
+                    <Border x:Name="FirewallIpsDrawer"
+                            Grid.Column="2"
+                            Classes="detail-panel"
+                            IsVisible="{Binding FirewallIpsPanelVisible}"
+                            VerticalAlignment="Top"
+                            Margin="0,8,8,8">
+                        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                <TextBlock Text="{Binding FirewallIpsTitle}" FontWeight="Bold"
+                                           TextWrapping="Wrap" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallIpsCommand}" />
+                            </Grid>
+                            <TextBox Grid.Row="1" Text="{Binding FirewallIpsFilter, Mode=TwoWay}"
+                                     Watermark="Filter — type an IP or CIDR fragment, e.g. 45.155." />
+                            <TextBlock Grid.Row="2" Classes="muted" Text="{Binding FirewallIpsCountText}" />
+                            <ListBox Grid.Row="3" ItemsSource="{Binding FirewallIpsView}"
+                                     FontFamily="Consolas,Menlo,monospace"
+                                     MinHeight="160" />
                         </Grid>
                     </Border>
                 </Grid>

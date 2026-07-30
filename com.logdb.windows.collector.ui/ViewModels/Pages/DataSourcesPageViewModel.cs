@@ -395,6 +395,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private string _firewallDetailAddedHeader = string.Empty;
     private string _firewallDetailRemovedHeader = string.Empty;
     private DataSourceFirewallHistoryRow? _selectedFirewallHistoryRow;
+    private DataSourceFirewallRuleRow? _selectedFirewallRuleRow;
     private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
     private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
 
@@ -940,8 +941,18 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public bool FirewallIpsPanelVisible
     {
         get => _firewallIpsPanelVisible;
-        set => SetProperty(ref _firewallIpsPanelVisible, value);
+        set
+        {
+            if (SetProperty(ref _firewallIpsPanelVisible, value))
+            {
+                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
+            }
+        }
     }
+
+    /// <summary>True when either right-hand drawer (history detail or rule IPs)
+    /// is open — drives the shared drawer column and splitter.</summary>
+    public bool FirewallSidePanelVisible => _firewallDetailVisible || _firewallIpsPanelVisible;
 
     public string FirewallIpsTitle
     {
@@ -970,7 +981,13 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public bool FirewallDetailVisible
     {
         get => _firewallDetailVisible;
-        set => SetProperty(ref _firewallDetailVisible, value);
+        set
+        {
+            if (SetProperty(ref _firewallDetailVisible, value))
+            {
+                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
+            }
+        }
     }
 
     public string FirewallDetailTitle
@@ -1021,6 +1038,23 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         set => SetProperty(ref _selectedFirewallHistoryRow, value);
     }
 
+    public DataSourceFirewallRuleRow? SelectedFirewallRuleRow
+    {
+        get => _selectedFirewallRuleRow;
+        set => SetProperty(ref _selectedFirewallRuleRow, value);
+    }
+
+    /// <summary>Double-click entry point on the Active Rules grid — same as the
+    /// row's IPs button.</summary>
+    public async Task OpenSelectedFirewallRuleIpsAsync()
+    {
+        var row = SelectedFirewallRuleRow;
+        if (row != null)
+        {
+            await ViewFirewallRuleIpsAsync(row);
+        }
+    }
+
     /// <summary>Fills and shows the detail drawer for the selected history row
     /// (invoked by the view on double-click).</summary>
     public void OpenFirewallHistoryDetail()
@@ -1063,6 +1097,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             FirewallDetailRemovedHeader = string.Empty;
         }
 
+        FirewallIpsPanelVisible = false;   // the two drawers share one column
         FirewallDetailVisible = true;
     }
 
@@ -2221,6 +2256,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             FirewallIpsTitle = $"{rule.DisplayName} — {rule.Ips.Count} IPs/CIDRs";
             FirewallIpsFilter = string.Empty;
             RefilterFirewallIps();
+            FirewallDetailVisible = false;   // the two drawers share one column
             FirewallIpsPanelVisible = true;
         }
         catch (Exception ex)
