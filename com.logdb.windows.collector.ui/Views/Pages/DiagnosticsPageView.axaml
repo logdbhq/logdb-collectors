@@ -4,11 +4,15 @@
              xmlns:svg="clr-namespace:Avalonia.Svg.Skia;assembly=Avalonia.Svg.Skia"
              xmlns:views="clr-namespace:com.logdb.windows.collector.ui.Views.Pages"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.DiagnosticsPageView">
-    <TabControl>
+    <TabControl x:Name="DiagnosticsTabs" SelectionChanged="DiagnosticsTabs_OnSelectionChanged">
         <TabItem Header="Console">
             <Grid Margin="8" RowDefinitions="Auto,Auto,*,Auto,200" RowSpacing="8">
         <StackPanel Orientation="Horizontal" Spacing="8">
             <CheckBox Content="Auto-refresh (3s)" IsChecked="{Binding OnlineAutoRefresh}" />
+            <CheckBox Content="Hide not-sent"
+                      IsChecked="{Binding HideNotSent, Mode=TwoWay}"
+                      VerticalAlignment="Center"
+                      ToolTip.Tip="Hide lines tagged NOT SENT (scans that read rows but shipped none, e.g. historical IIS files behind a start date). Errors and untagged lines stay visible, and Export / Copy for Support still include everything." />
             <TextBlock VerticalAlignment="Center" Text="Tail lines" />
             <NumericUpDown Width="140" Minimum="20" Maximum="500" Value="{Binding OnlineTailCount}" />
             <TextBlock VerticalAlignment="Center" Text="Module" Margin="8,0,0,0" />
@@ -60,7 +64,10 @@
 
         <TextBlock Grid.Row="1" Text="{Binding OnlineStatusText}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
 
-        <Border Grid.Row="2" Classes="panel" MinHeight="520">
+        <!-- The star row now gets a real height (the shell stopped handing pages
+             infinite height), so the grid fills what is left and scrolls its own
+             rows — the toolbar and status line above stay put. -->
+        <Border Grid.Row="2" Classes="panel" MinHeight="200">
             <dgrid:DataGrid x:Name="OnlineConsoleDataGrid"
                             ItemsSource="{Binding OnlineConsoleRows}"
                             SelectedItem="{Binding SelectedOnlineRow, Mode=TwoWay}"

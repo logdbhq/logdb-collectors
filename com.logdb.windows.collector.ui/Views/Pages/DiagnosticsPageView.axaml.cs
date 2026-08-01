@@ -34,6 +34,32 @@ public partial class DiagnosticsPageView : UserControl
         PersistOnlineConsoleColumnWidths();
     }
 
+    /// <summary>
+    /// Loads the selected tab's data on entry. Throughput and Recent records
+    /// are separate view models that the page's own RefreshAsync doesn't touch,
+    /// so without this they showed whatever was fetched when the app last
+    /// happened to refresh them — usually an empty chart until you pressed
+    /// Refresh yourself.
+    /// </summary>
+    private void DiagnosticsTabs_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is not DiagnosticsPageViewModel viewModel)
+        {
+            return;
+        }
+
+        var header = (DiagnosticsTabs.SelectedItem as TabItem)?.Header as string;
+        switch (header)
+        {
+            case "Throughput":
+                _ = viewModel.Throughput.RefreshAsync();
+                break;
+            case "Recent records":
+                _ = viewModel.RecentRecords.RefreshAsync();
+                break;
+        }
+    }
+
     private void OnlineConsoleDataGrid_LoadingRow(object? sender, DataGridRowEventArgs e)
     {
         if (e.Row.DataContext is OnlineDiagnosticRowViewModel row && row.RowForeground is { } brush)

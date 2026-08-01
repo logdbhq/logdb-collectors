@@ -143,6 +143,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     private readonly Func<string, Task> _copyToClipboardAsync;
 
     private bool _onlineAutoRefresh = true;
+    private bool _hideNotSent;
     private int _onlineTailCount = 120;
     private string _onlineStatusText = "Waiting for refresh.";
     private string _onlineModuleFilterSummary = OnlineModuleFilterAll;
@@ -290,6 +291,21 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
 
     /// <summary>Full untruncated detail of the selected Console row.</summary>
     public string SelectedOnlineDetail => _selectedOnlineRow?.ToDetailText() ?? string.Empty;
+
+    /// <summary>Hides lines tagged NOT SENT — a historical-file scan can emit
+    /// hundreds of them and bury live delivery. Re-filters in place, so the
+    /// hidden lines are still in the buffer for Export / Copy for Support.</summary>
+    public bool HideNotSent
+    {
+        get => _hideNotSent;
+        set
+        {
+            if (SetProperty(ref _hideNotSent, value))
+            {
+                ApplyOnlineFilter();
+            }
+        }
+    }
 
     public bool OnlineAutoRefresh
     {
@@ -441,6 +457,15 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
             ? _allOnlineRows
             : _allOnlineRows.Where(r => MatchesSelectedFilters(r.Module, selectedNames));
 
+        // "Hide not-sent" drops only lines explicitly tagged NOT SENT (a scan
+        // that read rows and shipped none). Untagged lines — startup banners,
+        // errors, everything without a "N sent to server" phrase — always stay
+        // visible; this is a noise filter, not an error filter.
+        if (HideNotSent)
+        {
+            visible = visible.Where(r => r.SendTag != "NOT SENT");
+        }
+
         // A refresh rebuilds the row instances, so remember the selection by value
         // and restore it afterwards — otherwise the detail pane clears every 3s.
         var selectedKey = _selectedOnlineRow is { } sel ? sel.TimeLocal + "" + sel.Message : null;
@@ -461,9 +486,14 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
 
         UpdateErrorRows();
 
-        var suffix = filterAll
+        var notes = new List<string>();
+        if (!filterAll) notes.Add($"module: {string.Join(", ", selectedNames)}");
+        if (HideNotSent) notes.Add("not-sent hidden");
+
+        var hidden = _allOnlineRows.Count - OnlineConsoleRows.Count;
+        var suffix = notes.Count == 0
             ? string.Empty
-            : $"  (filtered by module: {string.Join(", ", selectedNames)}, {_allOnlineRows.Count - OnlineConsoleRows.Count} hidden)";
+            : $"  (filtered by {string.Join(" + ", notes)}, {hidden} hidden)";
         OnlineStatusText = $"Live tail loaded: {OnlineConsoleRows.Count} line(s).{suffix}";
     }
 
