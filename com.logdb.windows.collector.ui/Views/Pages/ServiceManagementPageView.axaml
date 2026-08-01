@@ -1,6 +1,9 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.ServiceManagementPageView">
+    <!-- Card stack: taller than the viewport on small windows, so it owns its
+         scrolling now that the shell no longer wraps pages in a ScrollViewer. -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
     <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="10">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
             <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshCommand}" />
@@ -143,4 +146,5 @@
             <TextBlock TextWrapping="Wrap" Text="{Binding ModeHint}" />
         </Border>
     </Grid>
+    </ScrollViewer>
 </UserControl>

@@ -98,13 +98,14 @@ public sealed class MainWindowViewModel : ObservableObject
         FirewallPage = new FirewallPageViewModel(_adminClient, SetStatus);
         DestinationPage = new DestinationPageViewModel(_adminClient, SetStatus);
         DiagnosticsPage = new DiagnosticsPageViewModel(_adminClient, SetStatus, _exportTextAsync, _copyToClipboardAsync);
-        AdvancedPage = new AdvancedPageViewModel(_adminClient, SetStatus);
+        // Destination lives as the Advanced page's first tab; the shared VM
+        // instance keeps the API-key modal flow working against the same state.
+        AdvancedPage = new AdvancedPageViewModel(_adminClient, SetStatus, DestinationPage);
 
         const string iconRoot = "avares://com.logdb.windows.collector.ui/Assets/Icons/";
         var dashboardNav = new NavigationItemViewModel("Overview", "\uE80F", OverviewPage, $"{iconRoot}four-squares-icon.svg");
         var dataSourcesNav = new NavigationItemViewModel("Data Sources", "\uE7F8", DataSourcesPage, $"{iconRoot}database-line-icon.svg");
         var firewallNav = new NavigationItemViewModel("Firewall", "", FirewallPage, $"{iconRoot}warning-triangle-icon.svg");
-        var destinationNav = new NavigationItemViewModel("Destination", "\uE715", DestinationPage, $"{iconRoot}link-hyperlink-icon.svg");
         // "Diagnostics", not "Online Console" \u2014 the page title and every
         // cross-reference (Open Diagnostics buttons) already used Diagnostics;
         // the rail was the odd one out.
@@ -117,7 +118,6 @@ public sealed class MainWindowViewModel : ObservableObject
             dashboardNav,
             dataSourcesNav,
             firewallNav,
-            destinationNav,
             diagnosticsNav,
             serviceNav,
             advancedNav
@@ -128,7 +128,6 @@ public sealed class MainWindowViewModel : ObservableObject
             dashboardNav,
             dataSourcesNav,
             firewallNav,
-            destinationNav,
             diagnosticsNav
         };
 
@@ -153,7 +152,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ControlCenterRemoveFirewallCommand = new AsyncRelayCommand(ControlCenterRemoveFirewallAsync);
         ControlCenterCopySupportBundleCommand = new AsyncRelayCommand(ControlCenterCopySupportBundleAsync);
         ControlCenterOpenOverviewCommand = new RelayCommand(() => OpenPage(OverviewPage));
-        ControlCenterOpenDestinationCommand = new RelayCommand(() => OpenPage(DestinationPage));
+        ControlCenterOpenDestinationCommand = new RelayCommand(() => OpenPage(AdvancedPage));
         ControlCenterOpenFirewallCommand = new RelayCommand(() => OpenPage(FirewallPage));
         ControlCenterOpenServiceManagementCommand = new RelayCommand(() => OpenPage(ServiceManagementPage));
         OpenServiceManagementCommand = new RelayCommand(() => OpenPage(ServiceManagementPage));
@@ -863,7 +862,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
             var missingApiKey = !_adminClient.HasApiKey;
             ControlCenterAttentionText = missingApiKey
-                ? "API key is missing. Open Destination and save API key."
+                ? "API key is missing. Save your API key on the Advanced page (Destination tab)."
                 : hasErrors
                     ? "One or more modules reported errors. Open Diagnostics."
                     : "No immediate action required.";

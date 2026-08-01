@@ -133,7 +133,7 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="2" ColumnDefinitions="94,*">
+        <Grid Grid.Row="2" ColumnDefinitions="68,*">
             <Border Background="{DynamicResource ThemeBackgroundSecondary}"
                     BorderBrush="{DynamicResource SidebarBorderBrushTheme}"
                     BorderThickness="0,0,1,0">
@@ -183,19 +183,16 @@
                              SelectedItem="{Binding SelectedNavigationItem}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Width="70" Spacing="3" Margin="0,6"
-                                            ToolTip.Tip="{Binding Label}">
+                                <!-- Icon-only tile; the page name lives in the
+                                     tooltip (the rail used to have neither). -->
+                                <Grid Width="46" Height="46" ToolTip.Tip="{Binding Label}">
                                     <svg:Svg Path="{Binding IconPath}"
                                              Width="18"
                                              Height="18"
                                              Css="{Binding IsSelected, Converter={StaticResource IconCssBySelectedConverter}}"
-                                             HorizontalAlignment="Center" />
-                                    <TextBlock Text="{Binding Label}"
-                                               FontSize="9"
-                                               TextAlignment="Center"
-                                               TextWrapping="Wrap"
-                                               HorizontalAlignment="Center" />
-                                </StackPanel>
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center" />
+                                </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -211,19 +208,16 @@
                              SelectedItem="{Binding SelectedNavigationItem}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Width="70" Spacing="3" Margin="0,6"
-                                            ToolTip.Tip="{Binding Label}">
+                                <!-- Icon-only tile; the page name lives in the
+                                     tooltip (the rail used to have neither). -->
+                                <Grid Width="46" Height="46" ToolTip.Tip="{Binding Label}">
                                     <svg:Svg Path="{Binding IconPath}"
                                              Width="18"
                                              Height="18"
                                              Css="{Binding IsSelected, Converter={StaticResource IconCssBySelectedConverter}}"
-                                             HorizontalAlignment="Center" />
-                                    <TextBlock Text="{Binding Label}"
-                                               FontSize="9"
-                                               TextAlignment="Center"
-                                               TextWrapping="Wrap"
-                                               HorizontalAlignment="Center" />
-                                </StackPanel>
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center" />
+                                </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -292,9 +286,13 @@
 
                 <Border Grid.Row="1" Background="{DynamicResource ThemeBackgroundPrimary}" Padding="16">
                     <Border Classes="panel" Padding="14">
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                            <ContentControl Content="{Binding CurrentPage}" />
-                        </ScrollViewer>
+                        <!-- No ScrollViewer here: it handed every page infinite
+                             height, so a page's own toolbar/filters scrolled away
+                             with the content and star-sized grids grew to fit all
+                             their rows instead of scrolling internally. Pages that
+                             genuinely need to scroll (Overview, Service Management)
+                             own a ScrollViewer; grid pages fill and scroll inside. -->
+                        <ContentControl Content="{Binding CurrentPage}" />
                     </Border>
                 </Border>
             </Grid>
