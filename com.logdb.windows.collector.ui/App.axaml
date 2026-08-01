@@ -417,8 +417,8 @@
         </Style>
 
         <Style Selector="ListBox.iconRailNav ListBoxItem">
-            <Setter Property="Width" Value="46" />
-            <Setter Property="Height" Value="46" />
+            <Setter Property="Width" Value="72" />
+            <Setter Property="MinHeight" Value="56" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="0,0,0,8" />
             <Setter Property="Background" Value="Transparent" />

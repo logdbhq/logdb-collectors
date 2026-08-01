@@ -24,6 +24,9 @@
         <DataTemplate DataType="vmPages:DataSourcesPageViewModel">
             <views:DataSourcesPageView />
         </DataTemplate>
+        <DataTemplate DataType="vmPages:FirewallPageViewModel">
+            <views:FirewallPageView />
+        </DataTemplate>
         <DataTemplate DataType="vmPages:DestinationPageViewModel">
             <views:DestinationPageView />
         </DataTemplate>
@@ -62,26 +65,10 @@
                             VerticalAlignment="Center"
                             Spacing="10"
                             Margin="0,0,10,0">
-                    <TextBlock Text="localhost@logdb.com"
-                               Classes="muted"
-                               VerticalAlignment="Center"
-                               FontSize="12" />
-                    <TextBlock Text="Expires: local runtime"
-                               Classes="muted"
-                               VerticalAlignment="Center"
-                               FontSize="12" />
-
                     <Button Classes="WindowButton"
                             Command="{Binding ToggleThemeCommand}"
                             ToolTip.Tip="{Binding ThemeToggleToolTip}">
                         <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/contrast-icon.svg"
-                                 Width="14"
-                                 Height="14"
-                                 Css="{DynamicResource IconButtonCss}" />
-                    </Button>
-
-                    <Button Classes="WindowButton">
-                        <svg:Svg Path="avares://com.logdb.windows.collector.ui/Assets/Icons/bell-icon.svg"
                                  Width="14"
                                  Height="14"
                                  Css="{DynamicResource IconButtonCss}" />
@@ -146,11 +133,11 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="2" ColumnDefinitions="68,*">
+        <Grid Grid.Row="2" ColumnDefinitions="94,*">
             <Border Background="{DynamicResource ThemeBackgroundSecondary}"
                     BorderBrush="{DynamicResource SidebarBorderBrushTheme}"
                     BorderThickness="0,0,1,0">
-                <Grid RowDefinitions="Auto,*" Margin="10,12">
+                <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="10,12">
                     <Button Width="46"
                             Height="46"
                             Padding="0"
@@ -185,21 +172,58 @@
                         </Border>
                     </Button>
 
+                    <!-- Two nav groups sharing one SelectedNavigationItem: pages
+                         you work in daily on top, system/maintenance pinned to
+                         the bottom. Labels are rendered in the rail — six bare
+                         icons were the audit's #1 discoverability complaint. -->
                     <ListBox Grid.Row="1"
                              Margin="0,12,0,0"
                              Classes="iconRailNav"
-                             ItemsSource="{Binding NavigationItems}"
+                             ItemsSource="{Binding PrimaryNavigationItems}"
                              SelectedItem="{Binding SelectedNavigationItem}">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Grid Width="46" Height="46">
+                                <StackPanel Width="70" Spacing="3" Margin="0,6"
+                                            ToolTip.Tip="{Binding Label}">
                                     <svg:Svg Path="{Binding IconPath}"
                                              Width="18"
                                              Height="18"
                                              Css="{Binding IsSelected, Converter={StaticResource IconCssBySelectedConverter}}"
-                                             HorizontalAlignment="Center"
-                                             VerticalAlignment="Center" />
-                                </Grid>
+                                             HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding Label}"
+                                               FontSize="9"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               HorizontalAlignment="Center" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <Border Grid.Row="2" Height="1"
+                            Background="{DynamicResource SidebarBorderBrushTheme}"
+                            Margin="8,4" />
+
+                    <ListBox Grid.Row="3"
+                             VerticalAlignment="Top"
+                             Classes="iconRailNav"
+                             ItemsSource="{Binding SystemNavigationItems}"
+                             SelectedItem="{Binding SelectedNavigationItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Width="70" Spacing="3" Margin="0,6"
+                                            ToolTip.Tip="{Binding Label}">
+                                    <svg:Svg Path="{Binding IconPath}"
+                                             Width="18"
+                                             Height="18"
+                                             Css="{Binding IsSelected, Converter={StaticResource IconCssBySelectedConverter}}"
+                                             HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding Label}"
+                                               FontSize="9"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               HorizontalAlignment="Center" />
+                                </StackPanel>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>
@@ -228,10 +252,12 @@
                                     Orientation="Horizontal"
                                     Spacing="6"
                                     VerticalAlignment="Center">
-                            <TextBlock Text="Target" VerticalAlignment="Center" Classes="muted" />
+                            <TextBlock Text="Viewing" VerticalAlignment="Center" Classes="muted" />
                             <ComboBox Width="260"
                                       ItemsSource="{Binding TargetOptions}"
-                                      SelectedItem="{Binding SelectedTarget}" />
+                                      SelectedItem="{Binding SelectedTarget}"
+                                      PlaceholderText="No collector running"
+                                      ToolTip.Tip="Which local collector instance this UI reads from and pushes live config to. Config is always saved to disk regardless." />
                         </StackPanel>
 
                         <StackPanel Grid.Column="3"
@@ -369,7 +395,7 @@
                                         ToolTip.Tip="Ask the running service to re-read its configuration file without restarting." />
                                 <Button Grid.Row="1"
                                         Grid.Column="1"
-                                        Content="Copy Support"
+                                        Content="Copy for Support"
                                         Command="{Binding ControlCenterCopySupportBundleCommand}"
                                         ToolTip.Tip="Copy a support bundle (redacted config, runtime status, recent diagnostics) to the clipboard for sharing with support." />
                                 <Button Grid.Row="2"
@@ -398,8 +424,8 @@
                                         Content="Remove Rules"
                                         Command="{Binding ControlCenterRemoveFirewallCommand}" />
                             </Grid>
-                            <Button Content="Open Destination"
-                                    Command="{Binding ControlCenterOpenDestinationCommand}" />
+                            <Button Content="Open Firewall"
+                                    Command="{Binding ControlCenterOpenFirewallCommand}" />
                         </StackPanel>
                     </Border>
 
@@ -510,7 +536,7 @@
                                FontSize="20"
                                FontWeight="SemiBold"
                                HorizontalAlignment="Center" />
-                    <TextBlock Text="Enter your LogDB API key to continue. You can find it in your LogDB dashboard."
+                    <TextBlock Text="Enter your LogDB API key to continue. Find it in the LogDB dashboard at app.logdb.site under Settings → API Keys."
                                TextWrapping="Wrap"
                                Classes="muted"
                                HorizontalAlignment="Center"

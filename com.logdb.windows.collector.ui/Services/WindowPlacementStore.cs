@@ -119,6 +119,28 @@ public static class WindowPlacementStore
         SaveSettings(settings);
     }
 
+    /// <summary>Drops the Data Sources draft. Called once every tab is in sync
+    /// with the applied config — a draft kept around forever would silently
+    /// re-assert old selections over the running config on every refresh.</summary>
+    public static void ClearDataSourcesDraft()
+    {
+        try
+        {
+            var settings = LoadSettings();
+            if (settings?.DataSourcesDraft == null)
+            {
+                return;
+            }
+
+            settings.DataSourcesDraft = null;
+            SaveSettings(settings);
+        }
+        catch
+        {
+            // best-effort — a surviving draft only re-triggers the drift banner
+        }
+    }
+
     public static void SaveDiagnosticsOnlineColumns(DiagnosticsOnlineColumnsDto columns)
     {
         var settings = LoadSettings() ?? new UserSettingsDto();

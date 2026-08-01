@@ -70,6 +70,8 @@ public sealed class OverviewPageViewModel : PageViewModelBase
     private readonly LocalCollectorAdminClient _adminClient;
     private readonly Func<Task> _openDiagnosticsAction;
     private readonly Action<string, bool> _statusCallback;
+    private readonly Action? _openServiceManagement;
+    private bool _showSetupCard;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
     // Full, unfiltered set of module cards. The bound Modules collection is a
@@ -102,12 +104,15 @@ public sealed class OverviewPageViewModel : PageViewModelBase
     public OverviewPageViewModel(
         LocalCollectorAdminClient adminClient,
         Func<Task> openDiagnosticsAction,
-        Action<string, bool> statusCallback)
+        Action<string, bool> statusCallback,
+        Action? openServiceManagement = null)
         : base("Overview")
     {
         _adminClient = adminClient;
         _openDiagnosticsAction = openDiagnosticsAction;
         _statusCallback = statusCallback;
+        _openServiceManagement = openServiceManagement;
+        OpenServiceManagementCommand = new RelayCommand(() => _openServiceManagement?.Invoke());
 
         Modules = new ObservableCollection<ModuleCardViewModel>();
         Failures = new ObservableCollection<FailureRowViewModel>();
@@ -272,6 +277,15 @@ public sealed class OverviewPageViewModel : PageViewModelBase
     public AsyncRelayCommand RefreshCommand { get; }
     public AsyncRelayCommand ShowFailuresCommand { get; }
     public RelayCommand ClearFailureFilterCommand { get; }
+    public RelayCommand OpenServiceManagementCommand { get; }
+
+    /// <summary>Replaces the old wall of zero-value cards on a machine with no
+    /// running collector: one card that says so and points at the fix.</summary>
+    public bool ShowSetupCard
+    {
+        get => _showSetupCard;
+        private set => SetProperty(ref _showSetupCard, value);
+    }
 
     public override async Task RefreshAsync()
     {
@@ -279,6 +293,7 @@ public sealed class OverviewPageViewModel : PageViewModelBase
         try
         {
             var status = await _adminClient.GetStatusAsync();
+            ShowSetupCard = status == null;
 
             if (status == null)
             {

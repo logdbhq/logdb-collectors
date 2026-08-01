@@ -6,7 +6,7 @@
 
         <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="Refresh Now" Command="{Binding RefreshCommand}" />
-            <CheckBox Content="Auto (3s)" IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
+            <CheckBox Content="Auto-refresh (3s)" IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
                       VerticalAlignment="Center"
                       ToolTip.Tip="Reload the captured records every 3 seconds." />
         </StackPanel>

@@ -89,28 +89,37 @@ public sealed class MainWindowViewModel : ObservableObject
 
         TestReportSteps = new ObservableCollection<TestReportStep>();
 
-        OverviewPage = new OverviewPageViewModel(_adminClient, OpenDiagnosticsAsync, SetStatus);
+        // Service Management is constructed first: Overview's setup card
+        // captures it for its "Open Service Management" navigation.
+        ServiceManagementPage = new ServiceManagementPageViewModel(_adminClient, SetStatus);
+        OverviewPage = new OverviewPageViewModel(_adminClient, OpenDiagnosticsAsync, SetStatus,
+            () => OpenPage(ServiceManagementPage));
         DataSourcesPage = new DataSourcesPageViewModel(_adminClient, SetStatus, OpenTestReport);
+        FirewallPage = new FirewallPageViewModel(_adminClient, SetStatus);
         DestinationPage = new DestinationPageViewModel(_adminClient, SetStatus);
         DiagnosticsPage = new DiagnosticsPageViewModel(_adminClient, SetStatus, _exportTextAsync, _copyToClipboardAsync);
-        ServiceManagementPage = new ServiceManagementPageViewModel(_adminClient, SetStatus);
         AdvancedPage = new AdvancedPageViewModel(_adminClient, SetStatus);
 
         const string iconRoot = "avares://com.logdb.windows.collector.ui/Assets/Icons/";
         var dashboardNav = new NavigationItemViewModel("Overview", "\uE80F", OverviewPage, $"{iconRoot}four-squares-icon.svg");
         var dataSourcesNav = new NavigationItemViewModel("Data Sources", "\uE7F8", DataSourcesPage, $"{iconRoot}database-line-icon.svg");
+        var firewallNav = new NavigationItemViewModel("Firewall", "", FirewallPage, $"{iconRoot}warning-triangle-icon.svg");
         var destinationNav = new NavigationItemViewModel("Destination", "\uE715", DestinationPage, $"{iconRoot}link-hyperlink-icon.svg");
-        var diagnosticsNav = new NavigationItemViewModel("Online Console", "\uE9D9", DiagnosticsPage, $"{iconRoot}code-icon.svg");
+        // "Diagnostics", not "Online Console" \u2014 the page title and every
+        // cross-reference (Open Diagnostics buttons) already used Diagnostics;
+        // the rail was the odd one out.
+        var diagnosticsNav = new NavigationItemViewModel("Diagnostics", "\uE9D9", DiagnosticsPage, $"{iconRoot}code-icon.svg");
         var serviceNav = new NavigationItemViewModel("Service Management", "\uE7C1", ServiceManagementPage, $"{iconRoot}setting-icon.svg");
-        var advancedNav = new NavigationItemViewModel("Advanced", "\uE713", AdvancedPage, $"{iconRoot}warning-triangle-icon.svg");
+        var advancedNav = new NavigationItemViewModel("Advanced", "\uE713", AdvancedPage, $"{iconRoot}sliders-icon.svg");
 
         NavigationItems = new ObservableCollection<NavigationItemViewModel>
         {
             dashboardNav,
             dataSourcesNav,
-            serviceNav,
+            firewallNav,
             destinationNav,
             diagnosticsNav,
+            serviceNav,
             advancedNav
         };
 
@@ -118,6 +127,7 @@ public sealed class MainWindowViewModel : ObservableObject
         {
             dashboardNav,
             dataSourcesNav,
+            firewallNav,
             destinationNav,
             diagnosticsNav
         };
@@ -144,6 +154,7 @@ public sealed class MainWindowViewModel : ObservableObject
         ControlCenterCopySupportBundleCommand = new AsyncRelayCommand(ControlCenterCopySupportBundleAsync);
         ControlCenterOpenOverviewCommand = new RelayCommand(() => OpenPage(OverviewPage));
         ControlCenterOpenDestinationCommand = new RelayCommand(() => OpenPage(DestinationPage));
+        ControlCenterOpenFirewallCommand = new RelayCommand(() => OpenPage(FirewallPage));
         ControlCenterOpenServiceManagementCommand = new RelayCommand(() => OpenPage(ServiceManagementPage));
         OpenServiceManagementCommand = new RelayCommand(() => OpenPage(ServiceManagementPage));
         DismissServiceDriftCommand = new RelayCommand(() => IsServiceDriftDetected = false);
@@ -223,6 +234,7 @@ public sealed class MainWindowViewModel : ObservableObject
 
     public OverviewPageViewModel OverviewPage { get; }
     public DataSourcesPageViewModel DataSourcesPage { get; }
+    public FirewallPageViewModel FirewallPage { get; }
     public DestinationPageViewModel DestinationPage { get; }
     public DiagnosticsPageViewModel DiagnosticsPage { get; }
     public ServiceManagementPageViewModel ServiceManagementPage { get; }
@@ -238,6 +250,14 @@ public sealed class MainWindowViewModel : ObservableObject
         get => _selectedNavigationItem;
         set
         {
+            // The rail is two ListBoxes (primary + system groups) sharing this
+            // property. When one gains a selection the other pushes null back —
+            // ignore it, the real value arrives from the gaining list.
+            if (value == null)
+            {
+                return;
+            }
+
             if (!SetProperty(ref _selectedNavigationItem, value))
             {
                 return;
@@ -523,6 +543,7 @@ public sealed class MainWindowViewModel : ObservableObject
     public AsyncRelayCommand ControlCenterCopySupportBundleCommand { get; }
     public RelayCommand ControlCenterOpenOverviewCommand { get; }
     public RelayCommand ControlCenterOpenDestinationCommand { get; }
+    public RelayCommand ControlCenterOpenFirewallCommand { get; }
     public RelayCommand ControlCenterOpenServiceManagementCommand { get; }
     public RelayCommand OpenServiceManagementCommand { get; }
     public RelayCommand DismissServiceDriftCommand { get; }
@@ -602,6 +623,18 @@ public sealed class MainWindowViewModel : ObservableObject
         if (!_adminClient.GetAvailableTargets().Any())
         {
             parts.Add("No running local collector instance.");
+
+            // The status bar used to sit on its cheerful initial "Ready" even
+            // when nothing was running — say what's actually going on, but never
+            // stomp a real result message from a user action.
+            if (StatusMessage == "Ready")
+            {
+                SetStatusBarOnly("No collector running — install the service or start console mode in Service Management", false);
+            }
+        }
+        else if (StatusMessage.StartsWith("No collector running", StringComparison.Ordinal))
+        {
+            SetStatusBarOnly("Ready", true);
         }
 
         InstanceSummary = string.Join(" ", parts);
@@ -893,10 +926,17 @@ public sealed class MainWindowViewModel : ObservableObject
 
     private void SetStatus(string message, bool success)
     {
+        SetStatusBarOnly(message, success);
+        ShowToast(message, success);
+    }
+
+    /// <summary>Ambient state messages (e.g. "No collector running") update the
+    /// status bar without popping a toast — toasts are for action results.</summary>
+    private void SetStatusBarOnly(string message, bool success)
+    {
         StatusMessage = message;
         StatusIsSuccess = success;
         StatusColor = success ? "#9ED29E" : "#F1A18F";
-        ShowToast(message, success);
     }
 
     private void ShowToast(string message, bool success)

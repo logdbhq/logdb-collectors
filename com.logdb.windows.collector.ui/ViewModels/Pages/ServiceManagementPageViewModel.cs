@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.ui.Services;
 using com.logdb.windows.collector.ui.ViewModels.Infrastructure;
@@ -24,19 +23,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
     private bool _consoleRunning;
     private string _consoleStatus = "Not running";
     private string _consoleHint = "Console mode is for local testing.";
-    private bool _firewallEnabled;
-    private int _firewallPollIntervalSeconds = 900;
-    private string _firewallRuleNamePrefix = "LogDB Firewall";
-    private bool _firewallDryRun;
-    private string _firewallWhitelistPath = string.Empty;
-    private string _firewallBlocklistSummary = "No blocklists loaded.";
-    private bool _firewallCustomEnabled;
-    private string _firewallCustomDisplayName = "LogDB Guard";
-    private string _firewallCustomGuardUrl = string.Empty;
-    private BlocklistFeedRowViewModel? _selectedBlocklistFeed;
-    private string _firewallRuntimeStatus = "Runtime: unavailable.";
-    private string _firewallHint =
-        "Firewall sync periodically fetches public IP-reputation feeds and applies them as inbound block rules.";
     private ServiceUpdateCheckResult? _lastUpdateCheck;
     private string _collectorExePath = string.Empty;
 
@@ -55,12 +41,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         RestartServiceCommand = new AsyncRelayCommand(RestartServiceAsync);
         CheckServiceUpdateCommand = new AsyncRelayCommand(CheckServiceUpdateAsync);
         ApplyServiceUpdateCommand = new AsyncRelayCommand(ApplyServiceUpdateAsync);
-        SaveFirewallConfigCommand = new AsyncRelayCommand(SaveFirewallConfigAsync);
-        ApplyFirewallNowCommand = new AsyncRelayCommand(ApplyFirewallNowAsync);
-        RemoveFirewallRulesCommand = new AsyncRelayCommand(RemoveFirewallRulesAsync);
-        BlocklistFeeds = new ObservableCollection<BlocklistFeedRowViewModel>();
-        AddBlocklistFeedCommand = new RelayCommand(AddBlocklistFeed);
-        RemoveSelectedBlocklistFeedCommand = new RelayCommand(RemoveSelectedBlocklistFeed, () => _selectedBlocklistFeed != null);
         SaveCollectorPathCommand = new AsyncRelayCommand(SaveCollectorPathAsync);
 
         RunConsoleCommand = new AsyncRelayCommand(RunConsoleAsync);
@@ -190,87 +170,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         private set => SetProperty(ref _consoleHint, value);
     }
 
-    public bool FirewallEnabled
-    {
-        get => _firewallEnabled;
-        set => SetProperty(ref _firewallEnabled, value);
-    }
-
-    public int FirewallPollIntervalSeconds
-    {
-        get => _firewallPollIntervalSeconds;
-        set => SetProperty(ref _firewallPollIntervalSeconds, value);
-    }
-
-    public string FirewallRuleNamePrefix
-    {
-        get => _firewallRuleNamePrefix;
-        set => SetProperty(ref _firewallRuleNamePrefix, value);
-    }
-
-    public bool FirewallDryRun
-    {
-        get => _firewallDryRun;
-        set => SetProperty(ref _firewallDryRun, value);
-    }
-
-    public string FirewallWhitelistPath
-    {
-        get => _firewallWhitelistPath;
-        set => SetProperty(ref _firewallWhitelistPath, value);
-    }
-
-    public string FirewallBlocklistSummary
-    {
-        get => _firewallBlocklistSummary;
-        private set => SetProperty(ref _firewallBlocklistSummary, value);
-    }
-
-    public bool FirewallCustomEnabled
-    {
-        get => _firewallCustomEnabled;
-        set => SetProperty(ref _firewallCustomEnabled, value);
-    }
-
-    public string FirewallCustomDisplayName
-    {
-        get => _firewallCustomDisplayName;
-        set => SetProperty(ref _firewallCustomDisplayName, value);
-    }
-
-    public string FirewallCustomGuardUrl
-    {
-        get => _firewallCustomGuardUrl;
-        set => SetProperty(ref _firewallCustomGuardUrl, value);
-    }
-
-    public ObservableCollection<BlocklistFeedRowViewModel> BlocklistFeeds { get; }
-
-    public BlocklistFeedRowViewModel? SelectedBlocklistFeed
-    {
-        get => _selectedBlocklistFeed;
-        set
-        {
-            if (SetProperty(ref _selectedBlocklistFeed, value))
-                RemoveSelectedBlocklistFeedCommand.RaiseCanExecuteChanged();
-        }
-    }
-
-    public RelayCommand AddBlocklistFeedCommand { get; }
-    public RelayCommand RemoveSelectedBlocklistFeedCommand { get; }
-
-    public string FirewallRuntimeStatus
-    {
-        get => _firewallRuntimeStatus;
-        private set => SetProperty(ref _firewallRuntimeStatus, value);
-    }
-
-    public string FirewallHint
-    {
-        get => _firewallHint;
-        private set => SetProperty(ref _firewallHint, value);
-    }
-
     public string PrivilegeModeText => IsAdministrator ? "Administrator" : "Standard user";
     public string ServiceStateSummary => ServiceInstalled
         ? (_serviceStateKind == ServiceStateKind.Running ? "Production service is running." : "Service is installed but not running.")
@@ -294,9 +193,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         set => SetProperty(ref _collectorExePath, value);
     }
 
-    public bool CanSaveFirewallConfig => _adminClient.SelectedTarget != null;
-    public bool CanRemoveFirewallRules => CanSaveFirewallConfig && IsAdministrator;
-
     public AsyncRelayCommand RefreshCommand { get; }
 
     public AsyncRelayCommand InstallServiceCommand { get; }
@@ -306,9 +202,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
     public AsyncRelayCommand RestartServiceCommand { get; }
     public AsyncRelayCommand CheckServiceUpdateCommand { get; }
     public AsyncRelayCommand ApplyServiceUpdateCommand { get; }
-    public AsyncRelayCommand SaveFirewallConfigCommand { get; }
-    public AsyncRelayCommand ApplyFirewallNowCommand { get; }
-    public AsyncRelayCommand RemoveFirewallRulesCommand { get; }
     public AsyncRelayCommand SaveCollectorPathCommand { get; }
     public AsyncRelayCommand RunConsoleCommand { get; }
     public AsyncRelayCommand StopConsoleCommand { get; }
@@ -327,24 +220,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         ServiceBinaryPath = string.IsNullOrWhiteSpace(query.BinaryPath) ? "-" : query.BinaryPath;
         ServiceCurrentVersion = query.BinaryVersion;
 
-        var config = _adminClient.SnapshotWorkingConfig();
-        FirewallEnabled = config.Firewall.Enabled;
-        FirewallPollIntervalSeconds = config.Firewall.PollIntervalSeconds;
-        FirewallRuleNamePrefix = config.Firewall.RuleNamePrefix;
-        FirewallDryRun = config.Firewall.DryRun;
-        FirewallWhitelistPath = config.Firewall.WhitelistPath;
-        FirewallCustomEnabled = config.Firewall.CustomBlocklist.Enabled;
-        FirewallCustomDisplayName = string.IsNullOrWhiteSpace(config.Firewall.CustomBlocklist.DisplayName)
-            ? "LogDB Guard"
-            : config.Firewall.CustomBlocklist.DisplayName;
-        FirewallCustomGuardUrl = config.Firewall.CustomBlocklist.GuardUrl;
-        LoadBlocklistFeedsFromConfig(config.Firewall.PublicBlocklists);
-        var enabledFeedCount = BlocklistFeeds.Count(row => row.Enabled);
-        FirewallBlocklistSummary = enabledFeedCount == 0
-            ? (FirewallCustomEnabled ? "No public blocklists enabled (Guard only)." : "No blocklists enabled.")
-            : $"{enabledFeedCount} public blocklist(s) enabled"
-              + (FirewallCustomEnabled ? " + LogDB Guard." : ".");
-
         var serviceEndpointReachable = _adminClient.Discovery?.ServiceEndpoint.IsReachable == true;
         var consoleEndpointReachable = _adminClient.Discovery?.ConsoleEndpoint.IsReachable == true;
         ConsoleRunning = consoleEndpointReachable;
@@ -356,24 +231,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         ModeHint = IsAdministrator
             ? "Administrative actions are available for service lifecycle and service update."
             : "Run the UI as Administrator to install/start/stop/restart/update the Windows service.";
-
-        var collectorStatus = await _adminClient.GetStatusAsync();
-        var firewallModule = collectorStatus?.Modules
-            .FirstOrDefault(module => module.Name.Equals("Firewall", StringComparison.OrdinalIgnoreCase));
-        if (firewallModule == null)
-        {
-            FirewallRuntimeStatus = "Runtime: unavailable.";
-        }
-        else
-        {
-            FirewallRuntimeStatus = string.IsNullOrWhiteSpace(firewallModule.LastError)
-                ? $"Runtime: {firewallModule.State}"
-                : $"Runtime: {firewallModule.State} ({firewallModule.LastError})";
-        }
-
-        FirewallHint = FirewallEnabled
-            ? "Firewall sync is active. Blocked IPs from LogDB will be applied as inbound block rules."
-            : "Enable firewall sync to automatically block malicious IPs detected by LogDB Guard.";
 
         CollectorExePath = _adminClient.CollectorExeOverride;
 
@@ -522,126 +379,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         await CheckServiceUpdateAsync();
     }
 
-    private async Task SaveFirewallConfigAsync()
-    {
-        if (_adminClient.SelectedTarget == null)
-        {
-            _statusCallback("No local collector target selected.", false);
-            return;
-        }
-
-        var config = _adminClient.SnapshotWorkingConfig();
-        config.Firewall.Enabled = FirewallEnabled;
-        config.Firewall.PollIntervalSeconds = Math.Max(10, FirewallPollIntervalSeconds);
-        config.Firewall.RuleNamePrefix = string.IsNullOrWhiteSpace(FirewallRuleNamePrefix)
-            ? "LogDB Firewall"
-            : FirewallRuleNamePrefix.Trim();
-        config.Firewall.DryRun = FirewallDryRun;
-        config.Firewall.WhitelistPath = FirewallWhitelistPath?.Trim() ?? string.Empty;
-        config.Firewall.CustomBlocklist.Enabled = FirewallCustomEnabled;
-        config.Firewall.CustomBlocklist.DisplayName = string.IsNullOrWhiteSpace(FirewallCustomDisplayName)
-            ? "LogDB Guard"
-            : FirewallCustomDisplayName.Trim();
-        config.Firewall.CustomBlocklist.GuardUrl = FirewallCustomGuardUrl?.Trim() ?? string.Empty;
-        config.Firewall.PublicBlocklists = WriteBlocklistFeedsToConfig();
-
-        var result = await _adminClient.ApplyConfigAsync(config);
-        _statusCallback(result.Success ? "Firewall configuration saved." : result.Message, result.Success);
-        await RefreshAsync();
-    }
-
-    private async Task ApplyFirewallNowAsync()
-    {
-        if (!EnsureAdmin("Applying firewall rules"))
-        {
-            return;
-        }
-
-        var apply = await _adminClient.ApplyFirewallAsync();
-        _statusCallback(apply.Message, apply.Success);
-        await RefreshAsync();
-    }
-
-    private void LoadBlocklistFeedsFromConfig(Dictionary<string, PublicBlocklistFeedDto> source)
-    {
-        // Empty = feeds never configured; show the stock defaults the service
-        // will actually sync with (see FirewallDefaults), so what the operator
-        // sees matches what runs — and saving persists them into the config.
-        if (source.Count == 0)
-        {
-            source = FirewallDefaults.CreatePublicBlocklists();
-        }
-
-        BlocklistFeeds.Clear();
-        foreach (var (feedId, feed) in source.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
-        {
-            BlocklistFeeds.Add(new BlocklistFeedRowViewModel
-            {
-                FeedId = feedId,
-                DisplayName = feed.DisplayName,
-                Url = feed.Url,
-                Enabled = feed.Enabled,
-                MinScore = feed.MinScore
-            });
-        }
-        SelectedBlocklistFeed = null;
-    }
-
-    private Dictionary<string, PublicBlocklistFeedDto> WriteBlocklistFeedsToConfig()
-    {
-        // Last-write-wins on duplicate IDs (typical when a row is edited mid-rename).
-        // Skip rows with no ID or no URL — those are half-typed entries we don't want
-        // to round-trip through the wire format.
-        var result = new Dictionary<string, PublicBlocklistFeedDto>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in BlocklistFeeds)
-        {
-            var id = (row.FeedId ?? string.Empty).Trim();
-            var url = (row.Url ?? string.Empty).Trim();
-            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(url)) continue;
-            result[id] = new PublicBlocklistFeedDto
-            {
-                Enabled = row.Enabled,
-                DisplayName = (row.DisplayName ?? string.Empty).Trim(),
-                Url = url,
-                MinScore = Math.Max(0, row.MinScore)
-            };
-        }
-        return result;
-    }
-
-    private void AddBlocklistFeed()
-    {
-        var row = new BlocklistFeedRowViewModel
-        {
-            FeedId = $"custom_feed_{BlocklistFeeds.Count + 1}",
-            DisplayName = "New feed",
-            Url = string.Empty,
-            Enabled = false,
-            MinScore = 0
-        };
-        BlocklistFeeds.Add(row);
-        SelectedBlocklistFeed = row;
-    }
-
-    private void RemoveSelectedBlocklistFeed()
-    {
-        if (_selectedBlocklistFeed == null) return;
-        BlocklistFeeds.Remove(_selectedBlocklistFeed);
-        SelectedBlocklistFeed = null;
-    }
-
-    private async Task RemoveFirewallRulesAsync()
-    {
-        if (!EnsureAdmin("Removing firewall rules"))
-        {
-            return;
-        }
-
-        var remove = await _adminClient.RemoveFirewallAsync();
-        _statusCallback(remove.Message, remove.Success);
-        await RefreshAsync();
-    }
-
     private void NotifyActionStateChanged()
     {
         NotifyPropertyChanged(nameof(CanInstallService));
@@ -654,8 +391,6 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         NotifyPropertyChanged(nameof(CanRunConsole));
         NotifyPropertyChanged(nameof(CanStopConsole));
         NotifyPropertyChanged(nameof(CanRestartConsole));
-        NotifyPropertyChanged(nameof(CanSaveFirewallConfig));
-        NotifyPropertyChanged(nameof(CanRemoveFirewallRules));
     }
 
     private bool EnsureAdmin(string action)

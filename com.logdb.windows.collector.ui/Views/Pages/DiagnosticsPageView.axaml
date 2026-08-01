@@ -8,10 +8,10 @@
         <TabItem Header="Console">
             <Grid Margin="8" RowDefinitions="Auto,Auto,*,Auto,200" RowSpacing="8">
         <StackPanel Orientation="Horizontal" Spacing="8">
-            <CheckBox Content="Auto refresh (3s)" IsChecked="{Binding OnlineAutoRefresh}" />
+            <CheckBox Content="Auto-refresh (3s)" IsChecked="{Binding OnlineAutoRefresh}" />
             <TextBlock VerticalAlignment="Center" Text="Tail lines" />
             <NumericUpDown Width="140" Minimum="20" Maximum="500" Value="{Binding OnlineTailCount}" />
-            <TextBlock VerticalAlignment="Center" Text="Source" Margin="8,0,0,0" />
+            <TextBlock VerticalAlignment="Center" Text="Module" Margin="8,0,0,0" />
             <Button Width="200"
                     HorizontalContentAlignment="Left"
                     Padding="10,6"

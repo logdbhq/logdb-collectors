@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using com.logdb.windows.collector.shared.Contracts;
 using com.logdb.windows.collector.ui.Services;
 using com.logdb.windows.collector.ui.ViewModels.Infrastructure;
@@ -197,39 +196,6 @@ public sealed class MetricPreviewDisplayRow
     public string TagsText { get; set; } = string.Empty;
 }
 
-public sealed class DataSourceFirewallHistoryRow
-{
-    public string TimeLocal { get; set; } = string.Empty;
-    public string Action { get; set; } = string.Empty;
-    public string Result { get; set; } = string.Empty;
-    public string Details { get; set; } = string.Empty;
-
-    /// <summary>Full structured entry backing this row — null when the row was
-    /// scraped from diagnostics (older collector fallback), in which case the
-    /// detail drawer only has the display strings to show.</summary>
-    public FirewallRuleHistoryEntryDto? Entry { get; init; }
-}
-
-public sealed class DataSourceFirewallRuleRow
-{
-    public DataSourceFirewallRuleRow(
-        Func<DataSourceFirewallRuleRow, Task> deleteAsync,
-        Func<DataSourceFirewallRuleRow, Task> viewIpsAsync)
-    {
-        DeleteCommand = new AsyncRelayCommand(() => deleteAsync(this));
-        ViewIpsCommand = new AsyncRelayCommand(() => viewIpsAsync(this));
-    }
-
-    public string Id { get; init; } = string.Empty;
-    public string DisplayName { get; init; } = string.Empty;
-    public string Source { get; init; } = string.Empty;
-    public string Direction { get; init; } = string.Empty;
-    public string Status { get; init; } = string.Empty;
-    public int IpCount { get; init; }
-    public AsyncRelayCommand DeleteCommand { get; }
-    public AsyncRelayCommand ViewIpsCommand { get; }
-}
-
 public sealed class DataSourcesPageViewModel : PageViewModelBase
 {
     private static readonly HashSet<string> DraftPersistedPropertyNames = new(StringComparer.Ordinal)
@@ -273,41 +239,20 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         nameof(HeartbeatIncludeCpuPercent),
         nameof(HeartbeatIncludeMemoryPercent),
         nameof(HeartbeatServerNameOverride),
-        nameof(HeartbeatEnvironmentOverride)
-    };
-
-    private static readonly HashSet<string> EventLogAutoApplyProperties = new(StringComparer.Ordinal)
-    {
-        nameof(EventLogEnabled), nameof(EventLogApplication), nameof(EventLogSystem),
-        nameof(EventLogSecurity), nameof(EventLogSetup), nameof(LevelCritical),
-        nameof(LevelError), nameof(LevelWarning), nameof(LevelInformation), nameof(LevelVerbose),
-        nameof(EventLogProviderNameOverride), nameof(EventLogServerNameOverride)
-    };
-
-    private static readonly HashSet<string> IisAutoApplyProperties = new(StringComparer.Ordinal)
-    {
-        nameof(IisEnabled), nameof(IisInclude4xx), nameof(IisInclude5xx), nameof(IisExcludeStaticFiles),
-        nameof(IisServerNameOverride)
-    };
-
-    private static readonly HashSet<string> MetricsAutoApplyProperties = new(StringComparer.Ordinal)
-    {
-        nameof(MetricsEnabled), nameof(MetricsCpu), nameof(MetricsMemory),
-        nameof(MetricsDisk), nameof(MetricsNetwork), nameof(MetricsServerNameOverride)
-    };
-
-    private static readonly HashSet<string> HeartbeatAutoApplyProperties = new(StringComparer.Ordinal)
-    {
-        nameof(HeartbeatEnabled), nameof(HeartbeatIncludeUptime), nameof(HeartbeatIncludeHostnameTag),
-        nameof(HeartbeatIncludeAppVersionTag), nameof(HeartbeatIncludeCpuPercent), nameof(HeartbeatIncludeMemoryPercent),
-        nameof(HeartbeatServerNameOverride), nameof(HeartbeatEnvironmentOverride)
+        nameof(HeartbeatEnvironmentOverride),
+        // Highest-consequence fields on the page (they decide whether history
+        // is re-ingested) — before these were tracked, editing them produced
+        // no drift dot, no draft, no feedback at all.
+        nameof(EventLogResumeFromLast),
+        nameof(EventLogInitialStartDate),
+        nameof(IisResumeFromLast),
+        nameof(IisInitialStartDate)
     };
 
     private readonly LocalCollectorAdminClient _adminClient;
     private readonly Action<string, bool> _statusCallback;
     private readonly Func<string, TestReportSession>? _openTestReport;
     private bool _suppressDraftPersistence;
-    private CancellationTokenSource? _autoApplyCts;
 
     private bool _eventLogEnabled;
     private int _eventLogPollIntervalSeconds = 60;
@@ -374,34 +319,10 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     private bool _eventLogPaused;
     private bool _iisPaused;
     private bool _metricsPaused;
-    private string _firewallTabSummary = "Firewall: not loaded.";
-    private string _firewallTabRuntime = "Runtime: unavailable.";
-    private string _firewallRulesSummary = "Active rules: not loaded.";
-    private bool _firewallIpsPanelVisible;
-    private string _firewallIpsTitle = string.Empty;
-    private string _firewallIpsFilter = string.Empty;
-    private string _firewallIpsCountText = string.Empty;
-    private List<string> _firewallIpsAll = new();
     private bool _eventLogDrift;
     private bool _iisDrift;
     private bool _metricsDrift;
     private bool _heartbeatDrift;
-    private bool _firewallDetailVisible;
-    private string _firewallDetailTitle = string.Empty;
-    private string _firewallDetailTime = string.Empty;
-    private string _firewallDetailResult = string.Empty;
-    private string _firewallDetailMeta = string.Empty;
-    private string _firewallDetailMessage = string.Empty;
-    private string _firewallDetailAddedHeader = string.Empty;
-    private string _firewallDetailRemovedHeader = string.Empty;
-    private DataSourceFirewallHistoryRow? _selectedFirewallHistoryRow;
-    private DataSourceFirewallRuleRow? _selectedFirewallRuleRow;
-    private bool _firewallBlockedVisible;
-    private string _firewallBlockedFilter = string.Empty;
-    private string _firewallBlockedCountText = string.Empty;
-    private CancellationTokenSource? _firewallBlockedQueryCts;
-    private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
-    private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
 
     public DataSourcesPageViewModel(
         LocalCollectorAdminClient adminClient,
@@ -424,12 +345,6 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         MetricTags = new ObservableCollection<TagItemViewModel>();
         MetricsPreviewRows = new ObservableCollection<MetricPreviewDisplayRow>();
         HeartbeatTags = new ObservableCollection<TagItemViewModel>();
-        FirewallHistoryRows = new ObservableCollection<DataSourceFirewallHistoryRow>();
-        FirewallRuleRows = new ObservableCollection<DataSourceFirewallRuleRow>();
-        FirewallIpsView = new ObservableCollection<string>();
-        FirewallDetailAddedIps = new ObservableCollection<string>();
-        FirewallDetailRemovedIps = new ObservableCollection<string>();
-        FirewallBlockedRows = new ObservableCollection<string>();
 
         AddCustomChannelCommand = new RelayCommand(AddCustomChannel);
         RemoveCustomChannelCommand = new RelayCommand(RemoveSelectedCustomChannel);
@@ -463,12 +378,6 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         RemoveTagCommand = new RelayCommand(RemoveSelectedTag);
         PreviewMetricsCommand = new AsyncRelayCommand(PreviewMetricsAsync);
         ApplyMetricsCommand = new AsyncRelayCommand(ApplyMetricsAsync);
-        RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
-        RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
-        CloseFirewallIpsCommand = new RelayCommand(() => FirewallIpsPanelVisible = false);
-        CloseFirewallDetailCommand = new RelayCommand(() => FirewallDetailVisible = false);
-        OpenFirewallBlockedIpsCommand = new AsyncRelayCommand(OpenFirewallBlockedIpsAsync);
-        CloseFirewallBlockedCommand = new RelayCommand(() => FirewallBlockedVisible = false);
 
         PauseEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", false));
         ResumeEventLogCommand = new AsyncRelayCommand(() => ToggleModuleAsync("EventLog", true));
@@ -513,12 +422,6 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public ObservableCollection<TagItemViewModel> MetricTags { get; }
     public ObservableCollection<MetricPreviewDisplayRow> MetricsPreviewRows { get; }
     public ObservableCollection<TagItemViewModel> HeartbeatTags { get; }
-    public ObservableCollection<DataSourceFirewallHistoryRow> FirewallHistoryRows { get; }
-    public ObservableCollection<DataSourceFirewallRuleRow> FirewallRuleRows { get; }
-    public ObservableCollection<string> FirewallIpsView { get; }
-    public ObservableCollection<string> FirewallDetailAddedIps { get; }
-    public ObservableCollection<string> FirewallDetailRemovedIps { get; }
-    public ObservableCollection<string> FirewallBlockedRows { get; }
 
     public StringItemViewModel? SelectedCustomChannel { get; set; }
     public StringItemViewModel? SelectedIisDirectory { get; set; }
@@ -928,319 +831,6 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         set => SetProperty(ref _metricsPreviewMessage, value);
     }
 
-    public string FirewallTabSummary
-    {
-        get => _firewallTabSummary;
-        set => SetProperty(ref _firewallTabSummary, value);
-    }
-
-    public string FirewallTabRuntime
-    {
-        get => _firewallTabRuntime;
-        set => SetProperty(ref _firewallTabRuntime, value);
-    }
-
-    public string FirewallRulesSummary
-    {
-        get => _firewallRulesSummary;
-        set => SetProperty(ref _firewallRulesSummary, value);
-    }
-
-    public bool FirewallIpsPanelVisible
-    {
-        get => _firewallIpsPanelVisible;
-        set
-        {
-            if (SetProperty(ref _firewallIpsPanelVisible, value))
-            {
-                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
-            }
-        }
-    }
-
-    /// <summary>True when any right-hand drawer (history detail, rule IPs, or
-    /// blocked-IP list) is open — drives the shared drawer column and splitter.</summary>
-    public bool FirewallSidePanelVisible => _firewallDetailVisible || _firewallIpsPanelVisible || _firewallBlockedVisible;
-
-    public bool FirewallBlockedVisible
-    {
-        get => _firewallBlockedVisible;
-        set
-        {
-            if (SetProperty(ref _firewallBlockedVisible, value))
-            {
-                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
-            }
-        }
-    }
-
-    public string FirewallBlockedFilter
-    {
-        get => _firewallBlockedFilter;
-        set
-        {
-            if (SetProperty(ref _firewallBlockedFilter, value))
-            {
-                ScheduleFirewallBlockedQuery();
-            }
-        }
-    }
-
-    public string FirewallBlockedCountText
-    {
-        get => _firewallBlockedCountText;
-        set => SetProperty(ref _firewallBlockedCountText, value);
-    }
-
-    private async Task OpenFirewallBlockedIpsAsync()
-    {
-        FirewallDetailVisible = false;      // the drawers share one column
-        FirewallIpsPanelVisible = false;
-        FirewallBlockedVisible = true;
-        await RefreshFirewallBlockedIpsAsync();
-    }
-
-    /// <summary>Filter keystrokes re-query the service; debounced so a fast
-    /// typist causes one pipe round-trip, not one per character.</summary>
-    private void ScheduleFirewallBlockedQuery()
-    {
-        if (!FirewallBlockedVisible)
-        {
-            return;
-        }
-
-        _firewallBlockedQueryCts?.Cancel();
-        _firewallBlockedQueryCts = new CancellationTokenSource();
-        var token = _firewallBlockedQueryCts.Token;
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(350, token);
-                if (!token.IsCancellationRequested)
-                {
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(RefreshFirewallBlockedIpsAsync);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                // debounced
-            }
-        }, token);
-    }
-
-    private async Task RefreshFirewallBlockedIpsAsync()
-    {
-        try
-        {
-            var result = await _adminClient.GetFirewallBlockedIpsAsync(FirewallBlockedFilter, 500);
-            FirewallBlockedRows.Clear();
-
-            if (result == null)
-            {
-                FirewallBlockedCountText = "Not available — the running collector predates the blocked-IP index (update the service).";
-                return;
-            }
-
-            foreach (var entry in result.Entries)
-            {
-                FirewallBlockedRows.Add(
-                    $"{entry.Ip}   ·   {entry.BlockedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}   ·   {entry.Source}");
-            }
-
-            FirewallBlockedCountText = result.Matched > result.Entries.Count
-                ? $"showing first {result.Entries.Count} of {result.Matched} matched ({result.Total} blocked in total) — refine the filter"
-                : $"{result.Matched} shown · {result.Total} blocked in total";
-        }
-        catch (Exception ex)
-        {
-            _statusCallback($"Blocked IPs refresh failed: {ex.Message}", false);
-        }
-    }
-
-    public string FirewallIpsTitle
-    {
-        get => _firewallIpsTitle;
-        set => SetProperty(ref _firewallIpsTitle, value);
-    }
-
-    public string FirewallIpsFilter
-    {
-        get => _firewallIpsFilter;
-        set
-        {
-            if (SetProperty(ref _firewallIpsFilter, value))
-            {
-                RefilterFirewallIps();
-            }
-        }
-    }
-
-    public string FirewallIpsCountText
-    {
-        get => _firewallIpsCountText;
-        set => SetProperty(ref _firewallIpsCountText, value);
-    }
-
-    public bool FirewallDetailVisible
-    {
-        get => _firewallDetailVisible;
-        set
-        {
-            if (SetProperty(ref _firewallDetailVisible, value))
-            {
-                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
-            }
-        }
-    }
-
-    public string FirewallDetailTitle
-    {
-        get => _firewallDetailTitle;
-        set => SetProperty(ref _firewallDetailTitle, value);
-    }
-
-    public string FirewallDetailTime
-    {
-        get => _firewallDetailTime;
-        set => SetProperty(ref _firewallDetailTime, value);
-    }
-
-    public string FirewallDetailResult
-    {
-        get => _firewallDetailResult;
-        set => SetProperty(ref _firewallDetailResult, value);
-    }
-
-    public string FirewallDetailMeta
-    {
-        get => _firewallDetailMeta;
-        set => SetProperty(ref _firewallDetailMeta, value);
-    }
-
-    public string FirewallDetailMessage
-    {
-        get => _firewallDetailMessage;
-        set => SetProperty(ref _firewallDetailMessage, value);
-    }
-
-    public string FirewallDetailAddedHeader
-    {
-        get => _firewallDetailAddedHeader;
-        set => SetProperty(ref _firewallDetailAddedHeader, value);
-    }
-
-    public string FirewallDetailRemovedHeader
-    {
-        get => _firewallDetailRemovedHeader;
-        set => SetProperty(ref _firewallDetailRemovedHeader, value);
-    }
-
-    public DataSourceFirewallHistoryRow? SelectedFirewallHistoryRow
-    {
-        get => _selectedFirewallHistoryRow;
-        set => SetProperty(ref _selectedFirewallHistoryRow, value);
-    }
-
-    public DataSourceFirewallRuleRow? SelectedFirewallRuleRow
-    {
-        get => _selectedFirewallRuleRow;
-        set => SetProperty(ref _selectedFirewallRuleRow, value);
-    }
-
-    /// <summary>Double-click entry point on the Active Rules grid — same as the
-    /// row's IPs button.</summary>
-    public async Task OpenSelectedFirewallRuleIpsAsync()
-    {
-        var row = SelectedFirewallRuleRow;
-        if (row != null)
-        {
-            await ViewFirewallRuleIpsAsync(row);
-        }
-    }
-
-    /// <summary>Fills and shows the detail drawer for the selected history row
-    /// (invoked by the view on double-click).</summary>
-    public void OpenFirewallHistoryDetail()
-    {
-        var row = SelectedFirewallHistoryRow;
-        if (row == null)
-        {
-            return;
-        }
-
-        FirewallDetailAddedIps.Clear();
-        FirewallDetailRemovedIps.Clear();
-
-        if (row.Entry is { } entry)
-        {
-            FirewallDetailTitle = $"{DescribeFirewallHistoryAction(entry.Action)}" +
-                                  (string.IsNullOrWhiteSpace(entry.RuleName) ? "" : $" — {entry.RuleName}");
-            FirewallDetailTime = $"{entry.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} local · {entry.TimestampUtc:yyyy-MM-dd HH:mm:ss} UTC";
-            FirewallDetailResult = entry.Success ? (entry.DryRun ? "Dry run — firewall untouched" : "OK") : "Error";
-            var meta = new List<string>();
-            if (!string.IsNullOrWhiteSpace(entry.Source)) meta.Add($"source: {entry.Source}");
-            if (entry.IpCount > 0) meta.Add($"{entry.IpCount} IPs in rule");
-            FirewallDetailMeta = string.Join(" · ", meta);
-            FirewallDetailMessage = entry.Message;
-
-            FirewallDetailAddedHeader = BuildDeltaHeader("Added", entry.AddedCount, entry.AddedIps.Count);
-            FirewallDetailRemovedHeader = BuildDeltaHeader("Removed", entry.RemovedCount, entry.RemovedIps.Count);
-            foreach (var ip in entry.AddedIps) FirewallDetailAddedIps.Add(ip);
-            foreach (var ip in entry.RemovedIps) FirewallDetailRemovedIps.Add(ip);
-        }
-        else
-        {
-            // Diagnostics-scraped row (older collector) — display strings only.
-            FirewallDetailTitle = row.Action;
-            FirewallDetailTime = $"{row.TimeLocal} local";
-            FirewallDetailResult = row.Result;
-            FirewallDetailMeta = string.Empty;
-            FirewallDetailMessage = row.Details;
-            FirewallDetailAddedHeader = string.Empty;
-            FirewallDetailRemovedHeader = string.Empty;
-        }
-
-        FirewallIpsPanelVisible = false;   // the drawers share one column
-        FirewallBlockedVisible = false;
-        FirewallDetailVisible = true;
-    }
-
-    private static string BuildDeltaHeader(string label, int totalCount, int sampleCount)
-    {
-        if (totalCount <= 0) return string.Empty;
-        return totalCount > sampleCount
-            ? $"{label} — {totalCount} (sample of first {sampleCount})"
-            : $"{label} — {totalCount}";
-    }
-
-    /// <summary>Plain-text rendering of the open detail drawer for the Copy button.</summary>
-    public string BuildFirewallDetailClipboardText()
-    {
-        var lines = new List<string>
-        {
-            FirewallDetailTitle,
-            FirewallDetailTime,
-            $"Result: {FirewallDetailResult}"
-        };
-        if (!string.IsNullOrWhiteSpace(FirewallDetailMeta)) lines.Add(FirewallDetailMeta);
-        if (!string.IsNullOrWhiteSpace(FirewallDetailMessage)) lines.Add($"Message: {FirewallDetailMessage}");
-        if (!string.IsNullOrWhiteSpace(FirewallDetailAddedHeader))
-        {
-            lines.Add(string.Empty);
-            lines.Add(FirewallDetailAddedHeader);
-            lines.AddRange(FirewallDetailAddedIps);
-        }
-        if (!string.IsNullOrWhiteSpace(FirewallDetailRemovedHeader))
-        {
-            lines.Add(string.Empty);
-            lines.Add(FirewallDetailRemovedHeader);
-            lines.AddRange(FirewallDetailRemovedIps);
-        }
-        return string.Join(Environment.NewLine, lines);
-    }
-
     public bool EventLogPaused
     {
         get => _eventLogPaused;
@@ -1298,25 +888,25 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public bool EventLogHasUnappliedChanges
     {
         get => _eventLogDrift;
-        private set { if (SetProperty(ref _eventLogDrift, value)) NotifyDriftChanged(nameof(EventLogTabHeader)); }
+        private set { if (SetProperty(ref _eventLogDrift, value)) NotifyDriftChanged(nameof(EventLogTabHeader), nameof(EventLogApplyLabel)); }
     }
 
     public bool IisHasUnappliedChanges
     {
         get => _iisDrift;
-        private set { if (SetProperty(ref _iisDrift, value)) NotifyDriftChanged(nameof(IisTabHeader)); }
+        private set { if (SetProperty(ref _iisDrift, value)) NotifyDriftChanged(nameof(IisTabHeader), nameof(IisApplyLabel)); }
     }
 
     public bool MetricsHasUnappliedChanges
     {
         get => _metricsDrift;
-        private set { if (SetProperty(ref _metricsDrift, value)) NotifyDriftChanged(nameof(MetricsTabHeader)); }
+        private set { if (SetProperty(ref _metricsDrift, value)) NotifyDriftChanged(nameof(MetricsTabHeader), nameof(MetricsApplyLabel)); }
     }
 
     public bool HeartbeatHasUnappliedChanges
     {
         get => _heartbeatDrift;
-        private set { if (SetProperty(ref _heartbeatDrift, value)) NotifyDriftChanged(nameof(HeartbeatTabHeader)); }
+        private set { if (SetProperty(ref _heartbeatDrift, value)) NotifyDriftChanged(nameof(HeartbeatTabHeader), nameof(HeartbeatApplyLabel)); }
     }
 
     public bool AnyUnappliedChanges => _eventLogDrift || _iisDrift || _metricsDrift || _heartbeatDrift;
@@ -1336,17 +926,34 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    private void NotifyDriftChanged(string tabHeaderProperty)
+    /// <summary>Apply buttons say "Apply changes" while their tab is drifted —
+    /// the button itself signals that there is something pending to commit.</summary>
+    public string EventLogApplyLabel => _eventLogDrift ? "Apply changes" : "Apply";
+    public string IisApplyLabel => _iisDrift ? "Apply changes" : "Apply";
+    public string MetricsApplyLabel => _metricsDrift ? "Apply changes" : "Apply";
+    public string HeartbeatApplyLabel => _heartbeatDrift ? "Apply changes" : "Apply";
+
+    private void NotifyDriftChanged(params string[] dependentProperties)
     {
-        NotifyPropertyChanged(tabHeaderProperty);
+        foreach (var property in dependentProperties)
+        {
+            NotifyPropertyChanged(property);
+        }
+
         NotifyPropertyChanged(nameof(AnyUnappliedChanges));
         NotifyPropertyChanged(nameof(UnappliedChangesText));
     }
 
-    public bool EventLogConfigEditable => !_collectorConnected || _eventLogPaused;
-    public bool IisConfigEditable => !_collectorConnected || _iisPaused;
-    public bool MetricsConfigEditable => !_collectorConnected || _metricsPaused;
-    public bool HeartbeatConfigEditable => !_collectorConnected || _heartbeatPaused;
+    // Config is always editable: edits only mark the tab as drifted and reach
+    // the collector via the explicit Apply button. The old pause-to-edit gate
+    // (editable ⇔ disconnected or paused) grayed out every field precisely
+    // when the collector was healthy, with no visible explanation — the single
+    // most confusing behavior found in the UX audit. Properties kept so the
+    // AXAML IsEnabled bindings remain valid.
+    public bool EventLogConfigEditable => true;
+    public bool IisConfigEditable => true;
+    public bool MetricsConfigEditable => true;
+    public bool HeartbeatConfigEditable => true;
 
     /// <summary>
     /// True only when a collector service or console instance is reachable on the
@@ -1385,12 +992,6 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
     public RelayCommand RemoveTagCommand { get; }
     public AsyncRelayCommand PreviewMetricsCommand { get; }
     public AsyncRelayCommand ApplyMetricsCommand { get; }
-    public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
-    public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
-    public RelayCommand CloseFirewallIpsCommand { get; }
-    public RelayCommand CloseFirewallDetailCommand { get; }
-    public AsyncRelayCommand OpenFirewallBlockedIpsCommand { get; }
-    public RelayCommand CloseFirewallBlockedCommand { get; }
 
     public AsyncRelayCommand PauseEventLogCommand { get; }
     public AsyncRelayCommand ResumeEventLogCommand { get; }
@@ -1539,9 +1140,6 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         // applied to the service — surface that instead of silently lying.
         UpdateDriftFlags();
 
-        await RefreshFirewallSummaryAsync();
-        await RefreshFirewallHistoryAsync();
-        await RefreshFirewallRulesAsync();
         await RefreshModulePausedStatesAsync();
     }
 
@@ -1588,8 +1186,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         _statusCallback(result.Message, result.Success);
         if (result.Success)
         {
-            PersistDraftIfReady();
             await RefreshAsync();
+            SettleDraftAfterApply();
         }
     }
 
@@ -1626,8 +1224,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         _statusCallback(result.Message, result.Success);
         if (result.Success)
         {
-            PersistDraftIfReady();
             await RefreshAsync();
+            SettleDraftAfterApply();
         }
     }
 
@@ -1656,8 +1254,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         _statusCallback(result.Message, result.Success);
         if (result.Success)
         {
-            PersistDraftIfReady();
             await RefreshAsync();
+            SettleDraftAfterApply();
         }
     }
 
@@ -1694,8 +1292,8 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         _statusCallback(result.Message, result.Success);
         if (result.Success)
         {
-            PersistDraftIfReady();
             await RefreshAsync();
+            SettleDraftAfterApply();
         }
     }
 
@@ -1830,7 +1428,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         PersistDraftIfReady();
         if (!_suppressDraftPersistence)
         {
-            ScheduleAutoApply(ApplyIisAsync);
+            UpdateDriftFlags();
         }
     }
 
@@ -1839,7 +1437,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         PersistDraftIfReady();
         if (!_suppressDraftPersistence)
         {
-            ScheduleAutoApply(ApplyIisAsync);
+            UpdateDriftFlags();
         }
     }
 
@@ -1940,11 +1538,9 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             }
         }
         PersistDraftIfReady();
-        // Mirror IIS behavior: a rule add/remove/clear should auto-apply to the running
-        // collector and surface a status-bar notification through ApplyEventLogsAsync.
         if (!_suppressDraftPersistence)
         {
-            ScheduleAutoApply(ApplyEventLogsAsync);
+            UpdateDriftFlags();
         }
     }
 
@@ -1953,7 +1549,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         PersistDraftIfReady();
         if (!_suppressDraftPersistence)
         {
-            ScheduleAutoApply(ApplyEventLogsAsync);
+            UpdateDriftFlags();
         }
     }
 
@@ -2128,36 +1724,22 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
 
     private async Task SendTestLogAsync(string moduleName)
     {
-        // Avalonia's default TextBox.Text binding updates the VM on LostFocus, and
-        // OnDataSourcesPropertyChanged schedules an 800ms-debounced auto-apply.
-        // Clicking Test changes focus (so the VM gets the typed value), but the
-        // Test command runs immediately and the debounced auto-apply hasn't yet
-        // written the new value into the working config. Without forcing an
-        // Apply here, Test snapshots a stale working config and overrides typed
-        // moments ago (e.g. Server name override = windows.motivp.com) would
-        // silently get ignored — exact symptom observed in the field where the
-        // Test payload's host tag fell back to the global ServerName instead of
-        // the per-module override.
-        //
-        // Force-flush by invoking the module's Apply synchronously here.
-        // We swallow failures so a transient Apply error never blocks Test
-        // diagnosis — the Test will simply use whatever the working config
-        // already had.
-        try
+        // Test always exercises the APPLIED config. If the tab has pending
+        // edits, testing would silently exercise something other than what the
+        // user is looking at — tell them to Apply first instead of the old
+        // behavior of force-applying behind their back.
+        var drifted = moduleName.ToLowerInvariant() switch
         {
-            Task applyTask = moduleName.ToLowerInvariant() switch
-            {
-                "eventlog"  => ApplyEventLogsAsync(),
-                "iis"       => ApplyIisAsync(),
-                "metrics"   => ApplyMetricsAsync(),
-                "heartbeat" => ApplyHeartbeatAsync(),
-                _           => Task.CompletedTask
-            };
-            await applyTask;
-        }
-        catch
+            "eventlog"  => EventLogHasUnappliedChanges,
+            "iis"       => IisHasUnappliedChanges,
+            "metrics"   => MetricsHasUnappliedChanges,
+            "heartbeat" => HeartbeatHasUnappliedChanges,
+            _           => false
+        };
+        if (drifted)
         {
-            // best-effort flush; never block Test on this
+            _statusCallback($"Apply your {moduleName} changes before testing — Test runs against the applied configuration.", false);
+            return;
         }
 
         using var session = _openTestReport?.Invoke(moduleName);
@@ -2230,357 +1812,6 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         }
     }
 
-    private async Task RefreshFirewallSummaryAsync()
-    {
-        var firewall = _adminClient.SnapshotWorkingConfig().Firewall;
-        FirewallTabSummary = firewall.Enabled
-            ? $"Firewall sync enabled (every {firewall.PollIntervalSeconds}s, prefix: {firewall.RuleNamePrefix})"
-            : "Firewall sync disabled";
-
-        var status = await _adminClient.GetStatusAsync();
-        var firewallModule = status?.Modules
-            .FirstOrDefault(module => module.Name.Equals("Firewall", StringComparison.OrdinalIgnoreCase));
-        if (firewallModule == null)
-        {
-            FirewallTabRuntime = "Runtime: unavailable.";
-            return;
-        }
-
-        FirewallTabRuntime = string.IsNullOrWhiteSpace(firewallModule.LastError)
-            ? $"Runtime: {firewallModule.State}"
-            : $"Runtime: {firewallModule.State} ({firewallModule.LastError})";
-    }
-
-    private async Task RefreshFirewallHistoryAsync()
-    {
-        if (_adminClient.SelectedTarget == null)
-        {
-            FirewallHistoryRows.Clear();
-            await RefreshFirewallSummaryAsync();
-            return;
-        }
-
-        if (!await _firewallHistoryRefreshLock.WaitAsync(0))
-        {
-            return;
-        }
-
-        try
-        {
-            var structured = await _adminClient.GetFirewallHistoryAsync(200);
-            if (structured != null)
-            {
-                RebuildFirewallHistory(structured);
-            }
-            else
-            {
-                // Service predates the firewall-history command — fall back to
-                // scraping the diagnostics ring like the UI always used to.
-                var diagnostics = (await _adminClient.GetDiagnosticsAsync(500))
-                    .OrderByDescending(entry => entry.TimestampUtc)
-                    .ToList();
-                RebuildFirewallHistoryFromDiagnostics(diagnostics);
-            }
-
-            await RefreshFirewallSummaryAsync();
-        }
-        catch (Exception ex)
-        {
-            _statusCallback($"Firewall history refresh failed: {ex.Message}", false);
-        }
-        finally
-        {
-            _firewallHistoryRefreshLock.Release();
-        }
-    }
-
-    private async Task RefreshFirewallRulesAsync()
-    {
-        if (_adminClient.SelectedTarget == null)
-        {
-            FirewallRuleRows.Clear();
-            FirewallRulesSummary = "Active rules: no collector instance selected.";
-            return;
-        }
-
-        if (!await _firewallRulesRefreshLock.WaitAsync(0))
-        {
-            return;
-        }
-
-        try
-        {
-            var (rules, error, unsupported) = await _adminClient.GetFirewallRulesAsync();
-            FirewallRuleRows.Clear();
-
-            if (rules == null)
-            {
-                FirewallRulesSummary = unsupported
-                    ? "Active rules: the running collector does not support rule listing (update the service)."
-                    : $"Active rules: refresh failed — {error}";
-                return;
-            }
-
-            foreach (var rule in rules.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase))
-            {
-                FirewallRuleRows.Add(new DataSourceFirewallRuleRow(DeleteFirewallRuleAsync, ViewFirewallRuleIpsAsync)
-                {
-                    Id = rule.Id,
-                    DisplayName = rule.DisplayName,
-                    Source = rule.Source,
-                    Direction = rule.Direction,
-                    IpCount = rule.IpCount,
-                    Status = (rule.Enabled ? "Enabled" : "Disabled") + (rule.Legacy ? " (legacy)" : "")
-                });
-            }
-
-            var totalIps = rules.Sum(r => r.IpCount);
-            FirewallRulesSummary = rules.Count == 0
-                ? "Active rules: none applied to the OS firewall."
-                : $"Active rules: {rules.Count} rule(s) blocking {totalIps:N0} IPs/CIDRs, read live from the OS firewall.";
-        }
-        catch (Exception ex)
-        {
-            _statusCallback($"Firewall rules refresh failed: {ex.Message}", false);
-        }
-        finally
-        {
-            _firewallRulesRefreshLock.Release();
-        }
-    }
-
-    private async Task ViewFirewallRuleIpsAsync(DataSourceFirewallRuleRow row)
-    {
-        try
-        {
-            var (success, message, rule) = await _adminClient.GetFirewallRuleIpsAsync(row.Id);
-            if (!success || rule == null)
-            {
-                _statusCallback(message, false);
-                return;
-            }
-
-            _firewallIpsAll = rule.Ips;
-            FirewallIpsTitle = $"{rule.DisplayName} — {rule.Ips.Count} IPs/CIDRs";
-            FirewallIpsFilter = string.Empty;
-            RefilterFirewallIps();
-            FirewallDetailVisible = false;   // the drawers share one column
-            FirewallBlockedVisible = false;
-            FirewallIpsPanelVisible = true;
-        }
-        catch (Exception ex)
-        {
-            _statusCallback($"Failed to load IPs for '{row.DisplayName}': {ex.Message}", false);
-        }
-    }
-
-    private void RefilterFirewallIps()
-    {
-        // Cap the rendered list: a 5000-row ListBox is pointless to scroll and
-        // slow to build — the filter box is the way to find a specific address.
-        const int maxShown = 500;
-        var filter = _firewallIpsFilter.Trim();
-        var matches = string.IsNullOrEmpty(filter)
-            ? _firewallIpsAll
-            : _firewallIpsAll.Where(ip => ip.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-
-        FirewallIpsView.Clear();
-        foreach (var ip in matches.Take(maxShown))
-        {
-            FirewallIpsView.Add(ip);
-        }
-
-        FirewallIpsCountText = matches.Count <= maxShown
-            ? $"{matches.Count} shown"
-            : $"showing first {maxShown} of {matches.Count} — refine the filter";
-    }
-
-    private async Task DeleteFirewallRuleAsync(DataSourceFirewallRuleRow row)
-    {
-        try
-        {
-            var (success, message) = await _adminClient.DeleteFirewallRuleAsync(row.Id, removeFromBackend: true);
-            _statusCallback(message, success);
-
-            if (success)
-            {
-                await RefreshFirewallRulesAsync();
-                await RefreshFirewallHistoryAsync();
-            }
-        }
-        catch (Exception ex)
-        {
-            _statusCallback($"Delete failed for '{row.DisplayName}': {ex.Message}", false);
-        }
-    }
-
-    private void RebuildFirewallHistory(IReadOnlyList<FirewallRuleHistoryEntryDto> entries)
-    {
-        FirewallHistoryRows.Clear();
-        foreach (var entry in entries)
-        {
-            FirewallHistoryRows.Add(new DataSourceFirewallHistoryRow
-            {
-                TimeLocal = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
-                Action = DescribeFirewallHistoryAction(entry.Action),
-                Result = entry.Success ? (entry.DryRun ? "Dry run" : "OK") : "Error",
-                Details = DescribeFirewallHistoryDetails(entry),
-                Entry = entry
-            });
-        }
-    }
-
-    private static string DescribeFirewallHistoryAction(string action) => action switch
-    {
-        FirewallHistoryActions.RuleCreated => "Rule created",
-        FirewallHistoryActions.RuleUpdated => "Rule updated",
-        FirewallHistoryActions.RuleRemoved => "Rule removed",
-        FirewallHistoryActions.SyncCompleted => "Sync",
-        FirewallHistoryActions.SyncFailed => "Sync failed",
-        FirewallHistoryActions.RemoveAll => "Remove all",
-        _ => action
-    };
-
-    private static string DescribeFirewallHistoryDetails(FirewallRuleHistoryEntryDto entry)
-    {
-        var parts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(entry.RuleName))
-        {
-            parts.Add(entry.IpCount > 0 ? $"{entry.RuleName} ({entry.IpCount} IPs)" : entry.RuleName);
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.Source) &&
-            !string.Equals(entry.Source, entry.RuleName, StringComparison.OrdinalIgnoreCase))
-        {
-            parts.Add($"source: {entry.Source}");
-        }
-
-        if (entry.AddedCount > 0)
-        {
-            parts.Add(DescribeIpDelta("+", entry.AddedCount, entry.AddedIps));
-        }
-
-        if (entry.RemovedCount > 0)
-        {
-            parts.Add(DescribeIpDelta("−", entry.RemovedCount, entry.RemovedIps));
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.Message))
-        {
-            parts.Add(entry.Message);
-        }
-
-        return SummarizeFirewallDetails(string.Join(" — ", parts));
-    }
-
-    /// <summary>"+3: 1.2.3.4, 5.6.7.8, 9.9.9.9" or "+120: 1.2.3.4, … (+115 more)".
-    /// Entries written by pre-delta collector builds have counts of 0 and render
-    /// no delta segment at all.</summary>
-    private static string DescribeIpDelta(string sign, int totalCount, IReadOnlyList<string> sample)
-    {
-        const int shown = 5;
-        var head = string.Join(", ", sample.Take(shown));
-        var rest = totalCount - Math.Min(shown, sample.Count);
-        return rest > 0
-            ? $"{sign}{totalCount}: {head}, … (+{rest} more)"
-            : $"{sign}{totalCount}: {head}";
-    }
-
-    private void RebuildFirewallHistoryFromDiagnostics(IReadOnlyList<DiagnosticEntryDto> diagnostics)
-    {
-        FirewallHistoryRows.Clear();
-        var firewallEntries = diagnostics
-            .Where(entry =>
-                entry.Category.Contains("Firewall", StringComparison.OrdinalIgnoreCase) ||
-                entry.Message.Contains("firewall", StringComparison.OrdinalIgnoreCase) ||
-                entry.Message.Contains("New-NetFirewallRule", StringComparison.OrdinalIgnoreCase) ||
-                entry.Message.Contains("Remove-NetFirewallRule", StringComparison.OrdinalIgnoreCase))
-            .Take(120)
-            .ToList();
-
-        foreach (var entry in firewallEntries)
-        {
-            FirewallHistoryRows.Add(new DataSourceFirewallHistoryRow
-            {
-                TimeLocal = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
-                Action = ClassifyFirewallAction(entry.Message),
-                Result = ClassifyFirewallResult(entry),
-                Details = SummarizeFirewallDetails(entry.Message)
-            });
-        }
-    }
-
-    private static string ClassifyFirewallAction(string message)
-    {
-        if (message.Contains("apply", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("Applied firewall", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Apply";
-        }
-
-        if (message.Contains("remove", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("Removed firewall", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Remove";
-        }
-
-        if (message.Contains("block", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("dropped", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Block";
-        }
-
-        if (message.Contains("disabled", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Disable";
-        }
-
-        if (message.Contains("elevation", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("administrator", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Privilege";
-        }
-
-        if (message.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("exception", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Error";
-        }
-
-        return "Status";
-    }
-
-    private static string ClassifyFirewallResult(DiagnosticEntryDto entry)
-    {
-        if (entry.Level.Equals("Error", StringComparison.OrdinalIgnoreCase)
-            || entry.Level.Equals("Critical", StringComparison.OrdinalIgnoreCase)
-            || entry.Message.Contains("failed", StringComparison.OrdinalIgnoreCase)
-            || entry.Message.Contains("exception", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Error";
-        }
-
-        if (entry.Message.Contains("elevation", StringComparison.OrdinalIgnoreCase)
-            || entry.Message.Contains("administrator", StringComparison.OrdinalIgnoreCase))
-        {
-            return "Needs admin";
-        }
-
-        return "Info";
-    }
-
-    private static string SummarizeFirewallDetails(string message)
-    {
-        // 400, not 220: delta entries carry IP samples and got clipped at the old cap.
-        var compact = Regex.Replace(message, @"\s+", " ").Trim();
-        if (compact.Length <= 400)
-        {
-            return compact;
-        }
-
-        return compact[..400] + "...";
-    }
-
     /// <summary>
     /// Recomputes the per-tab "unapplied changes" flags by writing the current
     /// UI state into a clone of the working (on-disk, service-facing) config
@@ -2640,51 +1871,16 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
             return;
         }
 
+        // No auto-apply: edits mark the tab as drifted (● + banner) and reach
+        // the collector only through the explicit Apply button. The old 800 ms
+        // debounced auto-apply shared one cancellation token across all four
+        // modules and silently dropped the first tab's change when two tabs
+        // were edited in quick succession.
         if (DraftPersistedPropertyNames.Contains(e.PropertyName))
         {
             PersistDraft();
             UpdateDriftFlags();
         }
-
-        if (EventLogAutoApplyProperties.Contains(e.PropertyName))
-        {
-            ScheduleAutoApply(ApplyEventLogsAsync);
-        }
-        else if (IisAutoApplyProperties.Contains(e.PropertyName))
-        {
-            ScheduleAutoApply(ApplyIisAsync);
-        }
-        else if (MetricsAutoApplyProperties.Contains(e.PropertyName))
-        {
-            ScheduleAutoApply(ApplyMetricsAsync);
-        }
-        else if (HeartbeatAutoApplyProperties.Contains(e.PropertyName))
-        {
-            ScheduleAutoApply(ApplyHeartbeatAsync);
-        }
-    }
-
-    private void ScheduleAutoApply(Func<Task> applyAction)
-    {
-        _autoApplyCts?.Cancel();
-        _autoApplyCts = new CancellationTokenSource();
-        var token = _autoApplyCts.Token;
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await Task.Delay(800, token);
-                if (!token.IsCancellationRequested)
-                {
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(applyAction);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                // debounced
-            }
-        }, token);
     }
 
     private void OnTagItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -2697,6 +1893,7 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         if (e.PropertyName is nameof(TagItemViewModel.Key) or nameof(TagItemViewModel.Value))
         {
             PersistDraft();
+            UpdateDriftFlags();
         }
     }
 
@@ -2710,6 +1907,22 @@ public sealed class DataSourcesPageViewModel : PageViewModelBase
         if (e.PropertyName is nameof(TagItemViewModel.Key) or nameof(TagItemViewModel.Value))
         {
             PersistDraft();
+            UpdateDriftFlags();
+        }
+    }
+
+    /// <summary>After a successful Apply + refresh: if every tab is now in
+    /// sync, drop the draft entirely (nothing left to re-assert); if another
+    /// tab still has pending edits, re-persist so those survive a restart.</summary>
+    private void SettleDraftAfterApply()
+    {
+        if (AnyUnappliedChanges)
+        {
+            PersistDraft();
+        }
+        else
+        {
+            WindowPlacementStore.ClearDataSourcesDraft();
         }
     }
 

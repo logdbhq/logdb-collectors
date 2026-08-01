@@ -463,7 +463,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
 
         var suffix = filterAll
             ? string.Empty
-            : $"  (filtered by source: {string.Join(", ", selectedNames)}, {_allOnlineRows.Count - OnlineConsoleRows.Count} hidden)";
+            : $"  (filtered by module: {string.Join(", ", selectedNames)}, {_allOnlineRows.Count - OnlineConsoleRows.Count} hidden)";
         OnlineStatusText = $"Live tail loaded: {OnlineConsoleRows.Count} line(s).{suffix}";
     }
 

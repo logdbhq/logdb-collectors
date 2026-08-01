@@ -2,46 +2,21 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.OverviewPageView">
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" RowSpacing="10">
-        <StackPanel Orientation="Horizontal" Spacing="10">
-            <Border Classes="softPill">
-                <TextBlock Text="Last 30 days" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
-            </Border>
-        </StackPanel>
-
-        <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" ColumnSpacing="10">
-            <Border Classes="card">
-                <StackPanel Spacing="4">
-                    <TextBlock Classes="cardLabel" Text="Collector Engine" />
-                    <TextBlock Classes="cardValue" Text="{Binding EngineVersion}" />
-                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding EngineSubtitle}" TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="1" Classes="card">
-                <StackPanel Spacing="4">
-                    <TextBlock Classes="cardLabel" Text="Modules" />
-                    <TextBlock Classes="cardValue" Text="{Binding ContainersSummary}" />
-                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding ContainersDetails}" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="2" Classes="card">
-                <StackPanel Spacing="4">
-                    <TextBlock Classes="cardLabel" Text="Resources" />
-                    <TextBlock Classes="cardValue" Text="{Binding ResourcesSummary}" />
-                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}">
-                        <Run Text="Connection: " />
-                        <Run Text="{Binding ConnectionStatus}" />
-                    </TextBlock>
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="3" Classes="card">
-                <StackPanel Spacing="4">
-                    <TextBlock Classes="cardLabel" Text="Storage" />
-                    <TextBlock Classes="cardValue" Text="{Binding StorageSummary}" />
-                    <TextBlock Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding StorageReclaimable}" />
-                </StackPanel>
-            </Border>
-        </Grid>
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="10">
+        <!-- Setup card: shown instead of a wall of zeros when nothing runs. -->
+        <Border Classes="panel" IsVisible="{Binding ShowSetupCard}">
+            <StackPanel Spacing="8">
+                <TextBlock FontSize="18" FontWeight="SemiBold"
+                           Text="No collector is running on this machine" />
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="{DynamicResource SecondaryTextBrushTheme}"
+                           Text="Install the Windows service for production use, or run a console instance for a quick test. Data collection starts as soon as one of them is running." />
+                <Button Classes="accent-success"
+                        Content="Open Service Management"
+                        HorizontalAlignment="Left"
+                        Command="{Binding OpenServiceManagementCommand}" />
+            </StackPanel>
+        </Border>
 
         <Border Grid.Row="2" Classes="panel">
             <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
@@ -57,7 +32,7 @@
             </Grid>
         </Border>
 
-        <Grid Grid.Row="3" ColumnDefinitions="*,*,*,*" ColumnSpacing="10">
+        <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" ColumnSpacing="10">
             <Border Classes="card">
                 <StackPanel HorizontalAlignment="Center">
                     <TextBlock Classes="cardLabel" Text="Total Sent" />
@@ -97,7 +72,7 @@
             </Border>
         </Grid>
 
-        <Border Grid.Row="4" Classes="panel">
+        <Border Grid.Row="3" Classes="panel">
             <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                     <TextBlock Text="Live Resource Usage" FontSize="28" FontWeight="SemiBold" />
@@ -166,7 +141,7 @@
             </Grid>
         </Border>
 
-        <Border Grid.Row="5"
+        <Border Grid.Row="4"
                 x:Name="FailuresPanel"
                 Classes="panel"
                 IsVisible="{Binding IsFailuresVisible}">

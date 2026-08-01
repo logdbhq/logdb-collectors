@@ -1,0 +1,332 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
+             xmlns:vmPages="using:com.logdb.windows.collector.ui.ViewModels.Pages"
+             x:Class="com.logdb.windows.collector.ui.Views.Pages.FirewallPageView">
+    <Grid x:Name="FirewallTabLayout">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" MinWidth="420" />
+            <ColumnDefinition Width="Auto" />
+            <!-- Detail drawer column. Width is managed from code-behind:
+                 0 when closed, the persisted user width when open. -->
+            <ColumnDefinition Width="0" />
+        </Grid.ColumnDefinitions>
+
+        <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
+        <Expander Header="Configuration" IsExpanded="False" HorizontalAlignment="Stretch">
+            <Border Classes="card" Padding="10">
+                <StackPanel Spacing="10">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Firewall Sync" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Pulls public IP-reputation feeds (FireHOL, Tor exits, IPsum, …) on a schedule and turns them into inbound Windows Firewall block rules."
+                                   Classes="muted"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <CheckBox Content="Enable firewall sync"
+                              IsChecked="{Binding FirewallEnabled}" />
+
+                    <CheckBox Content="Dry run (log only, don't touch firewall)"
+                              IsChecked="{Binding FirewallDryRun}"
+                              ToolTip.Tip="Useful for verifying which feeds resolve and how many IPs would be applied, without mutating the host firewall." />
+
+                    <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="8" ColumnSpacing="8">
+                        <TextBlock Text="Poll Interval (s)" VerticalAlignment="Center" />
+                        <NumericUpDown Grid.Column="1" Minimum="10" Maximum="86400" Value="{Binding FirewallPollIntervalSeconds}" />
+
+                        <TextBlock Grid.Row="1" Text="Rule Prefix" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FirewallRuleNamePrefix}" />
+
+                        <TextBlock Grid.Row="2" Text="Whitelist Path" VerticalAlignment="Center" />
+                        <TextBox Grid.Row="2" Grid.Column="1"
+                                 Text="{Binding FirewallWhitelistPath}"
+                                 Watermark="(optional) C:\ProgramData\LogDB\collector\whitelist.txt" />
+                    </Grid>
+
+                    <TextBlock Text="{Binding FirewallBlocklistSummary}" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding FirewallRuntimeStatus}" Classes="muted" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding FirewallHint}" Classes="muted" TextWrapping="Wrap" />
+
+                    <Border Classes="card" Padding="8" Margin="0,6,0,0">
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="LogDB Guard (custom blocklist)" FontWeight="SemiBold" />
+                            <TextBlock Text="Subscribe to the IPs your LogDB Guard instance is blocking (CrowdSec decisions, operator-added entries) and apply them as one extra feed."
+                                       Classes="muted"
+                                       TextWrapping="Wrap" />
+                            <CheckBox Content="Enable Guard subscription"
+                                      IsChecked="{Binding FirewallCustomEnabled}" />
+                            <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                                <TextBlock Text="Display Name" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding FirewallCustomDisplayName}" />
+
+                                <TextBlock Grid.Row="1" Text="Guard URL" VerticalAlignment="Center" />
+                                <TextBox Grid.Row="1" Grid.Column="1"
+                                         Text="{Binding FirewallCustomGuardUrl}"
+                                         Watermark="(empty = discover via DiscoveryUrl) e.g. https://guard.logdb.site" />
+                            </Grid>
+                            <TextBlock Text="Uses LogDB:ApiKey for authentication. Failures (unreachable, unauthenticated) are logged and skipped — they do not stop public feeds from syncing."
+                                       Classes="muted"
+                                       TextWrapping="Wrap"
+                                       FontSize="11" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Classes="card" Padding="8" Margin="0,6,0,0">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <TextBlock Text="Public blocklist feeds" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <Button Grid.Column="1" Content="Add Feed" Command="{Binding AddBlocklistFeedCommand}" />
+                                <Button Grid.Column="2" Content="Remove Selected"
+                                        Command="{Binding RemoveSelectedBlocklistFeedCommand}" />
+                            </Grid>
+                            <TextBlock Text="Each row becomes a Windows Firewall rule named '{Prefix} - {Display Name}'. Toggle Enabled to disable a feed without losing the URL. MinScore filters scored feeds like IPsum (0 = no filter)."
+                                       Classes="muted"
+                                       TextWrapping="Wrap"
+                                       FontSize="11" />
+                            <dgrid:DataGrid ItemsSource="{Binding BlocklistFeeds}"
+                                            SelectedItem="{Binding SelectedBlocklistFeed}"
+                                            AutoGenerateColumns="False"
+                                            CanUserSortColumns="False"
+                                            HeadersVisibility="Column"
+                                            GridLinesVisibility="Horizontal"
+                                            Height="220">
+                                <dgrid:DataGrid.Columns>
+                                    <dgrid:DataGridCheckBoxColumn Header="On" Binding="{Binding Enabled}" Width="50" />
+                                    <dgrid:DataGridTextColumn Header="ID" Binding="{Binding FeedId}" Width="160" />
+                                    <dgrid:DataGridTextColumn Header="Display Name" Binding="{Binding DisplayName}" Width="180" />
+                                    <dgrid:DataGridTextColumn Header="URL" Binding="{Binding Url}" Width="*" />
+                                    <dgrid:DataGridTextColumn Header="MinScore" Binding="{Binding MinScore}" Width="90" />
+                                </dgrid:DataGrid.Columns>
+                            </dgrid:DataGrid>
+                        </StackPanel>
+                    </Border>
+
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                        <Button Content="Apply Firewall Config"
+                                Command="{Binding SaveFirewallConfigCommand}"
+                                IsEnabled="{Binding CanSaveFirewallConfig}" />
+                        <Button Grid.Column="1"
+                                Content="Apply Now"
+                                Command="{Binding ApplyFirewallNowCommand}"
+                                IsEnabled="{Binding CanRemoveFirewallRules}" />
+                        <Button Grid.Column="2"
+                                Content="Remove All Block Rules"
+                                Command="{Binding RemoveFirewallRulesCommand}"
+                                IsEnabled="{Binding CanRemoveFirewallRules}" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Expander>
+
+        <Border Grid.Row="1" Classes="panel">
+            <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                <TextBlock Text="Configuration" Classes="muted" />
+                <TextBlock Grid.Column="1" Text="{Binding FirewallTabSummary}" />
+                <TextBlock Grid.Row="1" Text="Runtime" Classes="muted" />
+                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding FirewallTabRuntime}" />
+            </Grid>
+        </Border>
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
+            <Button Content="Refresh Active Rules"
+                    Command="{Binding RefreshFirewallRulesCommand}"
+                    ToolTip.Tip="Re-read the collector-managed block rules currently applied to the OS firewall." />
+            <Button Content="Blocked IPs"
+                    Command="{Binding OpenFirewallBlockedIpsCommand}"
+                    ToolTip.Tip="Browse every IP/CIDR currently blocked, with the date it was first blocked and the feed that supplied it." />
+            <TextBlock VerticalAlignment="Center"
+                       Classes="muted"
+                       Text="{Binding FirewallRulesSummary}" />
+        </StackPanel>
+
+        <Border Grid.Row="3" Classes="panel">
+            <dgrid:DataGrid x:Name="FirewallRulesDataGrid"
+                            ItemsSource="{Binding FirewallRuleRows}"
+                            SelectedItem="{Binding SelectedFirewallRuleRow, Mode=TwoWay}"
+                            AutoGenerateColumns="False"
+                            IsReadOnly="True"
+                            CanUserSortColumns="False"
+                            CanUserResizeColumns="True"
+                            PointerReleased="FirewallGrid_OnPointerReleased"
+                            DoubleTapped="FirewallRulesDataGrid_OnDoubleTapped"
+                            Height="200">
+                <dgrid:DataGrid.Columns>
+                    <dgrid:DataGridTextColumn Header="Rule" Binding="{Binding DisplayName}" Width="*" />
+                    <dgrid:DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150" />
+                    <dgrid:DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="90" />
+                    <dgrid:DataGridTextColumn Header="IPs" Binding="{Binding IpCount}" Width="80" />
+                    <dgrid:DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
+                    <dgrid:DataGridTextColumn Header="Rule Id" Binding="{Binding Id}" Width="160" />
+                    <dgrid:DataGridTemplateColumn Header="" Width="70" CanUserResize="False">
+                        <dgrid:DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Content="IPs"
+                                        Command="{Binding ViewIpsCommand}"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="Show the full list of IPs/CIDRs this rule blocks right now, read live from the OS firewall." />
+                            </DataTemplate>
+                        </dgrid:DataGridTemplateColumn.CellTemplate>
+                    </dgrid:DataGridTemplateColumn>
+                    <dgrid:DataGridTemplateColumn Header="" Width="90" CanUserResize="False">
+                        <dgrid:DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Content="{Binding DeleteButtonText}"
+                                        Command="{Binding DeleteCommand}"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="Remove this rule from the OS firewall (click twice to confirm). Guard-sourced rules also have their IPs removed from the LogDB backend; public-feed rules re-appear on the next sync." />
+                            </DataTemplate>
+                        </dgrid:DataGridTemplateColumn.CellTemplate>
+                    </dgrid:DataGridTemplateColumn>
+                </dgrid:DataGrid.Columns>
+            </dgrid:DataGrid>
+        </Border>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
+            <Button Content="Refresh Firewall History"
+                    Command="{Binding RefreshFirewallHistoryCommand}"
+                    ToolTip.Tip="Pull the persisted firewall change history from the running collector and rebuild the table below." />
+            <TextBlock VerticalAlignment="Center"
+                       Classes="muted"
+                       Text="History is persisted by the collector and survives service restarts. Double-click a row for full details." />
+        </StackPanel>
+
+        <Border Grid.Row="5" Classes="panel">
+            <dgrid:DataGrid x:Name="FirewallHistoryDataGrid"
+                            ItemsSource="{Binding FirewallHistoryRows}"
+                            SelectedItem="{Binding SelectedFirewallHistoryRow, Mode=TwoWay}"
+                            AutoGenerateColumns="False"
+                            IsReadOnly="True"
+                            CanUserSortColumns="False"
+                            CanUserResizeColumns="True"
+                            PointerReleased="FirewallGrid_OnPointerReleased"
+                            DoubleTapped="FirewallHistoryDataGrid_OnDoubleTapped"
+                            VerticalAlignment="Stretch">
+                <dgrid:DataGrid.Columns>
+                    <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
+                    <dgrid:DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="100" />
+                    <dgrid:DataGridTextColumn Header="Result" Binding="{Binding Result}" Width="100" />
+                    <dgrid:DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*" />
+                    <dgrid:DataGridTemplateColumn Header="" Width="80" CanUserResize="False">
+                        <dgrid:DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <Button Content="Details"
+                                        Command="{Binding OpenDetailsCommand}"
+                                        HorizontalAlignment="Center"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="Open the full entry in the side drawer" />
+                            </DataTemplate>
+                        </dgrid:DataGridTemplateColumn.CellTemplate>
+                    </dgrid:DataGridTemplateColumn>
+                </dgrid:DataGrid.Columns>
+            </dgrid:DataGrid>
+        </Border>
+
+        </Grid>
+
+        <!-- Right-hand detail drawer for a double-clicked history row.
+             Lives in its own column rather than overlaying the page —
+             overlaying made the underlying DataGrid intermittently
+             blank out. Resizable via the splitter; the chosen width
+             persists in user settings across restarts. -->
+        <GridSplitter Grid.Column="1"
+                      Width="6"
+                      IsVisible="{Binding FirewallSidePanelVisible}"
+                      Background="{DynamicResource BorderBrushTheme}"
+                      Opacity="0.4"
+                      Cursor="SizeWestEast"
+                      DragCompleted="FirewallDetailSplitter_OnDragCompleted" />
+
+        <Border x:Name="FirewallDetailDrawer"
+                Grid.Column="2"
+                Classes="detail-panel"
+                IsVisible="{Binding FirewallDetailVisible}"
+                VerticalAlignment="Top"
+                Margin="0,8,8,8">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,*" RowSpacing="6">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                    <TextBlock Text="{Binding FirewallDetailTitle}"
+                               FontWeight="Bold"
+                               TextWrapping="Wrap"
+                               VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Content="Copy"
+                            Click="FirewallDetailCopy_OnClick"
+                            ToolTip.Tip="Copy the full detail, including all sampled IPs, as plain text." />
+                    <Button Grid.Column="2" Content="✕" Command="{Binding CloseFirewallDetailCommand}" ToolTip.Tip="Close" />
+                </Grid>
+
+                <TextBlock Grid.Row="1" Classes="muted" Text="{Binding FirewallDetailTime}" />
+                <TextBlock Grid.Row="2" Text="{Binding FirewallDetailResult}" />
+                <TextBlock Grid.Row="3" Classes="muted" Text="{Binding FirewallDetailMeta}"
+                           IsVisible="{Binding FirewallDetailMeta, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                <TextBlock Grid.Row="4" Text="{Binding FirewallDetailMessage}" TextWrapping="Wrap"
+                           IsVisible="{Binding FirewallDetailMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+                <Grid Grid.Row="5" RowDefinitions="Auto,*" RowSpacing="4"
+                      IsVisible="{Binding FirewallDetailAddedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                    <TextBlock FontWeight="SemiBold" Text="{Binding FirewallDetailAddedHeader}" />
+                    <ListBox Grid.Row="1" ItemsSource="{Binding FirewallDetailAddedIps}"
+                             FontFamily="Consolas,Menlo,monospace" />
+                </Grid>
+
+                <TextBlock Grid.Row="6" FontWeight="SemiBold" Text="{Binding FirewallDetailRemovedHeader}"
+                           IsVisible="{Binding FirewallDetailRemovedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                <ListBox Grid.Row="7" ItemsSource="{Binding FirewallDetailRemovedIps}"
+                         FontFamily="Consolas,Menlo,monospace"
+                         IsVisible="{Binding FirewallDetailRemovedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            </Grid>
+        </Border>
+
+        <!-- Rule IPs drawer: same column, same splitter and persisted
+             width as the history detail drawer; the two are mutually
+             exclusive (opening one closes the other). Opened by the
+             IPs button or double-clicking an Active Rules row. -->
+        <Border x:Name="FirewallIpsDrawer"
+                Grid.Column="2"
+                Classes="detail-panel"
+                IsVisible="{Binding FirewallIpsPanelVisible}"
+                VerticalAlignment="Top"
+                Margin="0,8,8,8">
+            <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                    <TextBlock Text="{Binding FirewallIpsTitle}" FontWeight="Bold"
+                               TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallIpsCommand}" ToolTip.Tip="Close" />
+                </Grid>
+                <TextBox Grid.Row="1" Text="{Binding FirewallIpsFilter, Mode=TwoWay}"
+                         Watermark="Filter — type an IP or CIDR fragment, e.g. 45.155." />
+                <TextBlock Grid.Row="2" Classes="muted" Text="{Binding FirewallIpsCountText}" />
+                <ListBox Grid.Row="3" ItemsSource="{Binding FirewallIpsView}"
+                         FontFamily="Consolas,Menlo,monospace"
+                         MinHeight="160" />
+            </Grid>
+        </Border>
+
+        <!-- Blocked IPs drawer: every currently blocked IP/CIDR with
+             its first-blocked date and source feed, from the
+             collector-maintained index (the OS firewall itself has
+             no per-address dates). Shares the column/splitter/width
+             with the other drawers; mutually exclusive with them. -->
+        <Border x:Name="FirewallBlockedDrawer"
+                Grid.Column="2"
+                Classes="detail-panel"
+                IsVisible="{Binding FirewallBlockedVisible}"
+                VerticalAlignment="Top"
+                Margin="0,8,8,8">
+            <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                    <TextBlock Text="Blocked IPs" FontWeight="Bold" VerticalAlignment="Center" />
+                    <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallBlockedCommand}" ToolTip.Tip="Close" />
+                </Grid>
+                <TextBox Grid.Row="1" Text="{Binding FirewallBlockedFilter, Mode=TwoWay}"
+                         Watermark="Filter — IP/CIDR fragment or feed name, e.g. 45.155. or Tor" />
+                <TextBlock Grid.Row="2" Classes="muted" TextWrapping="Wrap"
+                           Text="{Binding FirewallBlockedCountText}" />
+                <ListBox Grid.Row="3" ItemsSource="{Binding FirewallBlockedRows}"
+                         FontFamily="Consolas,Menlo,monospace"
+                         MinHeight="160" />
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

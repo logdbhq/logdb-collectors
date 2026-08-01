@@ -26,7 +26,7 @@
                 </StackPanel>
 
                 <StackPanel Spacing="3" Margin="0,0,16,8">
-                    <TextBlock Classes="cardLabel" Text="Log type" />
+                    <TextBlock Classes="cardLabel" Text="Module" />
                     <ComboBox MinWidth="130" ItemsSource="{Binding Modules}"
                               SelectedItem="{Binding ModuleFilter, Mode=TwoWay}" />
                 </StackPanel>
@@ -53,7 +53,7 @@
                     <Button Content="Clear Stats"
                             Command="{Binding ClearStatsCommand}"
                             ToolTip.Tip="Zero the Sent/Failed totals and Throughput history on the collector. Does not affect sending — counts restart from zero." />
-                    <CheckBox Content="Auto (10s)" IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
+                    <CheckBox Content="Auto-refresh (10s)" IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
                               VerticalAlignment="Center"
                               ToolTip.Tip="Reload the chart every 10 seconds." />
                 </StackPanel>

@@ -49,12 +49,12 @@
                         </StackPanel>
 
                         <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
-                        <Button Grid.Column="6" Content="Pause"
+                        <Button Grid.Column="6" Content="Pause Collection"
                                 Command="{Binding PauseEventLogCommand}"
                                 IsVisible="{Binding !EventLogPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
                                 ToolTip.Tip="Stop the EventLog module on the running collector (requires the service or console to be running)." />
-                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning"
+                        <Button Grid.Column="6" Content="Resume Collection" Classes="accent-warning"
                                 Command="{Binding ResumeEventLogCommand}"
                                 IsVisible="{Binding EventLogPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
@@ -65,7 +65,7 @@
                                 ToolTip.Tip="Save the EventLog settings to disk and (if a collector is running) push them live without restart."
                                 MinWidth="90">
                             <Panel>
-                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                <TextBlock Text="{Binding EventLogApplyLabel}" VerticalAlignment="Center" HorizontalAlignment="Center"
                                            IsVisible="{Binding !ApplyEventLogsCommand.IsRunning}" />
                                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
                                             IsVisible="{Binding ApplyEventLogsCommand.IsRunning}">
@@ -273,12 +273,12 @@
                         </StackPanel>
 
                         <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
-                        <Button Grid.Column="6" Content="Pause"
+                        <Button Grid.Column="6" Content="Pause Collection"
                                 Command="{Binding PauseIisCommand}"
                                 IsVisible="{Binding !IisPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
                                 ToolTip.Tip="Stop the IIS module on the running collector (requires the service or console to be running)." />
-                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning"
+                        <Button Grid.Column="6" Content="Resume Collection" Classes="accent-warning"
                                 Command="{Binding ResumeIisCommand}"
                                 IsVisible="{Binding IisPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
@@ -289,7 +289,7 @@
                                 ToolTip.Tip="Save the IIS settings to disk and (if a collector is running) push them live without restart."
                                 MinWidth="90">
                             <Panel>
-                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                <TextBlock Text="{Binding IisApplyLabel}" VerticalAlignment="Center" HorizontalAlignment="Center"
                                            IsVisible="{Binding !ApplyIisCommand.IsRunning}" />
                                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
                                             IsVisible="{Binding ApplyIisCommand.IsRunning}">
@@ -344,7 +344,7 @@
                                 <TextBlock Classes="muted"
                                            FontSize="11"
                                            TextWrapping="Wrap"
-                                           Text="Used as the server identifier on every IIS row. Auto-saves on change." />
+                                           Text="Used as the server identifier on every IIS row." />
                             </StackPanel>
                         </Border>
                     </Grid>
@@ -483,12 +483,12 @@
                         </StackPanel>
 
                         <Border Grid.Column="5" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
-                        <Button Grid.Column="6" Content="Pause"
+                        <Button Grid.Column="6" Content="Pause Collection"
                                 Command="{Binding PauseMetricsCommand}"
                                 IsVisible="{Binding !MetricsPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
                                 ToolTip.Tip="Stop the Metrics module on the running collector (requires the service or console to be running)." />
-                        <Button Grid.Column="6" Content="Resume" Classes="accent-warning"
+                        <Button Grid.Column="6" Content="Resume Collection" Classes="accent-warning"
                                 Command="{Binding ResumeMetricsCommand}"
                                 IsVisible="{Binding MetricsPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
@@ -499,7 +499,7 @@
                                 ToolTip.Tip="Save the Metrics settings to disk and (if a collector is running) push them live without restart."
                                 MinWidth="90">
                             <Panel>
-                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                <TextBlock Text="{Binding MetricsApplyLabel}" VerticalAlignment="Center" HorizontalAlignment="Center"
                                            IsVisible="{Binding !ApplyMetricsCommand.IsRunning}" />
                                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
                                             IsVisible="{Binding ApplyMetricsCommand.IsRunning}">
@@ -526,7 +526,7 @@
                                 <TextBlock Classes="muted"
                                            FontSize="11"
                                            TextWrapping="Wrap"
-                                           Text="Used as the server identifier on every metric. Auto-saves on change." />
+                                           Text="Used as the server identifier on every metric." />
                             </StackPanel>
                         </Border>
 
@@ -599,12 +599,12 @@
                         </StackPanel>
 
                         <Border Grid.Column="4" Width="1" Background="{DynamicResource BorderBrushTheme}" Margin="4,4" />
-                        <Button Grid.Column="5" Content="Pause"
+                        <Button Grid.Column="5" Content="Pause Collection"
                                 Command="{Binding PauseHeartbeatCommand}"
                                 IsVisible="{Binding !HeartbeatPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
                                 ToolTip.Tip="Stop the Heartbeat module on the running collector (requires the service or console to be running)." />
-                        <Button Grid.Column="5" Content="Resume" Classes="accent-warning"
+                        <Button Grid.Column="5" Content="Resume Collection" Classes="accent-warning"
                                 Command="{Binding ResumeHeartbeatCommand}"
                                 IsVisible="{Binding HeartbeatPaused}"
                                 IsEnabled="{Binding CollectorConnected}"
@@ -615,7 +615,7 @@
                                 ToolTip.Tip="Save the Heartbeat settings to disk and (if a collector is running) push them live without restart."
                                 MinWidth="90">
                             <Panel>
-                                <TextBlock Text="Apply" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                <TextBlock Text="{Binding HeartbeatApplyLabel}" VerticalAlignment="Center" HorizontalAlignment="Center"
                                            IsVisible="{Binding !ApplyHeartbeatCommand.IsRunning}" />
                                 <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" HorizontalAlignment="Center"
                                             IsVisible="{Binding ApplyHeartbeatCommand.IsRunning}">
@@ -692,216 +692,6 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Firewall">
-                <Grid x:Name="FirewallTabLayout">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" MinWidth="420" />
-                        <ColumnDefinition Width="Auto" />
-                        <!-- Detail drawer column. Width is managed from code-behind:
-                             0 when closed, the persisted user width when open. -->
-                        <ColumnDefinition Width="0" />
-                    </Grid.ColumnDefinitions>
-
-                    <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="8">
-                    <Border Classes="panel">
-                        <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
-                            <TextBlock Text="Configuration" Classes="muted" />
-                            <TextBlock Grid.Column="1" Text="{Binding FirewallTabSummary}" />
-                            <TextBlock Grid.Row="1" Text="Runtime" Classes="muted" />
-                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding FirewallTabRuntime}" />
-                        </Grid>
-                    </Border>
-
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
-                        <Button Content="Refresh Active Rules"
-                                Command="{Binding RefreshFirewallRulesCommand}"
-                                ToolTip.Tip="Re-read the collector-managed block rules currently applied to the OS firewall." />
-                        <Button Content="Blocked IPs"
-                                Command="{Binding OpenFirewallBlockedIpsCommand}"
-                                ToolTip.Tip="Browse every IP/CIDR currently blocked, with the date it was first blocked and the feed that supplied it." />
-                        <TextBlock VerticalAlignment="Center"
-                                   Classes="muted"
-                                   Text="{Binding FirewallRulesSummary}" />
-                    </StackPanel>
-
-                    <Border Grid.Row="2" Classes="panel">
-                        <dgrid:DataGrid x:Name="FirewallRulesDataGrid"
-                                        ItemsSource="{Binding FirewallRuleRows}"
-                                        SelectedItem="{Binding SelectedFirewallRuleRow, Mode=TwoWay}"
-                                        AutoGenerateColumns="False"
-                                        IsReadOnly="True"
-                                        CanUserSortColumns="False"
-                                        CanUserResizeColumns="True"
-                                        PointerReleased="FirewallGrid_OnPointerReleased"
-                                        DoubleTapped="FirewallRulesDataGrid_OnDoubleTapped"
-                                        Height="200">
-                            <dgrid:DataGrid.Columns>
-                                <dgrid:DataGridTextColumn Header="Rule" Binding="{Binding DisplayName}" Width="*" />
-                                <dgrid:DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150" />
-                                <dgrid:DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="90" />
-                                <dgrid:DataGridTextColumn Header="IPs" Binding="{Binding IpCount}" Width="80" />
-                                <dgrid:DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
-                                <dgrid:DataGridTextColumn Header="Rule Id" Binding="{Binding Id}" Width="160" />
-                                <dgrid:DataGridTemplateColumn Header="" Width="70" CanUserResize="False">
-                                    <dgrid:DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Button Content="IPs"
-                                                    Command="{Binding ViewIpsCommand}"
-                                                    HorizontalAlignment="Center"
-                                                    VerticalAlignment="Center"
-                                                    ToolTip.Tip="Show the full list of IPs/CIDRs this rule blocks right now, read live from the OS firewall." />
-                                        </DataTemplate>
-                                    </dgrid:DataGridTemplateColumn.CellTemplate>
-                                </dgrid:DataGridTemplateColumn>
-                                <dgrid:DataGridTemplateColumn Header="" Width="90" CanUserResize="False">
-                                    <dgrid:DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Button Content="Delete"
-                                                    Command="{Binding DeleteCommand}"
-                                                    HorizontalAlignment="Center"
-                                                    VerticalAlignment="Center"
-                                                    ToolTip.Tip="Remove this rule from the OS firewall. Guard-sourced rules also have their IPs removed from the LogDB backend; public-feed rules re-appear on the next sync." />
-                                        </DataTemplate>
-                                    </dgrid:DataGridTemplateColumn.CellTemplate>
-                                </dgrid:DataGridTemplateColumn>
-                            </dgrid:DataGrid.Columns>
-                        </dgrid:DataGrid>
-                    </Border>
-
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
-                        <Button Content="Refresh Firewall History"
-                                Command="{Binding RefreshFirewallHistoryCommand}"
-                                ToolTip.Tip="Pull the persisted firewall change history from the running collector and rebuild the table below." />
-                        <TextBlock VerticalAlignment="Center"
-                                   Classes="muted"
-                                   Text="History is persisted by the collector and survives service restarts." />
-                    </StackPanel>
-
-                    <Border Grid.Row="4" Classes="panel">
-                        <dgrid:DataGrid x:Name="FirewallHistoryDataGrid"
-                                        ItemsSource="{Binding FirewallHistoryRows}"
-                                        SelectedItem="{Binding SelectedFirewallHistoryRow, Mode=TwoWay}"
-                                        AutoGenerateColumns="False"
-                                        IsReadOnly="True"
-                                        CanUserSortColumns="False"
-                                        CanUserResizeColumns="True"
-                                        PointerReleased="FirewallGrid_OnPointerReleased"
-                                        DoubleTapped="FirewallHistoryDataGrid_OnDoubleTapped"
-                                        VerticalAlignment="Stretch">
-                            <dgrid:DataGrid.Columns>
-                                <dgrid:DataGridTextColumn Header="Time" Binding="{Binding TimeLocal}" Width="170" />
-                                <dgrid:DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="100" />
-                                <dgrid:DataGridTextColumn Header="Result" Binding="{Binding Result}" Width="100" />
-                                <dgrid:DataGridTextColumn Header="Details" Binding="{Binding Details}" Width="*" />
-                            </dgrid:DataGrid.Columns>
-                        </dgrid:DataGrid>
-                    </Border>
-
-                    </Grid>
-
-                    <!-- Right-hand detail drawer for a double-clicked history row.
-                         Lives in its own column rather than overlaying the tab —
-                         overlaying made the underlying DataGrid intermittently
-                         blank out. Resizable via the splitter; the chosen width
-                         persists in user settings across restarts. -->
-                    <GridSplitter Grid.Column="1"
-                                  Width="6"
-                                  IsVisible="{Binding FirewallSidePanelVisible}"
-                                  Background="Transparent"
-                                  DragCompleted="FirewallDetailSplitter_OnDragCompleted" />
-
-                    <Border x:Name="FirewallDetailDrawer"
-                            Grid.Column="2"
-                            Classes="detail-panel"
-                            IsVisible="{Binding FirewallDetailVisible}"
-                            VerticalAlignment="Top"
-                            Margin="0,8,8,8">
-                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto,*" RowSpacing="6">
-                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
-                                <TextBlock Text="{Binding FirewallDetailTitle}"
-                                           FontWeight="Bold"
-                                           TextWrapping="Wrap"
-                                           VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="Copy"
-                                        Click="FirewallDetailCopy_OnClick"
-                                        ToolTip.Tip="Copy the full detail, including all sampled IPs, as plain text." />
-                                <Button Grid.Column="2" Content="✕" Command="{Binding CloseFirewallDetailCommand}" />
-                            </Grid>
-
-                            <TextBlock Grid.Row="1" Classes="muted" Text="{Binding FirewallDetailTime}" />
-                            <TextBlock Grid.Row="2" Text="{Binding FirewallDetailResult}" />
-                            <TextBlock Grid.Row="3" Classes="muted" Text="{Binding FirewallDetailMeta}"
-                                       IsVisible="{Binding FirewallDetailMeta, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                            <TextBlock Grid.Row="4" Text="{Binding FirewallDetailMessage}" TextWrapping="Wrap"
-                                       IsVisible="{Binding FirewallDetailMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-
-                            <Grid Grid.Row="5" RowDefinitions="Auto,*" RowSpacing="4"
-                                  IsVisible="{Binding FirewallDetailAddedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                                <TextBlock FontWeight="SemiBold" Text="{Binding FirewallDetailAddedHeader}" />
-                                <ListBox Grid.Row="1" ItemsSource="{Binding FirewallDetailAddedIps}"
-                                         FontFamily="Consolas,Menlo,monospace" />
-                            </Grid>
-
-                            <TextBlock Grid.Row="6" FontWeight="SemiBold" Text="{Binding FirewallDetailRemovedHeader}"
-                                       IsVisible="{Binding FirewallDetailRemovedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                            <ListBox Grid.Row="7" ItemsSource="{Binding FirewallDetailRemovedIps}"
-                                     FontFamily="Consolas,Menlo,monospace"
-                                     IsVisible="{Binding FirewallDetailRemovedHeader, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-                        </Grid>
-                    </Border>
-
-                    <!-- Rule IPs drawer: same column, same splitter and persisted
-                         width as the history detail drawer; the two are mutually
-                         exclusive (opening one closes the other). Opened by the
-                         IPs button or double-clicking an Active Rules row. -->
-                    <Border x:Name="FirewallIpsDrawer"
-                            Grid.Column="2"
-                            Classes="detail-panel"
-                            IsVisible="{Binding FirewallIpsPanelVisible}"
-                            VerticalAlignment="Top"
-                            Margin="0,8,8,8">
-                        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
-                                <TextBlock Text="{Binding FirewallIpsTitle}" FontWeight="Bold"
-                                           TextWrapping="Wrap" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallIpsCommand}" />
-                            </Grid>
-                            <TextBox Grid.Row="1" Text="{Binding FirewallIpsFilter, Mode=TwoWay}"
-                                     Watermark="Filter — type an IP or CIDR fragment, e.g. 45.155." />
-                            <TextBlock Grid.Row="2" Classes="muted" Text="{Binding FirewallIpsCountText}" />
-                            <ListBox Grid.Row="3" ItemsSource="{Binding FirewallIpsView}"
-                                     FontFamily="Consolas,Menlo,monospace"
-                                     MinHeight="160" />
-                        </Grid>
-                    </Border>
-
-                    <!-- Blocked IPs drawer: every currently blocked IP/CIDR with
-                         its first-blocked date and source feed, from the
-                         collector-maintained index (the OS firewall itself has
-                         no per-address dates). Shares the column/splitter/width
-                         with the other drawers; mutually exclusive with them. -->
-                    <Border x:Name="FirewallBlockedDrawer"
-                            Grid.Column="2"
-                            Classes="detail-panel"
-                            IsVisible="{Binding FirewallBlockedVisible}"
-                            VerticalAlignment="Top"
-                            Margin="0,8,8,8">
-                        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
-                                <TextBlock Text="Blocked IPs" FontWeight="Bold" VerticalAlignment="Center" />
-                                <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallBlockedCommand}" />
-                            </Grid>
-                            <TextBox Grid.Row="1" Text="{Binding FirewallBlockedFilter, Mode=TwoWay}"
-                                     Watermark="Filter — IP/CIDR fragment or feed name, e.g. 45.155. or Tor" />
-                            <TextBlock Grid.Row="2" Classes="muted" TextWrapping="Wrap"
-                                       Text="{Binding FirewallBlockedCountText}" />
-                            <ListBox Grid.Row="3" ItemsSource="{Binding FirewallBlockedRows}"
-                                     FontFamily="Consolas,Menlo,monospace"
-                                     MinHeight="160" />
-                        </Grid>
-                    </Border>
-                </Grid>
-            </TabItem>
         </TabControl>
     </Grid>
 </UserControl>
