@@ -1,0 +1,1148 @@
+using System.Collections.ObjectModel;
+using System.Text.RegularExpressions;
+using com.logdb.windows.collector.shared.Contracts;
+using com.logdb.windows.collector.ui.Services;
+using com.logdb.windows.collector.ui.ViewModels.Infrastructure;
+
+namespace com.logdb.windows.collector.ui.ViewModels.Pages;
+
+public sealed class DataSourceFirewallHistoryRow
+{
+    public DataSourceFirewallHistoryRow(Action<DataSourceFirewallHistoryRow> openDetails)
+    {
+        OpenDetailsCommand = new RelayCommand(() => openDetails(this));
+    }
+
+    public string TimeLocal { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string Result { get; set; } = string.Empty;
+    public string Details { get; set; } = string.Empty;
+
+    /// <summary>Full structured entry backing this row — null when the row was
+    /// scraped from diagnostics (older collector fallback), in which case the
+    /// detail drawer only has the display strings to show.</summary>
+    public FirewallRuleHistoryEntryDto? Entry { get; init; }
+
+    /// <summary>Per-row Details button — selects the row and opens the detail
+    /// drawer, same as double-clicking it.</summary>
+    public RelayCommand OpenDetailsCommand { get; }
+}
+
+public sealed class DataSourceFirewallRuleRow : ObservableObject
+{
+    private readonly Func<DataSourceFirewallRuleRow, Task> _deleteAsync;
+    private string _deleteButtonText = "Delete";
+    private bool _isConfirmingDelete;
+    private CancellationTokenSource? _confirmDeleteCts;
+
+    public DataSourceFirewallRuleRow(
+        Func<DataSourceFirewallRuleRow, Task> deleteAsync,
+        Func<DataSourceFirewallRuleRow, Task> viewIpsAsync)
+    {
+        _deleteAsync = deleteAsync;
+        DeleteCommand = new AsyncRelayCommand(HandleDeleteClickAsync);
+        ViewIpsCommand = new AsyncRelayCommand(() => viewIpsAsync(this));
+    }
+
+    public string Id { get; init; } = string.Empty;
+    public string DisplayName { get; init; } = string.Empty;
+    public string Source { get; init; } = string.Empty;
+    public string Direction { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public int IpCount { get; init; }
+    public AsyncRelayCommand DeleteCommand { get; }
+    public AsyncRelayCommand ViewIpsCommand { get; }
+
+    /// <summary>"Delete" normally; "Confirm?" for the 3-second confirmation
+    /// window after the first click.</summary>
+    public string DeleteButtonText
+    {
+        get => _deleteButtonText;
+        private set => SetProperty(ref _deleteButtonText, value);
+    }
+
+    public bool IsConfirmingDelete
+    {
+        get => _isConfirmingDelete;
+        private set => SetProperty(ref _isConfirmingDelete, value);
+    }
+
+    /// <summary>Two-step confirm: the first click arms the button ("Confirm?")
+    /// and starts a 3-second revert timer; a second click within the window
+    /// runs the actual delete.</summary>
+    private async Task HandleDeleteClickAsync()
+    {
+        if (!IsConfirmingDelete)
+        {
+            IsConfirmingDelete = true;
+            DeleteButtonText = "Confirm?";
+
+            _confirmDeleteCts?.Cancel();
+            _confirmDeleteCts = new CancellationTokenSource();
+            var token = _confirmDeleteCts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(3000, token);
+                    if (!token.IsCancellationRequested)
+                    {
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(ResetDeleteConfirmation);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // second click (or a newer arm) cancelled the revert
+                }
+            }, token);
+
+            return;
+        }
+
+        _confirmDeleteCts?.Cancel();
+        ResetDeleteConfirmation();
+        await _deleteAsync(this);
+    }
+
+    private void ResetDeleteConfirmation()
+    {
+        IsConfirmingDelete = false;
+        DeleteButtonText = "Delete";
+    }
+}
+
+public sealed class FirewallPageViewModel : PageViewModelBase
+{
+    private readonly LocalCollectorAdminClient _adminClient;
+    private readonly Action<string, bool> _statusCallback;
+
+    private string _firewallTabSummary = "Firewall: not loaded.";
+    private string _firewallTabRuntime = "Runtime: unavailable.";
+    private string _firewallRulesSummary = "Active rules: not loaded.";
+    private bool _firewallIpsPanelVisible;
+    private string _firewallIpsTitle = string.Empty;
+    private string _firewallIpsFilter = string.Empty;
+    private string _firewallIpsCountText = string.Empty;
+    private List<string> _firewallIpsAll = new();
+    private bool _firewallDetailVisible;
+    private string _firewallDetailTitle = string.Empty;
+    private string _firewallDetailTime = string.Empty;
+    private string _firewallDetailResult = string.Empty;
+    private string _firewallDetailMeta = string.Empty;
+    private string _firewallDetailMessage = string.Empty;
+    private string _firewallDetailAddedHeader = string.Empty;
+    private string _firewallDetailRemovedHeader = string.Empty;
+    private DataSourceFirewallHistoryRow? _selectedFirewallHistoryRow;
+    private DataSourceFirewallRuleRow? _selectedFirewallRuleRow;
+    private bool _firewallBlockedVisible;
+    private string _firewallBlockedFilter = string.Empty;
+    private string _firewallBlockedCountText = string.Empty;
+    private CancellationTokenSource? _firewallBlockedQueryCts;
+    private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
+    private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
+
+    private bool _isAdministrator;
+    private bool _firewallEnabled;
+    private int _firewallPollIntervalSeconds = 900;
+    private string _firewallRuleNamePrefix = "LogDB Firewall";
+    private bool _firewallDryRun;
+    private string _firewallWhitelistPath = string.Empty;
+    private string _firewallBlocklistSummary = "No blocklists loaded.";
+    private bool _firewallCustomEnabled;
+    private string _firewallCustomDisplayName = "LogDB Guard";
+    private string _firewallCustomGuardUrl = string.Empty;
+    private BlocklistFeedRowViewModel? _selectedBlocklistFeed;
+    private string _firewallRuntimeStatus = "Runtime: unavailable.";
+    private string _firewallHint =
+        "Firewall sync periodically fetches public IP-reputation feeds and applies them as inbound block rules.";
+
+    public FirewallPageViewModel(LocalCollectorAdminClient adminClient, Action<string, bool> statusCallback)
+        : base("Firewall")
+    {
+        _adminClient = adminClient;
+        _statusCallback = statusCallback;
+
+        FirewallHistoryRows = new ObservableCollection<DataSourceFirewallHistoryRow>();
+        FirewallRuleRows = new ObservableCollection<DataSourceFirewallRuleRow>();
+        FirewallIpsView = new ObservableCollection<string>();
+        FirewallDetailAddedIps = new ObservableCollection<string>();
+        FirewallDetailRemovedIps = new ObservableCollection<string>();
+        FirewallBlockedRows = new ObservableCollection<string>();
+        BlocklistFeeds = new ObservableCollection<BlocklistFeedRowViewModel>();
+
+        RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
+        RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
+        CloseFirewallIpsCommand = new RelayCommand(() => FirewallIpsPanelVisible = false);
+        CloseFirewallDetailCommand = new RelayCommand(() => FirewallDetailVisible = false);
+        OpenFirewallBlockedIpsCommand = new AsyncRelayCommand(OpenFirewallBlockedIpsAsync);
+        CloseFirewallBlockedCommand = new RelayCommand(() => FirewallBlockedVisible = false);
+
+        SaveFirewallConfigCommand = new AsyncRelayCommand(SaveFirewallConfigAsync);
+        ApplyFirewallNowCommand = new AsyncRelayCommand(ApplyFirewallNowAsync);
+        RemoveFirewallRulesCommand = new AsyncRelayCommand(RemoveFirewallRulesAsync);
+        AddBlocklistFeedCommand = new RelayCommand(AddBlocklistFeed);
+        RemoveSelectedBlocklistFeedCommand = new RelayCommand(RemoveSelectedBlocklistFeed, () => _selectedBlocklistFeed != null);
+    }
+
+    public ObservableCollection<DataSourceFirewallHistoryRow> FirewallHistoryRows { get; }
+    public ObservableCollection<DataSourceFirewallRuleRow> FirewallRuleRows { get; }
+    public ObservableCollection<string> FirewallIpsView { get; }
+    public ObservableCollection<string> FirewallDetailAddedIps { get; }
+    public ObservableCollection<string> FirewallDetailRemovedIps { get; }
+    public ObservableCollection<string> FirewallBlockedRows { get; }
+    public ObservableCollection<BlocklistFeedRowViewModel> BlocklistFeeds { get; }
+
+    public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
+    public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
+    public RelayCommand CloseFirewallIpsCommand { get; }
+    public RelayCommand CloseFirewallDetailCommand { get; }
+    public AsyncRelayCommand OpenFirewallBlockedIpsCommand { get; }
+    public RelayCommand CloseFirewallBlockedCommand { get; }
+
+    public AsyncRelayCommand SaveFirewallConfigCommand { get; }
+    public AsyncRelayCommand ApplyFirewallNowCommand { get; }
+    public AsyncRelayCommand RemoveFirewallRulesCommand { get; }
+    public RelayCommand AddBlocklistFeedCommand { get; }
+    public RelayCommand RemoveSelectedBlocklistFeedCommand { get; }
+
+    public string FirewallTabSummary
+    {
+        get => _firewallTabSummary;
+        set => SetProperty(ref _firewallTabSummary, value);
+    }
+
+    public string FirewallTabRuntime
+    {
+        get => _firewallTabRuntime;
+        set => SetProperty(ref _firewallTabRuntime, value);
+    }
+
+    public string FirewallRulesSummary
+    {
+        get => _firewallRulesSummary;
+        set => SetProperty(ref _firewallRulesSummary, value);
+    }
+
+    public bool FirewallIpsPanelVisible
+    {
+        get => _firewallIpsPanelVisible;
+        set
+        {
+            if (SetProperty(ref _firewallIpsPanelVisible, value))
+            {
+                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
+            }
+        }
+    }
+
+    /// <summary>True when any right-hand drawer (history detail, rule IPs, or
+    /// blocked-IP list) is open — drives the shared drawer column and splitter.</summary>
+    public bool FirewallSidePanelVisible => _firewallDetailVisible || _firewallIpsPanelVisible || _firewallBlockedVisible;
+
+    public bool FirewallBlockedVisible
+    {
+        get => _firewallBlockedVisible;
+        set
+        {
+            if (SetProperty(ref _firewallBlockedVisible, value))
+            {
+                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
+            }
+        }
+    }
+
+    public string FirewallBlockedFilter
+    {
+        get => _firewallBlockedFilter;
+        set
+        {
+            if (SetProperty(ref _firewallBlockedFilter, value))
+            {
+                ScheduleFirewallBlockedQuery();
+            }
+        }
+    }
+
+    public string FirewallBlockedCountText
+    {
+        get => _firewallBlockedCountText;
+        set => SetProperty(ref _firewallBlockedCountText, value);
+    }
+
+    public string FirewallIpsTitle
+    {
+        get => _firewallIpsTitle;
+        set => SetProperty(ref _firewallIpsTitle, value);
+    }
+
+    public string FirewallIpsFilter
+    {
+        get => _firewallIpsFilter;
+        set
+        {
+            if (SetProperty(ref _firewallIpsFilter, value))
+            {
+                RefilterFirewallIps();
+            }
+        }
+    }
+
+    public string FirewallIpsCountText
+    {
+        get => _firewallIpsCountText;
+        set => SetProperty(ref _firewallIpsCountText, value);
+    }
+
+    public bool FirewallDetailVisible
+    {
+        get => _firewallDetailVisible;
+        set
+        {
+            if (SetProperty(ref _firewallDetailVisible, value))
+            {
+                NotifyPropertyChanged(nameof(FirewallSidePanelVisible));
+            }
+        }
+    }
+
+    public string FirewallDetailTitle
+    {
+        get => _firewallDetailTitle;
+        set => SetProperty(ref _firewallDetailTitle, value);
+    }
+
+    public string FirewallDetailTime
+    {
+        get => _firewallDetailTime;
+        set => SetProperty(ref _firewallDetailTime, value);
+    }
+
+    public string FirewallDetailResult
+    {
+        get => _firewallDetailResult;
+        set => SetProperty(ref _firewallDetailResult, value);
+    }
+
+    public string FirewallDetailMeta
+    {
+        get => _firewallDetailMeta;
+        set => SetProperty(ref _firewallDetailMeta, value);
+    }
+
+    public string FirewallDetailMessage
+    {
+        get => _firewallDetailMessage;
+        set => SetProperty(ref _firewallDetailMessage, value);
+    }
+
+    public string FirewallDetailAddedHeader
+    {
+        get => _firewallDetailAddedHeader;
+        set => SetProperty(ref _firewallDetailAddedHeader, value);
+    }
+
+    public string FirewallDetailRemovedHeader
+    {
+        get => _firewallDetailRemovedHeader;
+        set => SetProperty(ref _firewallDetailRemovedHeader, value);
+    }
+
+    public DataSourceFirewallHistoryRow? SelectedFirewallHistoryRow
+    {
+        get => _selectedFirewallHistoryRow;
+        set => SetProperty(ref _selectedFirewallHistoryRow, value);
+    }
+
+    public DataSourceFirewallRuleRow? SelectedFirewallRuleRow
+    {
+        get => _selectedFirewallRuleRow;
+        set => SetProperty(ref _selectedFirewallRuleRow, value);
+    }
+
+    public bool IsAdministrator
+    {
+        get => _isAdministrator;
+        private set
+        {
+            if (!SetProperty(ref _isAdministrator, value))
+            {
+                return;
+            }
+
+            NotifyPropertyChanged(nameof(CanSaveFirewallConfig));
+            NotifyPropertyChanged(nameof(CanRemoveFirewallRules));
+        }
+    }
+
+    public bool FirewallEnabled
+    {
+        get => _firewallEnabled;
+        set => SetProperty(ref _firewallEnabled, value);
+    }
+
+    public int FirewallPollIntervalSeconds
+    {
+        get => _firewallPollIntervalSeconds;
+        set => SetProperty(ref _firewallPollIntervalSeconds, value);
+    }
+
+    public string FirewallRuleNamePrefix
+    {
+        get => _firewallRuleNamePrefix;
+        set => SetProperty(ref _firewallRuleNamePrefix, value);
+    }
+
+    public bool FirewallDryRun
+    {
+        get => _firewallDryRun;
+        set => SetProperty(ref _firewallDryRun, value);
+    }
+
+    public string FirewallWhitelistPath
+    {
+        get => _firewallWhitelistPath;
+        set => SetProperty(ref _firewallWhitelistPath, value);
+    }
+
+    public string FirewallBlocklistSummary
+    {
+        get => _firewallBlocklistSummary;
+        private set => SetProperty(ref _firewallBlocklistSummary, value);
+    }
+
+    public bool FirewallCustomEnabled
+    {
+        get => _firewallCustomEnabled;
+        set => SetProperty(ref _firewallCustomEnabled, value);
+    }
+
+    public string FirewallCustomDisplayName
+    {
+        get => _firewallCustomDisplayName;
+        set => SetProperty(ref _firewallCustomDisplayName, value);
+    }
+
+    public string FirewallCustomGuardUrl
+    {
+        get => _firewallCustomGuardUrl;
+        set => SetProperty(ref _firewallCustomGuardUrl, value);
+    }
+
+    public BlocklistFeedRowViewModel? SelectedBlocklistFeed
+    {
+        get => _selectedBlocklistFeed;
+        set
+        {
+            if (SetProperty(ref _selectedBlocklistFeed, value))
+                RemoveSelectedBlocklistFeedCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public string FirewallRuntimeStatus
+    {
+        get => _firewallRuntimeStatus;
+        private set => SetProperty(ref _firewallRuntimeStatus, value);
+    }
+
+    public string FirewallHint
+    {
+        get => _firewallHint;
+        private set => SetProperty(ref _firewallHint, value);
+    }
+
+    public bool CanSaveFirewallConfig => _adminClient.SelectedTarget != null;
+    public bool CanRemoveFirewallRules => CanSaveFirewallConfig && IsAdministrator;
+
+    public override async Task RefreshAsync()
+    {
+        IsAdministrator = ServiceControl.IsAdministrator();
+
+        RefreshFirewallConfig();
+        await RefreshFirewallSummaryAsync();
+        await RefreshFirewallHistoryAsync();
+        await RefreshFirewallRulesAsync();
+
+        NotifyPropertyChanged(nameof(CanSaveFirewallConfig));
+        NotifyPropertyChanged(nameof(CanRemoveFirewallRules));
+    }
+
+    /// <summary>Loads the firewall section of the working config into the
+    /// editable configuration properties (moved from Service Management).</summary>
+    private void RefreshFirewallConfig()
+    {
+        var config = _adminClient.SnapshotWorkingConfig();
+        FirewallEnabled = config.Firewall.Enabled;
+        FirewallPollIntervalSeconds = config.Firewall.PollIntervalSeconds;
+        FirewallRuleNamePrefix = config.Firewall.RuleNamePrefix;
+        FirewallDryRun = config.Firewall.DryRun;
+        FirewallWhitelistPath = config.Firewall.WhitelistPath;
+        FirewallCustomEnabled = config.Firewall.CustomBlocklist.Enabled;
+        FirewallCustomDisplayName = string.IsNullOrWhiteSpace(config.Firewall.CustomBlocklist.DisplayName)
+            ? "LogDB Guard"
+            : config.Firewall.CustomBlocklist.DisplayName;
+        FirewallCustomGuardUrl = config.Firewall.CustomBlocklist.GuardUrl;
+        LoadBlocklistFeedsFromConfig(config.Firewall.PublicBlocklists);
+        var enabledFeedCount = BlocklistFeeds.Count(row => row.Enabled);
+        FirewallBlocklistSummary = enabledFeedCount == 0
+            ? (FirewallCustomEnabled ? "No public blocklists enabled (Guard only)." : "No blocklists enabled.")
+            : $"{enabledFeedCount} public blocklist(s) enabled"
+              + (FirewallCustomEnabled ? " + LogDB Guard." : ".");
+
+        FirewallHint = FirewallEnabled
+            ? "Firewall sync is active. Blocked IPs from LogDB will be applied as inbound block rules."
+            : "Enable firewall sync to automatically block malicious IPs detected by LogDB Guard.";
+    }
+
+    private async Task OpenFirewallBlockedIpsAsync()
+    {
+        FirewallDetailVisible = false;      // the drawers share one column
+        FirewallIpsPanelVisible = false;
+        FirewallBlockedVisible = true;
+        await RefreshFirewallBlockedIpsAsync();
+    }
+
+    /// <summary>Filter keystrokes re-query the service; debounced so a fast
+    /// typist causes one pipe round-trip, not one per character.</summary>
+    private void ScheduleFirewallBlockedQuery()
+    {
+        if (!FirewallBlockedVisible)
+        {
+            return;
+        }
+
+        _firewallBlockedQueryCts?.Cancel();
+        _firewallBlockedQueryCts = new CancellationTokenSource();
+        var token = _firewallBlockedQueryCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(350, token);
+                if (!token.IsCancellationRequested)
+                {
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(RefreshFirewallBlockedIpsAsync);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // debounced
+            }
+        }, token);
+    }
+
+    private async Task RefreshFirewallBlockedIpsAsync()
+    {
+        try
+        {
+            var result = await _adminClient.GetFirewallBlockedIpsAsync(FirewallBlockedFilter, 500);
+            FirewallBlockedRows.Clear();
+
+            if (result == null)
+            {
+                FirewallBlockedCountText = "Not available — the running collector predates the blocked-IP index (update the service).";
+                return;
+            }
+
+            foreach (var entry in result.Entries)
+            {
+                FirewallBlockedRows.Add(
+                    $"{entry.Ip}   ·   {entry.BlockedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}   ·   {entry.Source}");
+            }
+
+            FirewallBlockedCountText = result.Matched > result.Entries.Count
+                ? $"showing first {result.Entries.Count} of {result.Matched} matched ({result.Total} blocked in total) — refine the filter"
+                : $"{result.Matched} shown · {result.Total} blocked in total";
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Blocked IPs refresh failed: {ex.Message}", false);
+        }
+    }
+
+    /// <summary>Double-click entry point on the Active Rules grid — same as the
+    /// row's IPs button.</summary>
+    public async Task OpenSelectedFirewallRuleIpsAsync()
+    {
+        var row = SelectedFirewallRuleRow;
+        if (row != null)
+        {
+            await ViewFirewallRuleIpsAsync(row);
+        }
+    }
+
+    /// <summary>Fills and shows the detail drawer for the selected history row
+    /// (invoked by the view on double-click or the row's Details button).</summary>
+    public void OpenFirewallHistoryDetail()
+    {
+        var row = SelectedFirewallHistoryRow;
+        if (row == null)
+        {
+            return;
+        }
+
+        FirewallDetailAddedIps.Clear();
+        FirewallDetailRemovedIps.Clear();
+
+        if (row.Entry is { } entry)
+        {
+            FirewallDetailTitle = $"{DescribeFirewallHistoryAction(entry.Action)}" +
+                                  (string.IsNullOrWhiteSpace(entry.RuleName) ? "" : $" — {entry.RuleName}");
+            FirewallDetailTime = $"{entry.TimestampUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} local · {entry.TimestampUtc:yyyy-MM-dd HH:mm:ss} UTC";
+            FirewallDetailResult = entry.Success ? (entry.DryRun ? "Dry run — firewall untouched" : "OK") : "Error";
+            var meta = new List<string>();
+            if (!string.IsNullOrWhiteSpace(entry.Source)) meta.Add($"source: {entry.Source}");
+            if (entry.IpCount > 0) meta.Add($"{entry.IpCount} IPs in rule");
+            FirewallDetailMeta = string.Join(" · ", meta);
+            FirewallDetailMessage = entry.Message;
+
+            FirewallDetailAddedHeader = BuildDeltaHeader("Added", entry.AddedCount, entry.AddedIps.Count);
+            FirewallDetailRemovedHeader = BuildDeltaHeader("Removed", entry.RemovedCount, entry.RemovedIps.Count);
+            foreach (var ip in entry.AddedIps) FirewallDetailAddedIps.Add(ip);
+            foreach (var ip in entry.RemovedIps) FirewallDetailRemovedIps.Add(ip);
+        }
+        else
+        {
+            // Diagnostics-scraped row (older collector) — display strings only.
+            FirewallDetailTitle = row.Action;
+            FirewallDetailTime = $"{row.TimeLocal} local";
+            FirewallDetailResult = row.Result;
+            FirewallDetailMeta = string.Empty;
+            FirewallDetailMessage = row.Details;
+            FirewallDetailAddedHeader = string.Empty;
+            FirewallDetailRemovedHeader = string.Empty;
+        }
+
+        FirewallIpsPanelVisible = false;   // the drawers share one column
+        FirewallBlockedVisible = false;
+        FirewallDetailVisible = true;
+    }
+
+    private static string BuildDeltaHeader(string label, int totalCount, int sampleCount)
+    {
+        if (totalCount <= 0) return string.Empty;
+        return totalCount > sampleCount
+            ? $"{label} — {totalCount} (sample of first {sampleCount})"
+            : $"{label} — {totalCount}";
+    }
+
+    /// <summary>Plain-text rendering of the open detail drawer for the Copy button.</summary>
+    public string BuildFirewallDetailClipboardText()
+    {
+        var lines = new List<string>
+        {
+            FirewallDetailTitle,
+            FirewallDetailTime,
+            $"Result: {FirewallDetailResult}"
+        };
+        if (!string.IsNullOrWhiteSpace(FirewallDetailMeta)) lines.Add(FirewallDetailMeta);
+        if (!string.IsNullOrWhiteSpace(FirewallDetailMessage)) lines.Add($"Message: {FirewallDetailMessage}");
+        if (!string.IsNullOrWhiteSpace(FirewallDetailAddedHeader))
+        {
+            lines.Add(string.Empty);
+            lines.Add(FirewallDetailAddedHeader);
+            lines.AddRange(FirewallDetailAddedIps);
+        }
+        if (!string.IsNullOrWhiteSpace(FirewallDetailRemovedHeader))
+        {
+            lines.Add(string.Empty);
+            lines.Add(FirewallDetailRemovedHeader);
+            lines.AddRange(FirewallDetailRemovedIps);
+        }
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private async Task RefreshFirewallSummaryAsync()
+    {
+        var firewall = _adminClient.SnapshotWorkingConfig().Firewall;
+        FirewallTabSummary = firewall.Enabled
+            ? $"Firewall sync enabled (every {firewall.PollIntervalSeconds}s, prefix: {firewall.RuleNamePrefix})"
+            : "Firewall sync disabled";
+
+        var status = await _adminClient.GetStatusAsync();
+        var firewallModule = status?.Modules
+            .FirstOrDefault(module => module.Name.Equals("Firewall", StringComparison.OrdinalIgnoreCase));
+        if (firewallModule == null)
+        {
+            FirewallTabRuntime = "Runtime: unavailable.";
+            FirewallRuntimeStatus = "Runtime: unavailable.";
+            return;
+        }
+
+        var runtime = string.IsNullOrWhiteSpace(firewallModule.LastError)
+            ? $"Runtime: {firewallModule.State}"
+            : $"Runtime: {firewallModule.State} ({firewallModule.LastError})";
+        FirewallTabRuntime = runtime;
+        FirewallRuntimeStatus = runtime;
+    }
+
+    private async Task RefreshFirewallHistoryAsync()
+    {
+        if (_adminClient.SelectedTarget == null)
+        {
+            FirewallHistoryRows.Clear();
+            await RefreshFirewallSummaryAsync();
+            return;
+        }
+
+        if (!await _firewallHistoryRefreshLock.WaitAsync(0))
+        {
+            return;
+        }
+
+        try
+        {
+            var structured = await _adminClient.GetFirewallHistoryAsync(200);
+            if (structured != null)
+            {
+                RebuildFirewallHistory(structured);
+            }
+            else
+            {
+                // Service predates the firewall-history command — fall back to
+                // scraping the diagnostics ring like the UI always used to.
+                var diagnostics = (await _adminClient.GetDiagnosticsAsync(500))
+                    .OrderByDescending(entry => entry.TimestampUtc)
+                    .ToList();
+                RebuildFirewallHistoryFromDiagnostics(diagnostics);
+            }
+
+            await RefreshFirewallSummaryAsync();
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Firewall history refresh failed: {ex.Message}", false);
+        }
+        finally
+        {
+            _firewallHistoryRefreshLock.Release();
+        }
+    }
+
+    private async Task RefreshFirewallRulesAsync()
+    {
+        if (_adminClient.SelectedTarget == null)
+        {
+            FirewallRuleRows.Clear();
+            FirewallRulesSummary = "Active rules: no collector instance selected.";
+            return;
+        }
+
+        if (!await _firewallRulesRefreshLock.WaitAsync(0))
+        {
+            return;
+        }
+
+        try
+        {
+            var (rules, error, unsupported) = await _adminClient.GetFirewallRulesAsync();
+            FirewallRuleRows.Clear();
+
+            if (rules == null)
+            {
+                FirewallRulesSummary = unsupported
+                    ? "Active rules: the running collector does not support rule listing (update the service)."
+                    : $"Active rules: refresh failed — {error}";
+                return;
+            }
+
+            foreach (var rule in rules.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase))
+            {
+                FirewallRuleRows.Add(new DataSourceFirewallRuleRow(DeleteFirewallRuleAsync, ViewFirewallRuleIpsAsync)
+                {
+                    Id = rule.Id,
+                    DisplayName = rule.DisplayName,
+                    Source = rule.Source,
+                    Direction = rule.Direction,
+                    IpCount = rule.IpCount,
+                    Status = (rule.Enabled ? "Enabled" : "Disabled") + (rule.Legacy ? " (legacy)" : "")
+                });
+            }
+
+            var totalIps = rules.Sum(r => r.IpCount);
+            FirewallRulesSummary = rules.Count == 0
+                ? "Active rules: none applied to the OS firewall."
+                : $"Active rules: {rules.Count} rule(s) blocking {totalIps:N0} IPs/CIDRs, read live from the OS firewall.";
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Firewall rules refresh failed: {ex.Message}", false);
+        }
+        finally
+        {
+            _firewallRulesRefreshLock.Release();
+        }
+    }
+
+    private async Task ViewFirewallRuleIpsAsync(DataSourceFirewallRuleRow row)
+    {
+        try
+        {
+            var (success, message, rule) = await _adminClient.GetFirewallRuleIpsAsync(row.Id);
+            if (!success || rule == null)
+            {
+                _statusCallback(message, false);
+                return;
+            }
+
+            _firewallIpsAll = rule.Ips;
+            FirewallIpsTitle = $"{rule.DisplayName} — {rule.Ips.Count} IPs/CIDRs";
+            FirewallIpsFilter = string.Empty;
+            RefilterFirewallIps();
+            FirewallDetailVisible = false;   // the drawers share one column
+            FirewallBlockedVisible = false;
+            FirewallIpsPanelVisible = true;
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Failed to load IPs for '{row.DisplayName}': {ex.Message}", false);
+        }
+    }
+
+    private void RefilterFirewallIps()
+    {
+        // Cap the rendered list: a 5000-row ListBox is pointless to scroll and
+        // slow to build — the filter box is the way to find a specific address.
+        const int maxShown = 500;
+        var filter = _firewallIpsFilter.Trim();
+        var matches = string.IsNullOrEmpty(filter)
+            ? _firewallIpsAll
+            : _firewallIpsAll.Where(ip => ip.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        FirewallIpsView.Clear();
+        foreach (var ip in matches.Take(maxShown))
+        {
+            FirewallIpsView.Add(ip);
+        }
+
+        FirewallIpsCountText = matches.Count <= maxShown
+            ? $"{matches.Count} shown"
+            : $"showing first {maxShown} of {matches.Count} — refine the filter";
+    }
+
+    private async Task DeleteFirewallRuleAsync(DataSourceFirewallRuleRow row)
+    {
+        try
+        {
+            var (success, message) = await _adminClient.DeleteFirewallRuleAsync(row.Id, removeFromBackend: true);
+            _statusCallback(message, success);
+
+            if (success)
+            {
+                await RefreshFirewallRulesAsync();
+                await RefreshFirewallHistoryAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _statusCallback($"Delete failed for '{row.DisplayName}': {ex.Message}", false);
+        }
+    }
+
+    private void RebuildFirewallHistory(IReadOnlyList<FirewallRuleHistoryEntryDto> entries)
+    {
+        FirewallHistoryRows.Clear();
+        foreach (var entry in entries)
+        {
+            FirewallHistoryRows.Add(new DataSourceFirewallHistoryRow(OpenHistoryRowDetail)
+            {
+                TimeLocal = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                Action = DescribeFirewallHistoryAction(entry.Action),
+                Result = entry.Success ? (entry.DryRun ? "Dry run" : "OK") : "Error",
+                Details = DescribeFirewallHistoryDetails(entry),
+                Entry = entry
+            });
+        }
+    }
+
+    /// <summary>Callback for a history row's Details button: select the row,
+    /// then open the same drawer double-click uses.</summary>
+    private void OpenHistoryRowDetail(DataSourceFirewallHistoryRow row)
+    {
+        SelectedFirewallHistoryRow = row;
+        OpenFirewallHistoryDetail();
+    }
+
+    private static string DescribeFirewallHistoryAction(string action) => action switch
+    {
+        FirewallHistoryActions.RuleCreated => "Rule created",
+        FirewallHistoryActions.RuleUpdated => "Rule updated",
+        FirewallHistoryActions.RuleRemoved => "Rule removed",
+        FirewallHistoryActions.SyncCompleted => "Sync",
+        FirewallHistoryActions.SyncFailed => "Sync failed",
+        FirewallHistoryActions.RemoveAll => "Remove all",
+        _ => action
+    };
+
+    private static string DescribeFirewallHistoryDetails(FirewallRuleHistoryEntryDto entry)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(entry.RuleName))
+        {
+            parts.Add(entry.IpCount > 0 ? $"{entry.RuleName} ({entry.IpCount} IPs)" : entry.RuleName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Source) &&
+            !string.Equals(entry.Source, entry.RuleName, StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add($"source: {entry.Source}");
+        }
+
+        if (entry.AddedCount > 0)
+        {
+            parts.Add(DescribeIpDelta("+", entry.AddedCount, entry.AddedIps));
+        }
+
+        if (entry.RemovedCount > 0)
+        {
+            parts.Add(DescribeIpDelta("−", entry.RemovedCount, entry.RemovedIps));
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Message))
+        {
+            parts.Add(entry.Message);
+        }
+
+        return SummarizeFirewallDetails(string.Join(" — ", parts));
+    }
+
+    /// <summary>"+3: 1.2.3.4, 5.6.7.8, 9.9.9.9" or "+120: 1.2.3.4, … (+115 more)".
+    /// Entries written by pre-delta collector builds have counts of 0 and render
+    /// no delta segment at all.</summary>
+    private static string DescribeIpDelta(string sign, int totalCount, IReadOnlyList<string> sample)
+    {
+        const int shown = 5;
+        var head = string.Join(", ", sample.Take(shown));
+        var rest = totalCount - Math.Min(shown, sample.Count);
+        return rest > 0
+            ? $"{sign}{totalCount}: {head}, … (+{rest} more)"
+            : $"{sign}{totalCount}: {head}";
+    }
+
+    private void RebuildFirewallHistoryFromDiagnostics(IReadOnlyList<DiagnosticEntryDto> diagnostics)
+    {
+        FirewallHistoryRows.Clear();
+        var firewallEntries = diagnostics
+            .Where(entry =>
+                entry.Category.Contains("Firewall", StringComparison.OrdinalIgnoreCase) ||
+                entry.Message.Contains("firewall", StringComparison.OrdinalIgnoreCase) ||
+                entry.Message.Contains("New-NetFirewallRule", StringComparison.OrdinalIgnoreCase) ||
+                entry.Message.Contains("Remove-NetFirewallRule", StringComparison.OrdinalIgnoreCase))
+            .Take(120)
+            .ToList();
+
+        foreach (var entry in firewallEntries)
+        {
+            FirewallHistoryRows.Add(new DataSourceFirewallHistoryRow(OpenHistoryRowDetail)
+            {
+                TimeLocal = entry.TimestampUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                Action = ClassifyFirewallAction(entry.Message),
+                Result = ClassifyFirewallResult(entry),
+                Details = SummarizeFirewallDetails(entry.Message)
+            });
+        }
+    }
+
+    private static string ClassifyFirewallAction(string message)
+    {
+        if (message.Contains("apply", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Applied firewall", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Apply";
+        }
+
+        if (message.Contains("remove", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Removed firewall", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Remove";
+        }
+
+        if (message.Contains("block", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("dropped", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Block";
+        }
+
+        if (message.Contains("disabled", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Disable";
+        }
+
+        if (message.Contains("elevation", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("administrator", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Privilege";
+        }
+
+        if (message.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("exception", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Error";
+        }
+
+        return "Status";
+    }
+
+    private static string ClassifyFirewallResult(DiagnosticEntryDto entry)
+    {
+        if (entry.Level.Equals("Error", StringComparison.OrdinalIgnoreCase)
+            || entry.Level.Equals("Critical", StringComparison.OrdinalIgnoreCase)
+            || entry.Message.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || entry.Message.Contains("exception", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Error";
+        }
+
+        if (entry.Message.Contains("elevation", StringComparison.OrdinalIgnoreCase)
+            || entry.Message.Contains("administrator", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Needs admin";
+        }
+
+        return "Info";
+    }
+
+    private static string SummarizeFirewallDetails(string message)
+    {
+        // 400, not 220: delta entries carry IP samples and got clipped at the old cap.
+        var compact = Regex.Replace(message, @"\s+", " ").Trim();
+        if (compact.Length <= 400)
+        {
+            return compact;
+        }
+
+        return compact[..400] + "...";
+    }
+
+    private async Task SaveFirewallConfigAsync()
+    {
+        if (_adminClient.SelectedTarget == null)
+        {
+            _statusCallback("No local collector target selected.", false);
+            return;
+        }
+
+        var config = _adminClient.SnapshotWorkingConfig();
+        config.Firewall.Enabled = FirewallEnabled;
+        config.Firewall.PollIntervalSeconds = Math.Max(10, FirewallPollIntervalSeconds);
+        config.Firewall.RuleNamePrefix = string.IsNullOrWhiteSpace(FirewallRuleNamePrefix)
+            ? "LogDB Firewall"
+            : FirewallRuleNamePrefix.Trim();
+        config.Firewall.DryRun = FirewallDryRun;
+        config.Firewall.WhitelistPath = FirewallWhitelistPath?.Trim() ?? string.Empty;
+        config.Firewall.CustomBlocklist.Enabled = FirewallCustomEnabled;
+        config.Firewall.CustomBlocklist.DisplayName = string.IsNullOrWhiteSpace(FirewallCustomDisplayName)
+            ? "LogDB Guard"
+            : FirewallCustomDisplayName.Trim();
+        config.Firewall.CustomBlocklist.GuardUrl = FirewallCustomGuardUrl?.Trim() ?? string.Empty;
+        config.Firewall.PublicBlocklists = WriteBlocklistFeedsToConfig();
+
+        var result = await _adminClient.ApplyConfigAsync(config);
+        _statusCallback(result.Success ? "Firewall configuration saved." : result.Message, result.Success);
+        await RefreshAsync();
+    }
+
+    private async Task ApplyFirewallNowAsync()
+    {
+        if (!EnsureAdmin("Applying firewall rules"))
+        {
+            return;
+        }
+
+        var apply = await _adminClient.ApplyFirewallAsync();
+        _statusCallback(apply.Message, apply.Success);
+        await RefreshAsync();
+    }
+
+    private async Task RemoveFirewallRulesAsync()
+    {
+        if (!EnsureAdmin("Removing firewall rules"))
+        {
+            return;
+        }
+
+        var remove = await _adminClient.RemoveFirewallAsync();
+        _statusCallback(remove.Message, remove.Success);
+        await RefreshAsync();
+    }
+
+    private void LoadBlocklistFeedsFromConfig(Dictionary<string, PublicBlocklistFeedDto> source)
+    {
+        // Empty = feeds never configured; show the stock defaults the service
+        // will actually sync with (see FirewallDefaults), so what the operator
+        // sees matches what runs — and saving persists them into the config.
+        if (source.Count == 0)
+        {
+            source = FirewallDefaults.CreatePublicBlocklists();
+        }
+
+        BlocklistFeeds.Clear();
+        foreach (var (feedId, feed) in source.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            BlocklistFeeds.Add(new BlocklistFeedRowViewModel
+            {
+                FeedId = feedId,
+                DisplayName = feed.DisplayName,
+                Url = feed.Url,
+                Enabled = feed.Enabled,
+                MinScore = feed.MinScore
+            });
+        }
+        SelectedBlocklistFeed = null;
+    }
+
+    private Dictionary<string, PublicBlocklistFeedDto> WriteBlocklistFeedsToConfig()
+    {
+        // Last-write-wins on duplicate IDs (typical when a row is edited mid-rename).
+        // Skip rows with no ID or no URL — those are half-typed entries we don't want
+        // to round-trip through the wire format.
+        var result = new Dictionary<string, PublicBlocklistFeedDto>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in BlocklistFeeds)
+        {
+            var id = (row.FeedId ?? string.Empty).Trim();
+            var url = (row.Url ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(url)) continue;
+            result[id] = new PublicBlocklistFeedDto
+            {
+                Enabled = row.Enabled,
+                DisplayName = (row.DisplayName ?? string.Empty).Trim(),
+                Url = url,
+                MinScore = Math.Max(0, row.MinScore)
+            };
+        }
+        return result;
+    }
+
+    private void AddBlocklistFeed()
+    {
+        var row = new BlocklistFeedRowViewModel
+        {
+            FeedId = $"custom_feed_{BlocklistFeeds.Count + 1}",
+            DisplayName = "New feed",
+            Url = string.Empty,
+            Enabled = false,
+            MinScore = 0
+        };
+        BlocklistFeeds.Add(row);
+        SelectedBlocklistFeed = row;
+    }
+
+    private void RemoveSelectedBlocklistFeed()
+    {
+        if (_selectedBlocklistFeed == null) return;
+        BlocklistFeeds.Remove(_selectedBlocklistFeed);
+        SelectedBlocklistFeed = null;
+    }
+
+    private bool EnsureAdmin(string action)
+    {
+        if (ServiceControl.IsAdministrator())
+        {
+            return true;
+        }
+
+        _statusCallback($"{action} requires Administrator privileges.", false);
+        return false;
+    }
+}
