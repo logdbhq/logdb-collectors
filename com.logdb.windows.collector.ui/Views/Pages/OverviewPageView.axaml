@@ -2,6 +2,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.OverviewPageView">
+    <!-- Dashboard stack: owns its scrolling now that the shell no longer wraps
+         pages in a ScrollViewer. -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
     <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" RowSpacing="10">
         <!-- Setup card: shown instead of a wall of zeros when nothing runs. -->
         <Border Classes="panel" IsVisible="{Binding ShowSetupCard}">
@@ -78,6 +81,10 @@
                     <TextBlock Text="Live Resource Usage" FontSize="28" FontWeight="SemiBold" />
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                         <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource SecondaryTextBrushTheme}" Text="{Binding UpdatedAgo}" />
+                        <CheckBox Content="Auto-refresh (5s)"
+                                  IsChecked="{Binding AutoRefresh, Mode=TwoWay}"
+                                  VerticalAlignment="Center"
+                                  ToolTip.Tip="Reload the overview every 5 seconds." />
                         <Button Content="Refresh" Command="{Binding RefreshCommand}" />
                         <Button Content="Test Connection" Command="{Binding TestConnectionCommand}" />
                         <Button Content="Reload Config" Command="{Binding ReloadConfigCommand}" />
@@ -174,4 +181,5 @@
             </Grid>
         </Border>
     </Grid>
+    </ScrollViewer>
 </UserControl>

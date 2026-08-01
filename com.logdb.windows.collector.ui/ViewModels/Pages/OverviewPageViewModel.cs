@@ -73,6 +73,9 @@ public sealed class OverviewPageViewModel : PageViewModelBase
     private readonly Action? _openServiceManagement;
     private bool _showSetupCard;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private static readonly TimeSpan AutoRefreshInterval = TimeSpan.FromSeconds(5);
+    private bool _autoRefresh;
+    private CancellationTokenSource? _autoRefreshCts;
 
     // Full, unfiltered set of module cards. The bound Modules collection is a
     // projection of this list, narrowed when ShowFailedOnly is on.
@@ -275,6 +278,54 @@ public sealed class OverviewPageViewModel : PageViewModelBase
     public AsyncRelayCommand ReloadConfigCommand { get; }
     public AsyncRelayCommand OpenDiagnosticsCommand { get; }
     public AsyncRelayCommand RefreshCommand { get; }
+
+    /// <summary>Same auto-refresh pattern as Throughput/Diagnostics, but the
+    /// loop marshals RefreshAsync onto the UI thread — this page rebuilds the
+    /// Modules/Failures ObservableCollections, which Avalonia only allows from
+    /// the UI thread.</summary>
+    public bool AutoRefresh
+    {
+        get => _autoRefresh;
+        set
+        {
+            if (!SetProperty(ref _autoRefresh, value)) return;
+            if (value) StartAutoRefresh();
+            else StopAutoRefresh();
+        }
+    }
+
+    private void StartAutoRefresh()
+    {
+        if (_autoRefreshCts is { IsCancellationRequested: false }) return;
+        _autoRefreshCts = new CancellationTokenSource();
+        var token = _autoRefreshCts.Token;
+        _ = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(RefreshAsync);
+                    await Task.Delay(AutoRefreshInterval, token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+                catch
+                {
+                    // transient refresh failure — keep ticking
+                }
+            }
+        }, token);
+    }
+
+    private void StopAutoRefresh()
+    {
+        _autoRefreshCts?.Cancel();
+        _autoRefreshCts?.Dispose();
+        _autoRefreshCts = null;
+    }
     public AsyncRelayCommand ShowFailuresCommand { get; }
     public RelayCommand ClearFailureFilterCommand { get; }
     public RelayCommand OpenServiceManagementCommand { get; }
