@@ -126,6 +126,7 @@ public class IISLogExportService : BackgroundService
             _stateResetDone = true;
         }
 
+        ResetCycleCounters();
         var totalEntriesProcessed = 0;
         var stopwatch = Stopwatch.StartNew();
 
@@ -148,12 +149,72 @@ public class IISLogExportService : BackgroundService
 
         stopwatch.Stop();
 
-        if (totalEntriesProcessed > 0)
+        LogCycleSummary(totalEntriesProcessed, stopwatch.ElapsedMilliseconds);
+    }
+
+    // ─── Per-cycle scan accounting ────────────────────────────────────────────
+    // A first run against a root LogFiles folder walks years of archived files;
+    // logging one Information line per file buried real events in the live
+    // console. Files that ship nothing are now counted here and reported as a
+    // single summary line that names WHY they shipped nothing. Cycles are
+    // sequential, so plain fields are safe.
+
+    /// <summary>How many "read N, shipped nothing" files are logged per cycle
+    /// as concrete examples before the rest are aggregated into the summary.</summary>
+    private const int SkippedFileExamplesPerCycle = 3;
+
+    private int _cycleFilesWithRows;
+    private int _cycleFilesShippedNothing;
+    private long _cycleRowsRead;
+    private long _cycleRowsShipped;
+    private long _cycleDroppedAlreadyShipped;
+    private long _cycleDroppedBeforeStartDate;
+    private long _cycleDroppedByRules;
+
+    private void ResetCycleCounters()
+    {
+        _cycleFilesWithRows = 0;
+        _cycleFilesShippedNothing = 0;
+        _cycleRowsRead = 0;
+        _cycleRowsShipped = 0;
+        _cycleDroppedAlreadyShipped = 0;
+        _cycleDroppedBeforeStartDate = 0;
+        _cycleDroppedByRules = 0;
+    }
+
+    private void LogCycleSummary(int totalEntriesProcessed, long elapsedMs)
+    {
+        if (_cycleRowsRead == 0)
+        {
+            return;
+        }
+
+        if (_cycleFilesShippedNothing == 0)
         {
             _logger.LogInformation(
                 "Export cycle: {Count} entries in {Elapsed}ms",
-                totalEntriesProcessed, stopwatch.ElapsedMilliseconds);
+                totalEntriesProcessed, elapsedMs);
+            return;
         }
+
+        // Name the dominant reason so "read a lot, sent nothing" is never a
+        // mystery — the per-file detail is still there at Debug level.
+        var reasons = new List<string>();
+        if (_cycleDroppedBeforeStartDate > 0)
+            reasons.Add($"{_cycleDroppedBeforeStartDate} older than the configured start date ({InitialStartDate:yyyy-MM-dd})");
+        if (_cycleDroppedAlreadyShipped > 0)
+            reasons.Add($"{_cycleDroppedAlreadyShipped} already shipped previously");
+        if (_cycleDroppedByRules > 0)
+            reasons.Add($"{_cycleDroppedByRules} excluded by skip rules");
+
+        _logger.LogInformation(
+            "Export cycle: {Sent} entries shipped from {Files} file(s) in {Elapsed}ms · {SkippedFiles} file(s) read but shipped nothing ({Read} rows: {Reasons})",
+            _cycleRowsShipped,
+            _cycleFilesWithRows,
+            elapsedMs,
+            _cycleFilesShippedNothing,
+            _cycleRowsRead,
+            reasons.Count > 0 ? string.Join("; ", reasons) : "no rows matched");
     }
 
     private async Task<int> ProcessW3CSourceAsync(string logPath, CancellationToken stoppingToken)
@@ -317,14 +378,23 @@ public class IISLogExportService : BackgroundService
 
             // Migration safety: only on the first chunk when resuming from byte 0.
             if (currentPosition == 0 && lastLogTimestamp.HasValue)
+            {
+                var before = entries.Count;
                 entries = entries.Where(e => e.Timestamp > lastLogTimestamp.Value).ToList();
+                _cycleDroppedAlreadyShipped += before - entries.Count;
+            }
 
             // InitialStartDate filter (first run only)
             if (InitialStartDate.HasValue)
+            {
+                var before = entries.Count;
                 entries = entries.Where(e => e.Timestamp >= InitialStartDate.Value).ToList();
+                _cycleDroppedBeforeStartDate += before - entries.Count;
+            }
 
             // Apply filters from config
             var filteredEntries = _logFilter.FilterEntries(entries, _config);
+            _cycleDroppedByRules += entries.Count - filteredEntries.Count;
 
             if (filteredEntries.Count > 0)
             {
@@ -357,15 +427,40 @@ public class IISLogExportService : BackgroundService
         {
             var siteFolder = Path.GetFileName(Path.GetDirectoryName(logFile)) ?? "?";
             Console.WriteLine($"  Site {siteFolder} / {fileName}: read {totalRead} | sent {totalSent}");
-            // Keep every per-file scan visible, but make the message state plainly
-            // how many rows went to the server, so a reset / future-start-date scan
-            // (reads a lot, sends nothing) can never be mistaken for live delivery.
+
+            _cycleRowsRead += totalRead;
+            _cycleRowsShipped += totalSent;
+
+            // Files that actually shipped stay at Information — that is live
+            // delivery and the operator wants to see it. Files that shipped
+            // nothing (historical archives behind a start date, rows already
+            // shipped, rows excluded by rules) number in the hundreds on a
+            // first run against a root LogFiles folder and used to bury
+            // everything else. Only the first few are logged as examples; the
+            // rest go to Debug and the cycle summary reports the totals and
+            // the reason, so nothing is silently hidden.
             if (totalSent > 0)
+            {
+                _cycleFilesWithRows++;
                 _logger.LogInformation("Site {Site} file {File}: read {Read}, {Sent} sent to server",
                     siteFolder, fileName, totalRead, totalSent);
+            }
             else
-                _logger.LogInformation("Site {Site} file {File}: read {Read}, 0 sent to server (filtered — not shipped)",
-                    siteFolder, fileName, totalRead);
+            {
+                _cycleFilesShippedNothing++;
+                if (_cycleFilesShippedNothing <= SkippedFileExamplesPerCycle)
+                {
+                    _logger.LogInformation("Site {Site} file {File}: read {Read}, 0 sent to server (filtered — not shipped)",
+                        siteFolder, fileName, totalRead);
+                }
+                else
+                {
+                    // The collector log sink drops anything below Information,
+                    // so this is effectively off unless that filter is raised.
+                    _logger.LogDebug("Site {Site} file {File}: read {Read}, 0 sent to server (filtered — not shipped)",
+                        siteFolder, fileName, totalRead);
+                }
+            }
         }
 
         return totalSent;
