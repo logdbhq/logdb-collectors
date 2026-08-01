@@ -27,6 +27,7 @@
                     <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="100" />
                     <dgrid:DataGridTextColumn Header="Collection" Binding="{Binding Collection}" Width="160" />
                     <dgrid:DataGridTextColumn Header="Host" Binding="{Binding Host}" Width="140" />
+                    <dgrid:DataGridTextColumn Header="IP" Binding="{Binding Ip}" Width="140" />
                     <dgrid:DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*" />
                 </dgrid:DataGrid.Columns>
             </dgrid:DataGrid>
