@@ -56,7 +56,7 @@
                                IsEnabled="False" />
                     <TextBlock Classes="muted"
                                TextWrapping="Wrap"
-                               Text="Auto-resolved from the LogDB discovery service using your API key. Read-only. To override (self-hosted deployments, networks where discovery is unreachable), edit the raw config on the Advanced page." />
+                               Text="Auto-resolved from the LogDB discovery service using your API key. Read-only. To override (self-hosted deployments, networks where discovery is unreachable), edit the raw config on the Raw Config (JSON) tab next to this one." />
                 </StackPanel>
 
                 <TextBlock Grid.Row="1" Text="Protocol" VerticalAlignment="Top" Margin="0,6,0,0" />

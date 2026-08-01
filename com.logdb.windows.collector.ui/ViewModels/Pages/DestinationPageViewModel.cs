@@ -192,7 +192,7 @@ public sealed class DestinationPageViewModel : PageViewModelBase
         var explicitOverride = config.LogDB.Endpoint;
         if (!string.IsNullOrWhiteSpace(explicitOverride))
         {
-            ResolvedEndpointDisplay = $"{explicitOverride}  (manual override — set in raw config on Advanced page)";
+            ResolvedEndpointDisplay = $"{explicitOverride}  (manual override — set in the Raw Config (JSON) tab)";
             return;
         }
 
@@ -219,7 +219,7 @@ public sealed class DestinationPageViewModel : PageViewModelBase
                 $"discovery currently {FormatDiscoveryProblem(result)})",
             _ =>
                 $"Discovery unreachable — {FormatDiscoveryProblem(result)}. " +
-                "Set LogDB.Endpoint manually on the Advanced page to bypass discovery.",
+                "Set LogDB.Endpoint manually in the Raw Config (JSON) tab to bypass discovery.",
         };
     }
 

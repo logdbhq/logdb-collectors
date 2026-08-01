@@ -2,10 +2,18 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:edit="https://github.com/avaloniaui/avaloniaedit"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.AdvancedPageView">
-    <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
+    <TabControl Classes="standard-tabs">
+        <TabItem Header="Destination">
+            <!-- Rendered through the DestinationPageViewModel data template
+                 registered in MainWindow — the page moved here unchanged. -->
+            <ContentControl Content="{Binding Destination}" Margin="8" />
+        </TabItem>
+
+        <TabItem Header="Raw Config (JSON)">
+            <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
         <TextBlock TextWrapping="Wrap"
                    Foreground="{DynamicResource WarningTextBrushTheme}"
-                   Text="Last resort: use this page only for advanced troubleshooting. Standard configuration should be done from Data Sources and Destination." />
+                   Text="Last resort: use this tab only for advanced troubleshooting. Standard configuration should be done from Data Sources, Firewall, and the Destination tab." />
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
             <Button Content="Reset to Current"
@@ -45,5 +53,7 @@
                              Background="{DynamicResource SurfaceBrush}"
                              Foreground="{DynamicResource PrimaryTextBrushTheme}" />
         </Border>
-    </Grid>
+            </Grid>
+        </TabItem>
+    </TabControl>
 </UserControl>

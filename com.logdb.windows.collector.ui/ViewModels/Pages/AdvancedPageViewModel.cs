@@ -20,15 +20,24 @@ public sealed class AdvancedPageViewModel : PageViewModelBase
     private string _jsonEditorText = string.Empty;
     private string _jsonValidationMessage = "-";
 
-    public AdvancedPageViewModel(LocalCollectorAdminClient adminClient, Action<string, bool> statusCallback)
+    public AdvancedPageViewModel(
+        LocalCollectorAdminClient adminClient,
+        Action<string, bool> statusCallback,
+        DestinationPageViewModel destination)
         : base("Advanced")
     {
         _adminClient = adminClient;
         _statusCallback = statusCallback;
+        Destination = destination;
 
         ResetEditorCommand = new RelayCommand(LoadCurrentIntoEditor);
         ApplyJsonCommand = new AsyncRelayCommand(ApplyJsonAsync);
     }
+
+    /// <summary>The former Destination page, hosted as this page's first tab.
+    /// The instance is shared with MainWindowViewModel so the API-key modal
+    /// flow keeps working against the same state.</summary>
+    public DestinationPageViewModel Destination { get; }
 
     public string JsonEditorText
     {
@@ -45,11 +54,11 @@ public sealed class AdvancedPageViewModel : PageViewModelBase
     public RelayCommand ResetEditorCommand { get; }
     public AsyncRelayCommand ApplyJsonCommand { get; }
 
-    public override Task RefreshAsync()
+    public override async Task RefreshAsync()
     {
         // Auto-populate on every page entry so the editor is never empty.
         LoadCurrentIntoEditor();
-        return Task.CompletedTask;
+        await Destination.RefreshAsync();
     }
 
     private void LoadCurrentIntoEditor()
