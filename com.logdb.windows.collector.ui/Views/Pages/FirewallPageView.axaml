@@ -22,7 +22,7 @@
                 <StackPanel Spacing="10">
                     <StackPanel Spacing="2">
                         <TextBlock Text="Firewall Sync" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="Turns blocklists into inbound Windows Firewall block rules on a schedule. Two independent sources: public IP-reputation feeds (FireHOL, Tor exits, IPsum, …), which are ON by default, and your own LogDB Guard blocklist, which is OFF by default. Enabling firewall sync alone applies the public feeds and none of your own blocks."
+                        <TextBlock Text="Turns blocklists into inbound Windows Firewall block rules on a schedule. Two independent sources, both on by default: public IP-reputation feeds (FireHOL, Tor exits, IPsum, …) and your own LogDB Guard blocklist. Either can be switched off on its own — the panel above always states which are actually applying."
                                    Classes="muted"
                                    TextWrapping="Wrap" />
                     </StackPanel>
@@ -54,7 +54,7 @@
                     <Border Classes="card" Padding="8" Margin="0,6,0,0">
                         <StackPanel Spacing="6">
                             <TextBlock Text="LogDB Guard (custom blocklist) — your own blocks" FontWeight="SemiBold" />
-                            <TextBlock Text="Subscribe to the IPs your LogDB Guard instance is blocking (CrowdSec decisions, entries you added from the desktop app) and apply them as one extra feed. This is OFF by default — until you enable it, an IP you block in the desktop app is never applied to this host."
+                            <TextBlock Text="Subscribe to the IPs your LogDB Guard instance is blocking (CrowdSec decisions, entries you added from the desktop app) and apply them as one extra feed. On by default — switch it off and an IP you block in the desktop app is never applied to this host. Uses LogDB:ApiKey, so that must be set for this to work."
                                        Classes="muted"
                                        TextWrapping="Wrap" />
                             <CheckBox Content="Enable Guard subscription"

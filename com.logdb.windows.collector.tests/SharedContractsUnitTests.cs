@@ -7,6 +7,37 @@ namespace com.logdb.windows.collector.tests;
 public sealed class SharedContractsUnitTests
 {
     [Fact]
+    public void FirewallDefaults_TurnOnBothBlocklistSourcesButNotTheModuleItself()
+    {
+        var firewall = new FirewallConfigDto();
+
+        // Both sources on, so enabling firewall sync applies the operator's own
+        // blocklist and not only third-party feeds.
+        Assert.True(firewall.CustomBlocklist.Enabled);
+        Assert.Contains(FirewallDefaults.CreatePublicBlocklists(), feed => feed.Value.Enabled);
+
+        // The module itself stays off: installing the collector must never start
+        // blocking traffic on its own.
+        Assert.False(firewall.Enabled);
+    }
+
+    [Fact]
+    public void ExplicitlyDisabledGuardSubscription_SurvivesConfigBinding()
+    {
+        // The default flipped to true, so the thing worth protecting is that a
+        // config saying false still means false after a round trip.
+        const string json = """
+            { "firewall": { "customBlocklist": { "enabled": false } } }
+            """;
+
+        var config = JsonSerializer.Deserialize<CollectorConfigDto>(
+            json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+        Assert.NotNull(config);
+        Assert.False(config!.Firewall.CustomBlocklist.Enabled);
+    }
+
+    [Fact]
     public void ConfigRedaction_MasksApiKey()
     {
         var config = new CollectorConfigDto

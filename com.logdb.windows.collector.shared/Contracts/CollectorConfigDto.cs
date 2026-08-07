@@ -222,16 +222,28 @@ public class FirewallConfigDto
     /// install with Enabled=true still does something useful.</summary>
     public Dictionary<string, PublicBlocklistFeedDto> PublicBlocklists { get; set; } = new();
 
-    /// <summary>Optional LogDB Guard subscription. When enabled, the firewall
-    /// fetches the same custom blocklist that LogDB Guard maintains (CrowdSec
+    /// <summary>LogDB Guard subscription. When enabled, the firewall fetches
+    /// the same custom blocklist that LogDB Guard maintains (CrowdSec
     /// decisions, operator-added IPs) over gRPC and applies it as one extra
-    /// feed alongside the public ones. Empty/missing = disabled.</summary>
+    /// feed alongside the public ones. On by default — see
+    /// <see cref="CustomBlocklistConfigDto.Enabled"/>.</summary>
     public CustomBlocklistConfigDto CustomBlocklist { get; set; } = new();
 }
 
 public class CustomBlocklistConfigDto
 {
-    public bool Enabled { get; set; }
+    /// <summary>
+    /// On by default, matching the public feeds. Previously this defaulted off
+    /// while the stock public feeds defaulted on, so enabling firewall sync
+    /// applied four third-party blocklists and none of the operator's own
+    /// blocks — the opposite of what "LogDB firewall sync" reads like it does.
+    ///
+    /// An explicit <c>false</c> in a config file is still honored. A config
+    /// with no customBlocklist section at all now gets the subscription on,
+    /// so upgrading a host that syncs public feeds will additionally apply the
+    /// account's Guard blocklist on its next cycle.
+    /// </summary>
+    public bool Enabled { get; set; } = true;
     public string DisplayName { get; set; } = "LogDB Guard";
 
     /// <summary>Explicit gRPC endpoint of the guard service (e.g. "https://guard.logdb.site").
