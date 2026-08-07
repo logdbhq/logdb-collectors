@@ -33,6 +33,20 @@ public sealed class FirewallSyncEngine
     /// carry no group and are matched by display-name prefix (Legacy=true).</summary>
     public const string ManagedRuleGroup = "LogDB Collector";
 
+    /// <summary>Fallback when no rule prefix is configured.</summary>
+    public const string DefaultRuleNamePrefix = "LogDB Firewall";
+
+    /// <summary>
+    /// The one place a configured rule prefix is turned into the string used to
+    /// name and match rules. Rule creation used the raw value while listing,
+    /// deletion and removal defaulted a blank one to "LogDB Firewall" — so a
+    /// blank prefix produced rules called " - FireHOL Level 1" that the
+    /// collector then could not find, and made the orphan prune glob every rule
+    /// on the host with '-like "*"'. Trimmed to match the value the UI saves.
+    /// </summary>
+    public static string ResolveRuleNamePrefix(string? configured) =>
+        string.IsNullOrWhiteSpace(configured) ? DefaultRuleNamePrefix : configured.Trim();
+
     private static readonly JsonSerializerOptions RuleJsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -260,7 +274,7 @@ public sealed class FirewallSyncEngine
         HashSet<string> degradedSources,
         CancellationToken cancellationToken)
     {
-        var baseRuleName = $"{config.RuleNamePrefix} - {displayName}";
+        var baseRuleName = $"{ResolveRuleNamePrefix(config.RuleNamePrefix)} - {displayName}";
         var heldRules = (await GetManagedRuleNamesAsync(baseRuleName, cancellationToken).ConfigureAwait(false)).Count;
 
         // Spare it from the orphan prune and from the index reconcile.
@@ -318,7 +332,7 @@ public sealed class FirewallSyncEngine
         if (!IsElevated())
             return (false, "Elevation required to remove firewall rules.");
 
-        var prefix = string.IsNullOrWhiteSpace(config.RuleNamePrefix) ? "LogDB Firewall" : config.RuleNamePrefix;
+        var prefix = ResolveRuleNamePrefix(config.RuleNamePrefix);
         try
         {
             await RunPowerShellAsync(
@@ -365,7 +379,7 @@ public sealed class FirewallSyncEngine
         FirewallConfigDto config,
         CancellationToken cancellationToken = default)
     {
-        var prefix = string.IsNullOrWhiteSpace(config.RuleNamePrefix) ? "LogDB Firewall" : config.RuleNamePrefix;
+        var prefix = ResolveRuleNamePrefix(config.RuleNamePrefix);
         var command =
             $"$rules = Get-NetFirewallRule | Where-Object {{ $_.Group -eq '{ManagedRuleGroup}' -or $_.DisplayName -like '{EscapePs(prefix)}*' -or $_.DisplayName -like 'LogDB*' }}; " +
             "$out = foreach ($r in $rules) { " +
@@ -452,7 +466,7 @@ public sealed class FirewallSyncEngine
         // (the desktop app's export script). Those are visible so the operator
         // knows they exist — but deleting them here would silently undo another
         // tool's enforcement, and the next sync would not re-create them.
-        var rulePrefix = string.IsNullOrWhiteSpace(config.RuleNamePrefix) ? "LogDB Firewall" : config.RuleNamePrefix;
+        var rulePrefix = ResolveRuleNamePrefix(config.RuleNamePrefix);
         var isManaged = string.Equals(group, ManagedRuleGroup, StringComparison.OrdinalIgnoreCase)
             || displayName.StartsWith(rulePrefix, StringComparison.OrdinalIgnoreCase);
         if (!isManaged)
@@ -619,8 +633,7 @@ public sealed class FirewallSyncEngine
     /// stripping the configured prefix and any " (n/m)" chunk suffix.</summary>
     public static string ExtractSourceFromDisplayName(string ruleDisplayName, string ruleNamePrefix)
     {
-        var prefix = string.IsNullOrWhiteSpace(ruleNamePrefix) ? "LogDB Firewall" : ruleNamePrefix;
-        var sourcePrefix = $"{prefix} - ";
+        var sourcePrefix = $"{ResolveRuleNamePrefix(ruleNamePrefix)} - ";
         var source = ruleDisplayName.StartsWith(sourcePrefix, StringComparison.OrdinalIgnoreCase)
             ? ruleDisplayName[sourcePrefix.Length..]
             : ruleDisplayName;
@@ -638,7 +651,7 @@ public sealed class FirewallSyncEngine
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? annotations = null)
     {
-        var baseRuleName = $"{config.RuleNamePrefix} - {displayName}";
+        var baseRuleName = $"{ResolveRuleNamePrefix(config.RuleNamePrefix)} - {displayName}";
         var changes = 0;
 
         if (ips.Count == 0)
@@ -710,8 +723,9 @@ public sealed class FirewallSyncEngine
         HashSet<string> enabledDisplayNames,
         CancellationToken cancellationToken)
     {
-        var allManaged = await GetManagedRuleNamesAsync(config.RuleNamePrefix, cancellationToken).ConfigureAwait(false);
-        var sourcePrefix = $"{config.RuleNamePrefix} - ";
+        var prefix = ResolveRuleNamePrefix(config.RuleNamePrefix);
+        var allManaged = await GetManagedRuleNamesAsync(prefix, cancellationToken).ConfigureAwait(false);
+        var sourcePrefix = $"{prefix} - ";
         var changes = 0;
 
         foreach (var rule in allManaged)

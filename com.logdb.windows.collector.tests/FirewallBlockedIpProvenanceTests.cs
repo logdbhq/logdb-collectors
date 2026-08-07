@@ -170,6 +170,37 @@ public sealed class FirewallBlockedIpProvenanceTests : IDisposable
         Assert.Equal("198.51.100.10", Assert.Single(index.Query("ops", 100).Entries).Ip);
     }
 
+    // ---- rule naming ------------------------------------------------------
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void BlankRulePrefix_FallsBackInsteadOfNamingRulesDashSomething(string? configured)
+    {
+        // A blank prefix used to build rules called " - FireHOL Level 1" while
+        // the listing looked for "LogDB Firewall*", and made the orphan prune
+        // glob '-like "*"' across every rule on the host.
+        Assert.Equal("LogDB Firewall", FirewallSyncEngine.ResolveRuleNamePrefix(configured));
+    }
+
+    [Fact]
+    public void ConfiguredRulePrefix_IsTrimmedSoRuleNamesStayStable()
+    {
+        Assert.Equal("Acme FW", FirewallSyncEngine.ResolveRuleNamePrefix("  Acme FW  "));
+    }
+
+    [Fact]
+    public void SourceExtraction_RoundTripsARuleNameBuiltFromTheSamePrefix()
+    {
+        var prefix = FirewallSyncEngine.ResolveRuleNamePrefix(null);
+        Assert.Equal("FireHOL Level 1",
+            FirewallSyncEngine.ExtractSourceFromDisplayName($"{prefix} - FireHOL Level 1", null!));
+        // Chunked rules must resolve to the same feed, not "FireHOL Level 1 (2/3)".
+        Assert.Equal("FireHOL Level 1",
+            FirewallSyncEngine.ExtractSourceFromDisplayName($"{prefix} - FireHOL Level 1 (2/3)", ""));
+    }
+
     // ---- the unblock-on-failure regression --------------------------------
 
     [Fact]
