@@ -179,6 +179,15 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     /// <summary>LogDB rules on the host that this collector does not manage,
     /// from the last Active Rules refresh. Feeds the enforcement panel.</summary>
     private int _unmanagedRuleCount;
+
+    /// <summary>Signature of the firewall settings as last loaded from the
+    /// service. The enforcement panel's toggles edit UI state, which would
+    /// otherwise let the headline read "ON" for something not yet saved —
+    /// comparing against this is what lets it say "unsaved" instead of lying.
+    /// </summary>
+    private string _savedConfigSignature = string.Empty;
+
+    private bool _configurationExpanded;
     private bool _firewallIpsPanelVisible;
     private string _firewallIpsTitle = string.Empty;
     private string _firewallIpsFilter = string.Empty;
@@ -234,6 +243,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         EnforcementNotices = new ObservableCollection<FirewallNoticeRow>();
 
         RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
+        OpenFirewallConfigurationCommand = new RelayCommand(() => ConfigurationExpanded = true);
         RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
         CloseFirewallIpsCommand = new RelayCommand(() => FirewallIpsPanelVisible = false);
         CloseFirewallDetailCommand = new RelayCommand(() => FirewallDetailVisible = false);
@@ -260,6 +270,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     public ObservableCollection<FirewallNoticeRow> EnforcementNotices { get; }
 
     public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
+    public RelayCommand OpenFirewallConfigurationCommand { get; }
     public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
     public RelayCommand CloseFirewallIpsCommand { get; }
     public RelayCommand CloseFirewallDetailCommand { get; }
@@ -317,6 +328,35 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         get => _guardOn;
         private set => SetProperty(ref _guardOn, value);
     }
+
+    /// <summary>Drives the Configuration expander, so the enforcement panel's
+    /// "Open full configuration" button can reveal the settings it summarises
+    /// instead of leaving the operator to hunt for a collapsed header.</summary>
+    public bool ConfigurationExpanded
+    {
+        get => _configurationExpanded;
+        set => SetProperty(ref _configurationExpanded, value);
+    }
+
+    /// <summary>True when the toggles have been changed but not yet saved to
+    /// the service — the headline describes the edited state, so this is what
+    /// keeps it honest about whether that state is actually running.</summary>
+    public bool HasUnsavedFirewallChanges =>
+        !string.Equals(_savedConfigSignature, CurrentConfigSignature(), StringComparison.Ordinal);
+
+    /// <summary>Just the settings the enforcement panel reports on — not every
+    /// firewall field, so editing an unrelated box doesn't raise a false
+    /// "unsaved" flag on the summary.</summary>
+    private string CurrentConfigSignature() =>
+        string.Join("|",
+            FirewallEnabled,
+            FirewallCustomEnabled,
+            FirewallDryRun,
+            FirewallWhitelistPath?.Trim() ?? string.Empty,
+            string.Join(",", BlocklistFeeds
+                .Where(f => f.Enabled)
+                .Select(f => f.FeedId)
+                .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)));
 
     public bool FirewallIpsPanelVisible
     {
@@ -615,6 +655,10 @@ public sealed class FirewallPageViewModel : PageViewModelBase
             ? "Firewall sync is active. Blocked IPs from LogDB will be applied as inbound block rules."
             : "Enable firewall sync to automatically block malicious IPs detected by LogDB Guard.";
 
+        // Baseline for the unsaved-changes check: everything above came straight
+        // from the service, so this is by definition the running state.
+        _savedConfigSignature = CurrentConfigSignature();
+
         RebuildEnforcementNotices();
     }
 
@@ -645,7 +689,18 @@ public sealed class FirewallPageViewModel : PageViewModelBase
             ? $"ON — subscribed to '{FirewallCustomDisplayName}'."
             : "OFF — IPs you block in the LogDB desktop app are NOT applied by this collector.";
 
+        NotifyPropertyChanged(nameof(HasUnsavedFirewallChanges));
+
         EnforcementNotices.Clear();
+
+        // Always first: everything else in this panel describes the edited
+        // state, and the operator needs to know it isn't live yet.
+        if (HasUnsavedFirewallChanges)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("⚠",
+                "These settings have been changed but not saved — the lines above describe what you have "
+                + "selected, not what the collector is running. Click 'Save & Apply' to make it so.", true));
+        }
 
         if (!FirewallEnabled)
         {

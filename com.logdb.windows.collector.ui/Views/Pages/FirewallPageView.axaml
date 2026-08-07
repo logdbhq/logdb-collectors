@@ -15,7 +15,9 @@
         </Grid.ColumnDefinitions>
 
         <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
-        <Expander Header="Configuration" IsExpanded="False" HorizontalAlignment="Stretch">
+        <Expander Header="Configuration"
+                  IsExpanded="{Binding ConfigurationExpanded, Mode=TwoWay}"
+                  HorizontalAlignment="Stretch">
             <Border Classes="card" Padding="10">
                 <StackPanel Spacing="10">
                     <StackPanel Spacing="2">
@@ -152,6 +154,25 @@
                                Classes.stateOn="{Binding GuardOn}"
                                Classes.stateOff="{Binding !GuardOn}" />
                 </Grid>
+
+                <!-- The switches live here, next to the state they change.
+                     They edit UI state only; "Save & Apply" is what reaches
+                     the service, and until it is pressed the panel says so. -->
+                <WrapPanel Orientation="Horizontal" ItemSpacing="12" LineSpacing="6">
+                    <CheckBox Content="Firewall sync"
+                              IsChecked="{Binding FirewallEnabled}"
+                              ToolTip.Tip="Master switch. Off means this collector applies no block rules at all." />
+                    <CheckBox Content="Apply my Guard blocklist"
+                              IsChecked="{Binding FirewallCustomEnabled}"
+                              ToolTip.Tip="Subscribe to the IPs you block in the LogDB desktop app and apply them on this host. Off by default." />
+                    <Button Content="Save &amp; Apply"
+                            Command="{Binding SaveFirewallConfigCommand}"
+                            IsEnabled="{Binding CanSaveFirewallConfig}"
+                            ToolTip.Tip="Write these settings to the collector and reload them." />
+                    <Button Content="Open full configuration"
+                            Command="{Binding OpenFirewallConfigurationCommand}"
+                            ToolTip.Tip="Expand the Configuration section above — individual feeds, whitelist path, poll interval, Guard URL." />
+                </WrapPanel>
 
                 <ItemsControl ItemsSource="{Binding EnforcementNotices}">
                     <ItemsControl.ItemTemplate>
