@@ -68,6 +68,21 @@
                                 IsEnabled="{Binding CanRestartService}" />
                     </Grid>
 
+                    <!-- Only path out of the all-disabled state: every button above
+                         needs an elevated token, and nothing else on this page can
+                         grant one. Hidden once the UI already runs as Administrator. -->
+                    <Button Content="Restart as Administrator"
+                            Command="{Binding RestartElevatedCommand}"
+                            IsVisible="{Binding NeedsElevation}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            ToolTip.Tip="Re-launches the UI with a UAC prompt and closes this window. The elevated instance can install and control the service." />
+
+                    <TextBlock Text="{Binding ElevationHint}"
+                               Classes="muted"
+                               TextWrapping="Wrap"
+                               IsVisible="{Binding ElevationHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
                     <TextBlock Text="{Binding ServiceStateSummary}" Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>

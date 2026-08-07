@@ -306,9 +306,14 @@
             <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
                 <Ellipse Width="8" Height="8" Fill="{Binding StatusColor}" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" Text="Status" VerticalAlignment="Center" Classes="muted" />
+                <!-- Messages carrying a full path outrun the bar on narrow windows;
+                     trim visibly and put the whole text in the tooltip rather than
+                     letting it clip with no way to read the rest. -->
                 <TextBlock Grid.Column="2"
                            VerticalAlignment="Center"
                            Text="{Binding StatusMessage}"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip.Tip="{Binding StatusMessage}"
                            Foreground="{Binding StatusColor}" />
                 <StackPanel Grid.Column="3"
                             Orientation="Horizontal"

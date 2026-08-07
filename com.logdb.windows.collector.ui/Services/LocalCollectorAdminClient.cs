@@ -827,14 +827,28 @@ public sealed class LocalCollectorAdminClient
         const string exeName = "com.logdb.windows.collector.exe";
         var baseDir = AppContext.BaseDirectory;
 
+        const string uiPackId = "com.logdb.windows.collector.ui";
+
         var candidates = new List<string>
         {
+            // Velopack layout: the UI runs from <install>\current\ and the service
+            // is published into <install>\current\service\ by
+            // scripts\package-collector-ui-velopack.ps1. This is the normal
+            // installed-app case, so it goes first.
+            Path.Combine(baseDir, "service", exeName),
             // Same directory as UI (bundled deployment)
             Path.Combine(baseDir, exeName),
             // Sibling "collector" folder (side-by-side layout)
             Path.GetFullPath(Path.Combine(baseDir, "..", "collector", exeName)),
+            // Release-zip layout: scripts/ and service/ under a common root
+            Path.GetFullPath(Path.Combine(baseDir, "..", "service", exeName)),
             // Parent directory
             Path.GetFullPath(Path.Combine(baseDir, "..", exeName)),
+            // A Velopack install elsewhere on the box — machine-wide first, then
+            // per-user. Same two paths install-service.ps1 probes, so a UI started
+            // from a dev build still finds the installed service exe.
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), uiPackId, "current", "service", exeName),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), uiPackId, "current", "service", exeName),
             // Dev: sibling project debug output
             Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "com.logdb.windows.collector", "bin", "Debug", "net10.0-windows", exeName)),
             // Program Files standard install

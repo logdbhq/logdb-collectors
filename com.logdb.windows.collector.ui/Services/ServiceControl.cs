@@ -36,11 +36,48 @@ public static class ServiceControl
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
     }
 
+    /// <summary>
+    /// Re-launches the UI with the "runas" shell verb so Windows shows a UAC
+    /// prompt and the new instance owns an elevated token — every sc.exe call
+    /// here needs one. No CLI flag: the elevated instance is a plain UI start.
+    /// Returns false if the user dismissed the prompt or the spawn failed, in
+    /// which case the caller must keep running unelevated.
+    /// </summary>
+    public static bool RelaunchElevated()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exe))
+            {
+                return false;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exe,
+                UseShellExecute = true, // required for verb=runas (UAC)
+                Verb = "runas"
+            });
+            return true;
+        }
+        catch
+        {
+            // User clicked No on UAC, or shell-execute failed.
+            return false;
+        }
+    }
+
     public static async Task<(bool Success, string Message)> InstallAsync(string executablePath)
     {
         if (!File.Exists(executablePath))
         {
-            return (false, $"Collector executable not found: {executablePath}");
+            return (false, $"Collector executable not found: {executablePath} — set the correct path with Browse + Save Path on this page.");
         }
 
         var createArgs =

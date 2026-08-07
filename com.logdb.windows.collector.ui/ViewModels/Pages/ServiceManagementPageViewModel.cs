@@ -34,6 +34,7 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
 
         RefreshCommand = new AsyncRelayCommand(RefreshAsync);
 
+        RestartElevatedCommand = new RelayCommand(RestartElevated);
         InstallServiceCommand = new AsyncRelayCommand(InstallServiceAsync);
         UninstallServiceCommand = new AsyncRelayCommand(UninstallServiceAsync);
         StartServiceCommand = new AsyncRelayCommand(StartServiceAsync);
@@ -175,6 +176,17 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         ? (_serviceStateKind == ServiceStateKind.Running ? "Production service is running." : "Service is installed but not running.")
         : "Service is not installed.";
 
+    /// <summary>True when the UI lacks the elevated token every sc.exe call in
+    /// this card needs — drives the "Restart as Administrator" button and the
+    /// explanation next to the greyed-out buttons.</summary>
+    public bool NeedsElevation => !IsAdministrator;
+
+    /// <summary>Says *why* the buttons are disabled. Empty when elevated, so the
+    /// hint collapses instead of stating the obvious.</summary>
+    public string ElevationHint => IsAdministrator
+        ? string.Empty
+        : "Disabled — the UI is running as a standard user. Restart as Administrator to install, start, stop, or restart the service.";
+
     public bool CanInstallService => IsAdministrator && !ServiceInstalled;
     public bool CanUninstallService => IsAdministrator && ServiceInstalled;
     public bool CanStartService => IsAdministrator && ServiceInstalled && _serviceStateKind != ServiceStateKind.Running;
@@ -195,6 +207,7 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
 
     public AsyncRelayCommand RefreshCommand { get; }
 
+    public RelayCommand RestartElevatedCommand { get; }
     public AsyncRelayCommand InstallServiceCommand { get; }
     public AsyncRelayCommand UninstallServiceCommand { get; }
     public AsyncRelayCommand StartServiceCommand { get; }
@@ -230,13 +243,38 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
 
         ModeHint = IsAdministrator
             ? "Administrative actions are available for service lifecycle and service update."
-            : "Run the UI as Administrator to install/start/stop/restart/update the Windows service.";
+            : "Running as a standard user: service lifecycle and service update are disabled. Use \"Restart as Administrator\" on the Windows Service card to elevate.";
 
         CollectorExePath = _adminClient.CollectorExeOverride;
 
         NotifyActionStateChanged();
         NotifyPropertyChanged(nameof(ServiceStateSummary));
         NotifyPropertyChanged(nameof(PrivilegeModeText));
+    }
+
+    /// <summary>
+    /// Hands over to an elevated copy of the UI and closes this one, so the user
+    /// isn't left staring at two windows. If UAC is declined the spawn fails and
+    /// we stay put — the buttons simply remain disabled.
+    /// </summary>
+    private void RestartElevated()
+    {
+        if (IsAdministrator)
+        {
+            return;
+        }
+
+        if (!ServiceControl.RelaunchElevated())
+        {
+            _statusCallback("Elevation cancelled — still running as a standard user.", false);
+            return;
+        }
+
+        if (Avalonia.Application.Current?.ApplicationLifetime
+            is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+        }
     }
 
     private async Task InstallServiceAsync()
@@ -391,6 +429,8 @@ public sealed class ServiceManagementPageViewModel : PageViewModelBase
         NotifyPropertyChanged(nameof(CanRunConsole));
         NotifyPropertyChanged(nameof(CanStopConsole));
         NotifyPropertyChanged(nameof(CanRestartConsole));
+        NotifyPropertyChanged(nameof(NeedsElevation));
+        NotifyPropertyChanged(nameof(ElevationHint));
     }
 
     private bool EnsureAdmin(string action)
