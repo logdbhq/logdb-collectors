@@ -107,6 +107,15 @@ builder.Logging.AddFilter<Microsoft.Extensions.Logging.EventLog.EventLogLoggerPr
 builder.Services.AddSingleton(runtimeContext);
 builder.Services.AddHttpClient();
 
+// IHttpClientFactory logs four Information lines per outbound HTTP request under
+// the categories "System.Net.Http.HttpClient.<client>.LogicalHandler" (Start/End
+// processing) and ".ClientHandler" (Sending/Received). Those are transport
+// plumbing, not collector modules — in the Online Console they showed up as
+// "LogicalHandler"/"ClientHandler" rows and drowned out the module lines (the
+// service-URL resolver and the blocklist fetchers each fire one per beat).
+// Warnings and failures still come through.
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+
 // Throughput telemetry: persisted hourly record of what each module shipped,
 // split by outcome. Registered as both the concrete tracker (queried by the
 // control channel) and the sink (recorded into by each module's client wrapper).

@@ -87,7 +87,19 @@ public sealed class FirewallBlockedIpIndex
         }
     }
 
-    public BlockedIpListResponseDto Query(string? filter, int max)
+    /// <summary>
+    /// Filters by kind (public feeds vs the Guard subscription), then by exact
+    /// source, then by free text — all on this side, so Matched stays a true
+    /// count even when the returned list is capped at <paramref name="max"/>.
+    /// <paramref name="guardDisplayName"/> is what separates "public" from
+    /// "guard"; it comes from config, which the index itself doesn't read.
+    /// </summary>
+    public BlockedIpListResponseDto Query(
+        string? filter,
+        int max,
+        string? source = null,
+        string? kind = null,
+        string? guardDisplayName = null)
     {
         max = Math.Clamp(max, 1, 2000);
         lock (_gate)
@@ -95,19 +107,56 @@ public sealed class FirewallBlockedIpIndex
             try
             {
                 var entries = LoadLocked();
+                var guardName = string.IsNullOrWhiteSpace(guardDisplayName) ? "LogDB Guard" : guardDisplayName.Trim();
+
+                // Built from every entry, not the filtered subset, so narrowing
+                // the view never empties the picker you narrowed it with.
+                var sources = entries.Values
+                    .GroupBy(e => e.Source, StringComparer.OrdinalIgnoreCase)
+                    .Select(g => new BlockedIpSourceDto
+                    {
+                        Source = g.Key,
+                        Count = g.Count(),
+                        IsGuard = string.Equals(g.Key, guardName, StringComparison.OrdinalIgnoreCase)
+                    })
+                    .OrderBy(s => s.IsGuard)
+                    .ThenBy(s => s.Source, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                IEnumerable<BlockedIpEntryDto> matched = entries.Values;
+
+                switch (kind)
+                {
+                    case BlockedIpKinds.Guard:
+                        matched = matched.Where(e => string.Equals(e.Source, guardName, StringComparison.OrdinalIgnoreCase));
+                        break;
+                    case BlockedIpKinds.Public:
+                        matched = matched.Where(e => !string.Equals(e.Source, guardName, StringComparison.OrdinalIgnoreCase));
+                        break;
+                }
+
+                if (!string.IsNullOrWhiteSpace(source))
+                {
+                    var wanted = source.Trim();
+                    matched = matched.Where(e => string.Equals(e.Source, wanted, StringComparison.OrdinalIgnoreCase));
+                }
+
                 var trimmedFilter = filter?.Trim() ?? string.Empty;
-                var matched = string.IsNullOrEmpty(trimmedFilter)
-                    ? entries.Values.ToList()
-                    : entries.Values.Where(e =>
-                            e.Ip.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase) ||
-                            e.Source.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
+                if (trimmedFilter.Length > 0)
+                {
+                    matched = matched.Where(e =>
+                        e.Ip.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase) ||
+                        e.Source.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase));
+                }
+
+                var matchedList = matched.ToList();
 
                 return new BlockedIpListResponseDto
                 {
                     Total = entries.Count,
-                    Matched = matched.Count,
-                    Entries = matched
+                    Matched = matchedList.Count,
+                    Sources = sources,
+                    Entries = matchedList
                         .OrderByDescending(e => e.BlockedAtUtc)
                         .ThenBy(e => e.Ip, StringComparer.OrdinalIgnoreCase)
                         .Take(max)

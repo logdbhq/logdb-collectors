@@ -28,7 +28,12 @@ public sealed class CollectorLogSink
         }
     }
 
-    public void Write(LogLevel level, string category, string message, DateTime? eventTimestampUtc = null)
+    public void Write(
+        LogLevel level,
+        string category,
+        string message,
+        DateTime? eventTimestampUtc = null,
+        string? collection = null)
     {
         var timestamp = DateTime.UtcNow;
         var entry = new DiagnosticEntryDto
@@ -37,7 +42,8 @@ public sealed class CollectorLogSink
             Level = level.ToString(),
             Category = category,
             Message = message,
-            EventTimestampUtc = eventTimestampUtc
+            EventTimestampUtc = eventTimestampUtc,
+            Collection = collection ?? string.Empty
         };
 
         var line = $"[{timestamp:yyyy-MM-dd HH:mm:ss.fff} UTC] [{entry.Level}] [{entry.Category}] {entry.Message}";

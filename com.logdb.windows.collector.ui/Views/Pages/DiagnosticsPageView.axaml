@@ -81,6 +81,7 @@
                     <dgrid:DataGridTextColumn Header="Event Time" Binding="{Binding EventTimeLocal}" Width="170" />
                     <dgrid:DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="90" />
                     <dgrid:DataGridTextColumn Header="Module" Binding="{Binding Module}" Width="90" />
+                    <dgrid:DataGridTextColumn Header="Collection" Binding="{Binding Collection}" Width="150" />
                     <dgrid:DataGridTemplateColumn Header="Message" Width="*">
                         <dgrid:DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>

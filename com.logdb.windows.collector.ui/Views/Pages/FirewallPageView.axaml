@@ -314,18 +314,36 @@
                 IsVisible="{Binding FirewallBlockedVisible}"
                 VerticalAlignment="Top"
                 Margin="0,8,8,8">
-            <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="6">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
                     <TextBlock Text="Blocked IPs" FontWeight="Bold" VerticalAlignment="Center" />
                     <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallBlockedCommand}" ToolTip.Tip="Close" />
                 </Grid>
-                <TextBox Grid.Row="1" Text="{Binding FirewallBlockedFilter, Mode=TwoWay}"
-                         Watermark="Filter — IP/CIDR fragment or feed name, e.g. 45.155. or Tor" />
-                <TextBlock Grid.Row="2" Classes="muted" TextWrapping="Wrap"
+                <ComboBox Grid.Row="1"
+                          HorizontalAlignment="Stretch"
+                          ItemsSource="{Binding BlockedSourceOptions}"
+                          SelectedItem="{Binding SelectedBlockedSource, Mode=TwoWay}"
+                          ToolTip.Tip="Restrict to the LogDB Guard custom blocklist, to all public threat feeds, or to one specific feed." />
+                <TextBox Grid.Row="2" Text="{Binding FirewallBlockedFilter, Mode=TwoWay}"
+                         Watermark="Filter — IP/CIDR fragment, e.g. 45.155." />
+                <TextBlock Grid.Row="3" Classes="muted" TextWrapping="Wrap"
                            Text="{Binding FirewallBlockedCountText}" />
-                <ListBox Grid.Row="3" ItemsSource="{Binding FirewallBlockedRows}"
-                         FontFamily="Consolas,Menlo,monospace"
-                         MinHeight="160" />
+                <dgrid:DataGrid Grid.Row="4"
+                                ItemsSource="{Binding FirewallBlockedRows}"
+                                AutoGenerateColumns="False"
+                                IsReadOnly="True"
+                                CanUserSortColumns="False"
+                                CanUserResizeColumns="True"
+                                HeadersVisibility="Column"
+                                GridLinesVisibility="Horizontal"
+                                FontFamily="Consolas,Menlo,monospace"
+                                MinHeight="160">
+                    <dgrid:DataGrid.Columns>
+                        <dgrid:DataGridTextColumn Header="IP / CIDR" Binding="{Binding Ip}" Width="*" MinWidth="120" />
+                        <dgrid:DataGridTextColumn Header="Blocked" Binding="{Binding BlockedAt}" Width="130" />
+                        <dgrid:DataGridTextColumn Header="Feed" Binding="{Binding Source}" Width="*" MinWidth="90" />
+                    </dgrid:DataGrid.Columns>
+                </dgrid:DataGrid>
             </Grid>
         </Border>
     </Grid>

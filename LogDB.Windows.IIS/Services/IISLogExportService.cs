@@ -649,16 +649,26 @@ public class IISLogExportService : BackgroundService
 
     private void LogRowDiagnostic(IISLogEntry entry)
     {
-        // "LogEventTimestamp" is a well-known scope key the LogDB collector
-        // reads to surface the record's own timestamp in the Online Console
-        // (separate from when this line is logged). Only attach it when the
-        // W3C date/time actually parsed.
-        IDisposable? eventTimeScope = entry.Timestamp != default
-            ? _logger.BeginScope(new Dictionary<string, object>
-            {
-                ["LogEventTimestamp"] = entry.Timestamp
-            })
-            : null;
+        // "LogEventTimestamp" / "LogCollection" are well-known scope keys the
+        // LogDB collector reads to surface the record's own timestamp and its
+        // destination collection in the Online Console (separate from when this
+        // line is logged). The timestamp is only attached when the W3C
+        // date/time actually parsed; the collection is resolved exactly as it
+        // is for the shipped document, so the console cannot disagree with what
+        // was sent.
+        var scopeValues = new Dictionary<string, object>();
+        if (entry.Timestamp != default)
+        {
+            scopeValues["LogEventTimestamp"] = entry.Timestamp;
+        }
+
+        var collection = GetCollectionName(entry);
+        if (!string.IsNullOrWhiteSpace(collection))
+        {
+            scopeValues["LogCollection"] = collection;
+        }
+
+        IDisposable? eventTimeScope = scopeValues.Count > 0 ? _logger.BeginScope(scopeValues) : null;
         try
         {
             _logger.LogInformation("► [IIS] {Method} {Uri} -> {Status} ({TimeTaken}ms)",

@@ -12,6 +12,10 @@ public sealed class CollectorLoggerProvider : ILoggerProvider, ISupportExternalS
     /// </summary>
     public const string EventTimestampKey = "LogEventTimestamp";
 
+    /// <summary>Well-known scope key carrying the LogDB collection a record was
+    /// shipped to, so the Online Console can show it next to the record line.</summary>
+    public const string CollectionKey = "LogCollection";
+
     private readonly CollectorLogSink _sink;
     private IExternalScopeProvider _scopeProvider = new LoggerExternalScopeProvider();
 
@@ -75,11 +79,47 @@ public sealed class CollectorLoggerProvider : ILoggerProvider, ISupportExternalS
                 message = $"{message}{Environment.NewLine}{exception}";
             }
 
-            // The event timestamp may be carried either directly on the log
-            // state (a structured property) or on an enclosing scope.
+            // The event timestamp and collection may be carried either directly
+            // on the log state (a structured property) or on an enclosing scope.
             var eventTimestamp = ExtractEventTimestamp(state) ?? ExtractEventTimestampFromScopes();
+            var collection = ExtractCollection(state) ?? ExtractCollectionFromScopes();
 
-            _sink.Write(logLevel, _categoryName, message, eventTimestamp);
+            _sink.Write(logLevel, _categoryName, message, eventTimestamp, collection);
+        }
+
+        private string? ExtractCollectionFromScopes()
+        {
+            string? found = null;
+            _scopeProvider().ForEachScope(
+                (scope, _) =>
+                {
+                    var candidate = ExtractCollection(scope);
+                    if (!string.IsNullOrEmpty(candidate))
+                    {
+                        found = candidate;
+                    }
+                },
+                (object?)null);
+            return found;
+        }
+
+        private static string? ExtractCollection(object? state)
+        {
+            if (state is not IEnumerable<KeyValuePair<string, object>> pairs)
+            {
+                return null;
+            }
+
+            foreach (var pair in pairs)
+            {
+                if (string.Equals(pair.Key, CollectionKey, StringComparison.Ordinal))
+                {
+                    var value = pair.Value as string;
+                    return string.IsNullOrWhiteSpace(value) ? null : value;
+                }
+            }
+
+            return null;
         }
 
         private DateTime? ExtractEventTimestampFromScopes()

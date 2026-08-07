@@ -51,4 +51,13 @@ public class DiagnosticEntryDto
     /// collected record.
     /// </summary>
     public DateTime? EventTimestampUtc { get; set; }
+
+    /// <summary>
+    /// LogDB collection the underlying record was shipped to (e.g. "iis-w3svc1",
+    /// "windows-eventlog-security"). Empty for diagnostics that aren't about a
+    /// specific collected record — the collection is resolved per record from
+    /// the module's collection map / config / auto-generated name, so it is not
+    /// derivable from the module name alone.
+    /// </summary>
+    public string Collection { get; set; } = string.Empty;
 }

@@ -223,12 +223,14 @@ public class EventViewerExportService : BackgroundService
             // Progress was made — clear any frozen-head tracking for this source.
             _stuckHead.Remove(logSource);
 
-            // "LogEventTimestamp" is a well-known scope key the LogDB collector
-            // reads to surface the record's own timestamp in the Online Console
-            // (separate from when this line is logged).
+            // "LogEventTimestamp" / "LogCollection" are well-known scope keys the
+            // LogDB collector reads to surface the record's own timestamp and its
+            // destination collection in the Online Console (separate from when
+            // this line is logged).
             using (_logger.BeginScope(new Dictionary<string, object>
                    {
-                       ["LogEventTimestamp"] = eventEntry.TimeGenerated
+                       ["LogEventTimestamp"] = eventEntry.TimeGenerated,
+                       ["LogCollection"] = ResolveCollectionName(logSource)
                    }))
             {
                 _logger.LogInformation("► [{LogSource}] EventID {EventId} from {Source} at {Time:HH:mm:ss}",
@@ -480,6 +482,29 @@ public class EventViewerExportService : BackgroundService
         _stateTracker.UpdateSourceState(logSource, newTimestamp, latestEvent.Index, totalExported);
     }
 
+    /// <summary>
+    /// Destination collection for a source's events: explicit map entry, then
+    /// the configured collection, then the auto-generated per-source name.
+    /// Shared by the shipped document and the Online Console diagnostic so the
+    /// two can never disagree about where a record went.
+    /// </summary>
+    private string ResolveCollectionName(string logSource)
+    {
+        if (_config.CollectionMap != null &&
+            _config.CollectionMap.TryGetValue(logSource, out var mappedCollection) &&
+            !string.IsNullOrWhiteSpace(mappedCollection))
+        {
+            return mappedCollection;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_config.Collection))
+        {
+            return _config.Collection;
+        }
+
+        return $"windows-eventlog-{logSource.ToLower()}";
+    }
+
     private Log ConvertToLogDto(EventLogEntryModel eventEntry, string logSource)
     {
         var serverName = _configuration["Server:ServerName"] ?? Environment.MachineName;
@@ -502,25 +527,7 @@ public class EventViewerExportService : BackgroundService
         }
         allLabels = allLabels.Distinct().ToList();
 
-        // Determine collection name
-        string? collectionName = null;
-
-        if (_config.CollectionMap != null &&
-            _config.CollectionMap.TryGetValue(logSource, out var mappedCollection) &&
-            !string.IsNullOrWhiteSpace(mappedCollection))
-        {
-            collectionName = mappedCollection;
-        }
-
-        if (string.IsNullOrWhiteSpace(collectionName) && !string.IsNullOrWhiteSpace(_config.Collection))
-        {
-            collectionName = _config.Collection;
-        }
-
-        if (string.IsNullOrWhiteSpace(collectionName))
-        {
-            collectionName = $"windows-eventlog-{logSource.ToLower()}";
-        }
+        var collectionName = ResolveCollectionName(logSource);
 
         // Build XML details if enabled
         string? xmlDetails = null;

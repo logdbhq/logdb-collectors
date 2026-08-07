@@ -105,11 +105,11 @@ public sealed class MainWindowViewModel : ObservableObject
         const string iconRoot = "avares://com.logdb.windows.collector.ui/Assets/Icons/";
         var dashboardNav = new NavigationItemViewModel("Overview", "\uE80F", OverviewPage, $"{iconRoot}four-squares-icon.svg");
         var dataSourcesNav = new NavigationItemViewModel("Data Sources", "\uE7F8", DataSourcesPage, $"{iconRoot}database-line-icon.svg");
-        var firewallNav = new NavigationItemViewModel("Firewall", "", FirewallPage, $"{iconRoot}warning-triangle-icon.svg");
+        var firewallNav = new NavigationItemViewModel("Firewall", "", FirewallPage, $"{iconRoot}firewall-icon.svg");
         // "Diagnostics", not "Online Console" \u2014 the page title and every
         // cross-reference (Open Diagnostics buttons) already used Diagnostics;
         // the rail was the odd one out.
-        var diagnosticsNav = new NavigationItemViewModel("Diagnostics", "\uE9D9", DiagnosticsPage, $"{iconRoot}code-icon.svg");
+        var diagnosticsNav = new NavigationItemViewModel("Diagnostics", "\uE9D9", DiagnosticsPage, $"{iconRoot}logs-icon.svg");
         var serviceNav = new NavigationItemViewModel("Service Management", "\uE7C1", ServiceManagementPage, $"{iconRoot}setting-icon.svg");
         var advancedNav = new NavigationItemViewModel("Advanced", "\uE713", AdvancedPage, $"{iconRoot}sliders-icon.svg");
 

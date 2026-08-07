@@ -392,7 +392,12 @@ public sealed class NamedPipeControlServer : BackgroundService
                     }
                 }
 
-                var blockedResult = _firewallBlockedIndex.Query(blockedQuery?.Filter, blockedQuery?.Max ?? 500);
+                var blockedResult = _firewallBlockedIndex.Query(
+                    blockedQuery?.Filter,
+                    blockedQuery?.Max ?? 500,
+                    blockedQuery?.Source,
+                    blockedQuery?.Kind,
+                    _configMonitor.CurrentValue.Firewall.CustomBlocklist.DisplayName);
                 return new ControlResponseDto
                 {
                     Success = true,

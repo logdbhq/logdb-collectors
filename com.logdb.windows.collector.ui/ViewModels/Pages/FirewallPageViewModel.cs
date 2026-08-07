@@ -6,6 +6,18 @@ using com.logdb.windows.collector.ui.ViewModels.Infrastructure;
 
 namespace com.logdb.windows.collector.ui.ViewModels.Pages;
 
+/// <summary>One entry in the Blocked IPs source picker. <see cref="Source"/>
+/// empty + <see cref="Kind"/> "all" means everything; empty source with kind
+/// "public" is the public-feed roll-up; a named source restricts to that feed.</summary>
+public sealed record BlockedSourceOption(string Label, string Source, string Kind)
+{
+    public override string ToString() => Label;
+}
+
+/// <summary>One row of the Blocked IPs drawer grid. <see cref="BlockedAt"/> is
+/// already converted to local time and formatted for display.</summary>
+public sealed record BlockedIpRow(string Ip, string BlockedAt, string Source);
+
 public sealed class DataSourceFirewallHistoryRow
 {
     public DataSourceFirewallHistoryRow(Action<DataSourceFirewallHistoryRow> openDetails)
@@ -138,6 +150,8 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     private bool _firewallBlockedVisible;
     private string _firewallBlockedFilter = string.Empty;
     private string _firewallBlockedCountText = string.Empty;
+    private BlockedSourceOption? _selectedBlockedSource;
+    private bool _suppressBlockedSourceReload;
     private CancellationTokenSource? _firewallBlockedQueryCts;
     private readonly SemaphoreSlim _firewallHistoryRefreshLock = new(1, 1);
     private readonly SemaphoreSlim _firewallRulesRefreshLock = new(1, 1);
@@ -168,7 +182,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         FirewallIpsView = new ObservableCollection<string>();
         FirewallDetailAddedIps = new ObservableCollection<string>();
         FirewallDetailRemovedIps = new ObservableCollection<string>();
-        FirewallBlockedRows = new ObservableCollection<string>();
+        FirewallBlockedRows = new ObservableCollection<BlockedIpRow>();
         BlocklistFeeds = new ObservableCollection<BlocklistFeedRowViewModel>();
 
         RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
@@ -190,7 +204,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     public ObservableCollection<string> FirewallIpsView { get; }
     public ObservableCollection<string> FirewallDetailAddedIps { get; }
     public ObservableCollection<string> FirewallDetailRemovedIps { get; }
-    public ObservableCollection<string> FirewallBlockedRows { get; }
+    public ObservableCollection<BlockedIpRow> FirewallBlockedRows { get; }
     public ObservableCollection<BlocklistFeedRowViewModel> BlocklistFeeds { get; }
 
     public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
@@ -268,6 +282,22 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     {
         get => _firewallBlockedCountText;
         set => SetProperty(ref _firewallBlockedCountText, value);
+    }
+
+    /// <summary>Source picker for the Blocked IPs drawer: all sources, the
+    /// public-feed roll-up, the Guard subscription, then each feed.</summary>
+    public ObservableCollection<BlockedSourceOption> BlockedSourceOptions { get; } = new();
+
+    public BlockedSourceOption? SelectedBlockedSource
+    {
+        get => _selectedBlockedSource;
+        set
+        {
+            if (SetProperty(ref _selectedBlockedSource, value) && !_suppressBlockedSourceReload)
+            {
+                _ = RefreshFirewallBlockedIpsAsync();
+            }
+        }
     }
 
     public string FirewallIpsTitle
@@ -536,7 +566,13 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     {
         try
         {
-            var result = await _adminClient.GetFirewallBlockedIpsAsync(FirewallBlockedFilter, 500);
+            var selected = SelectedBlockedSource;
+            var result = await _adminClient.GetFirewallBlockedIpsAsync(
+                FirewallBlockedFilter,
+                500,
+                selected?.Source,
+                selected?.Kind);
+
             FirewallBlockedRows.Clear();
 
             if (result == null)
@@ -545,10 +581,14 @@ public sealed class FirewallPageViewModel : PageViewModelBase
                 return;
             }
 
+            RebuildBlockedSourceOptions(result);
+
             foreach (var entry in result.Entries)
             {
-                FirewallBlockedRows.Add(
-                    $"{entry.Ip}   ·   {entry.BlockedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}   ·   {entry.Source}");
+                FirewallBlockedRows.Add(new BlockedIpRow(
+                    entry.Ip,
+                    entry.BlockedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+                    entry.Source));
             }
 
             FirewallBlockedCountText = result.Matched > result.Entries.Count
@@ -558,6 +598,61 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         catch (Exception ex)
         {
             _statusCallback($"Blocked IPs refresh failed: {ex.Message}", false);
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the source picker from the index's own source list: the two
+    /// roll-ups (all public feeds / Guard) then one entry per feed with its IP
+    /// count. Options are only rebuilt when the set actually changed, so the
+    /// combo doesn't flicker or lose the selection on every keystroke.
+    /// </summary>
+    private void RebuildBlockedSourceOptions(BlockedIpListResponseDto result)
+    {
+        var options = new List<BlockedSourceOption>
+        {
+            new("All sources", string.Empty, BlockedIpKinds.All)
+        };
+
+        var publicSources = result.Sources.Where(s => !s.IsGuard).ToList();
+        var guardSources = result.Sources.Where(s => s.IsGuard).ToList();
+
+        if (publicSources.Count > 0)
+        {
+            var publicTotal = publicSources.Sum(s => s.Count);
+            options.Add(new($"All public feeds ({publicTotal:N0})", string.Empty, BlockedIpKinds.Public));
+        }
+
+        foreach (var guard in guardSources)
+        {
+            options.Add(new($"{guard.Source} — custom ({guard.Count:N0})", guard.Source, BlockedIpKinds.Guard));
+        }
+
+        foreach (var feed in publicSources)
+        {
+            options.Add(new($"{feed.Source} ({feed.Count:N0})", feed.Source, BlockedIpKinds.All));
+        }
+
+        if (options.Select(o => o.Label).SequenceEqual(BlockedSourceOptions.Select(o => o.Label)))
+        {
+            return;
+        }
+
+        var previous = SelectedBlockedSource;
+        _suppressBlockedSourceReload = true;
+        try
+        {
+            BlockedSourceOptions.Clear();
+            foreach (var option in options) BlockedSourceOptions.Add(option);
+
+            SelectedBlockedSource =
+                BlockedSourceOptions.FirstOrDefault(o => previous != null
+                    && o.Source == previous.Source && o.Kind == previous.Kind)
+                ?? BlockedSourceOptions[0];
+        }
+        finally
+        {
+            _suppressBlockedSourceReload = false;
         }
     }
 

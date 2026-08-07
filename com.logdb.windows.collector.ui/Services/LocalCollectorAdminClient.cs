@@ -222,6 +222,8 @@ public sealed class LocalCollectorAdminClient
     public async Task<BlockedIpListResponseDto?> GetFirewallBlockedIpsAsync(
         string filter,
         int max = 500,
+        string? source = null,
+        string? kind = null,
         CancellationToken cancellationToken = default)
     {
         if (SelectedTarget == null)
@@ -229,7 +231,7 @@ public sealed class LocalCollectorAdminClient
             return null;
         }
 
-        return await _controlClient.GetFirewallBlockedIpsAsync(SelectedTarget.Value, filter, max, cancellationToken);
+        return await _controlClient.GetFirewallBlockedIpsAsync(SelectedTarget.Value, filter, max, source, kind, cancellationToken);
     }
 
     public async Task<(bool Success, string Message, FirewallRuleIpsDto? Rule)> GetFirewallRuleIpsAsync(

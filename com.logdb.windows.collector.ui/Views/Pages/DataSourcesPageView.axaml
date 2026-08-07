@@ -18,7 +18,7 @@
 
         <TabControl Grid.Row="1" Classes="standard-tabs">
             <TabItem Header="{Binding EventLogTabHeader}">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
+                <Grid Margin="8" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="8">
                     <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
                         <CheckBox Content="Enabled" IsChecked="{Binding EventLogEnabled}" IsEnabled="{Binding EventLogConfigEditable}" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
@@ -76,155 +76,164 @@
                         </Button>
                     </Grid>
 
-                    <Grid Grid.Row="1" ColumnDefinitions="1.2*,1.4*,1.4*" ColumnSpacing="10" IsEnabled="{Binding EventLogConfigEditable}">
-                        <Border Classes="panel" Padding="8">
-                            <StackPanel Spacing="6">
-                                <TextBlock FontWeight="SemiBold" Text="Preset Channels" />
-                                <CheckBox Content="Application" IsChecked="{Binding EventLogApplication}" />
-                                <CheckBox Content="System" IsChecked="{Binding EventLogSystem}" />
-                                <CheckBox Content="Security (admin may be required)" IsChecked="{Binding EventLogSecurity}" />
-                                <CheckBox Content="Setup" IsChecked="{Binding EventLogSetup}" />
-                            </StackPanel>
-                        </Border>
-
-                        <Border Grid.Column="1" Classes="panel" Padding="8">
-                            <StackPanel Spacing="6">
-                                <TextBlock FontWeight="SemiBold" Text="Custom Channels" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBox Width="260" Watermark="Custom channel name" Text="{Binding NewCustomChannel}" />
-                                    <Button Content="Add"
-                                            Command="{Binding AddCustomChannelCommand}"
-                                            ToolTip.Tip="Add the channel name on the left to the list of custom event-log channels." />
-                                    <Button Content="Remove Selected"
-                                            Command="{Binding RemoveCustomChannelCommand}"
-                                            ToolTip.Tip="Remove the selected custom channel from the list." />
-                                </StackPanel>
-                                <ListBox Height="120"
-                                         ItemsSource="{Binding CustomChannels}"
-                                         SelectedItem="{Binding SelectedCustomChannel}">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding Value}" />
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </StackPanel>
-                        </Border>
-
-                        <Border Grid.Column="2" Classes="panel" Padding="8">
-                            <StackPanel Spacing="6">
-                                <TextBlock FontWeight="SemiBold" Text="Level Filter" />
-                                <CheckBox Content="Critical" IsChecked="{Binding LevelCritical}" />
-                                <CheckBox Content="Error" IsChecked="{Binding LevelError}" />
-                                <CheckBox Content="Warning" IsChecked="{Binding LevelWarning}" />
-                                <CheckBox Content="Information" IsChecked="{Binding LevelInformation}" />
-                                <CheckBox Content="Verbose" IsChecked="{Binding LevelVerbose}" />
-                            </StackPanel>
-                        </Border>
-                    </Grid>
-
-                    <Border Grid.Row="2" Classes="panel" Padding="8" IsEnabled="{Binding EventLogConfigEditable}">
-                        <StackPanel Spacing="6">
-                            <CheckBox Content="Resume from last position" IsChecked="{Binding EventLogResumeFromLast}" />
-                            <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding !EventLogResumeFromLast}">
-                                <TextBlock VerticalAlignment="Center" Text="Start date (UTC)" />
-                                <CalendarDatePicker SelectedDate="{Binding EventLogInitialStartDate}" Width="220" Watermark="Pick a date..." />
-                                <TextBlock VerticalAlignment="Center" Classes="muted" Text="Clear date for full history." />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock VerticalAlignment="Center" Text="Provider name override" />
-                                <TextBox Width="280"
-                                         Watermark="(keep original Provider per event)"
-                                         Text="{Binding EventLogProviderNameOverride}"
-                                         ToolTip.Tip="Replace every ingested event's Provider (Source) with this value — applies to both real Windows events AND the Test button. Useful for tagging which server / collector the rows are coming from. The original Provider is preserved on each row as the 'original_provider' attribute. Leave blank to keep each event's actual Source." />
-                                <TextBlock VerticalAlignment="Center" Classes="muted"
-                                           Text="Applied to every event from this collector. Original Provider kept in 'original_provider' attribute." />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <TextBlock VerticalAlignment="Center" Text="Server name override" />
-                                <TextBox Width="280"
-                                         Watermark="(keep Computer per event)"
-                                         Text="{Binding EventLogServerNameOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip.Tip="Replace every ingested event's Computer field (and serverName attribute) with this value — applies to both real Windows events AND the Test button. Useful for tagging which server / collector the rows are coming from. The original Computer is preserved as the 'original_computer' attribute. Leave blank to keep the raw machine name from the Windows event." />
-                                <TextBlock VerticalAlignment="Center" Classes="muted"
-                                           Text="Overrides Computer + serverName. Raw machine name kept in 'original_computer'." />
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <Border Grid.Row="3" Classes="panel" Padding="8" IsEnabled="{Binding EventLogConfigEditable}">
+                    <!-- Only the config block scrolls: the toolbar above and the
+                         Preview grid below stay pinned. The preview DataGrid has a
+                         fixed height, so on a short window the old all-Auto layout
+                         pushed it past the bottom of the page, where it painted
+                         over the status bar instead of being clipped. -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="8">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" Text="Skip Rules" />
-                                    <TextBlock Classes="muted" VerticalAlignment="Center"
-                                               Text="(any matching rule drops the event before it leaves the collector)" />
+                            <Grid ColumnDefinitions="1.2*,1.4*,1.4*" ColumnSpacing="10" IsEnabled="{Binding EventLogConfigEditable}">
+                                <Border Classes="panel" Padding="8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock FontWeight="SemiBold" Text="Preset Channels" />
+                                        <CheckBox Content="Application" IsChecked="{Binding EventLogApplication}" />
+                                        <CheckBox Content="System" IsChecked="{Binding EventLogSystem}" />
+                                        <CheckBox Content="Security (admin may be required)" IsChecked="{Binding EventLogSecurity}" />
+                                        <CheckBox Content="Setup" IsChecked="{Binding EventLogSetup}" />
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="1" Classes="panel" Padding="8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock FontWeight="SemiBold" Text="Custom Channels" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBox Width="260" Watermark="Custom channel name" Text="{Binding NewCustomChannel}" />
+                                            <Button Content="Add"
+                                                    Command="{Binding AddCustomChannelCommand}"
+                                                    ToolTip.Tip="Add the channel name on the left to the list of custom event-log channels." />
+                                            <Button Content="Remove Selected"
+                                                    Command="{Binding RemoveCustomChannelCommand}"
+                                                    ToolTip.Tip="Remove the selected custom channel from the list." />
+                                        </StackPanel>
+                                        <ListBox Height="120"
+                                                 ItemsSource="{Binding CustomChannels}"
+                                                 SelectedItem="{Binding SelectedCustomChannel}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Value}" />
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="2" Classes="panel" Padding="8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock FontWeight="SemiBold" Text="Level Filter" />
+                                        <CheckBox Content="Critical" IsChecked="{Binding LevelCritical}" />
+                                        <CheckBox Content="Error" IsChecked="{Binding LevelError}" />
+                                        <CheckBox Content="Warning" IsChecked="{Binding LevelWarning}" />
+                                        <CheckBox Content="Information" IsChecked="{Binding LevelInformation}" />
+                                        <CheckBox Content="Verbose" IsChecked="{Binding LevelVerbose}" />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Border Classes="panel" Padding="8" IsEnabled="{Binding EventLogConfigEditable}">
+                                <StackPanel Spacing="6">
+                                    <CheckBox Content="Resume from last position" IsChecked="{Binding EventLogResumeFromLast}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding !EventLogResumeFromLast}">
+                                        <TextBlock VerticalAlignment="Center" Text="Start date (UTC)" />
+                                        <CalendarDatePicker SelectedDate="{Binding EventLogInitialStartDate}" Width="220" Watermark="Pick a date..." />
+                                        <TextBlock VerticalAlignment="Center" Classes="muted" Text="Clear date for full history." />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock VerticalAlignment="Center" Text="Provider name override" />
+                                        <TextBox Width="280"
+                                                 Watermark="(keep original Provider per event)"
+                                                 Text="{Binding EventLogProviderNameOverride}"
+                                                 ToolTip.Tip="Replace every ingested event's Provider (Source) with this value — applies to both real Windows events AND the Test button. Useful for tagging which server / collector the rows are coming from. The original Provider is preserved on each row as the 'original_provider' attribute. Leave blank to keep each event's actual Source." />
+                                        <TextBlock VerticalAlignment="Center" Classes="muted"
+                                                   Text="Applied to every event from this collector. Original Provider kept in 'original_provider' attribute." />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock VerticalAlignment="Center" Text="Server name override" />
+                                        <TextBox Width="280"
+                                                 Watermark="(keep Computer per event)"
+                                                 Text="{Binding EventLogServerNameOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip.Tip="Replace every ingested event's Computer field (and serverName attribute) with this value — applies to both real Windows events AND the Test button. Useful for tagging which server / collector the rows are coming from. The original Computer is preserved as the 'original_computer' attribute. Leave blank to keep the raw machine name from the Windows event." />
+                                        <TextBlock VerticalAlignment="Center" Classes="muted"
+                                                   Text="Overrides Computer + serverName. Raw machine name kept in 'original_computer'." />
+                                    </StackPanel>
                                 </StackPanel>
-                                <Button Grid.Column="1"
-                                        Content="Clear All"
-                                        Command="{Binding ClearEventLogFilterRulesCommand}"
-                                        ToolTip.Tip="Remove every rule below." />
-                            </Grid>
-
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Classes="muted" VerticalAlignment="Center" Text="Presets:" />
-                                <Button Content="Security Audit Chatter"
-                                        Command="{Binding ApplyEventLogPresetSecurityAuditCommand}"
-                                        ToolTip.Tip="Drop high-volume Security audit events (4624, 4634, 4647, 4672)." />
-                                <Button Content="Service State Changes"
-                                        Command="{Binding ApplyEventLogPresetServiceStateCommand}"
-                                        ToolTip.Tip="Drop service start/stop events (7036, 7045)." />
-                                <Button Content="DCOM Noise"
-                                        Command="{Binding ApplyEventLogPresetDcomCommand}"
-                                        ToolTip.Tip="Drop noisy DCOM events (10016, 10010)." />
-                            </StackPanel>
-
-                            <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="6">
-                                <ComboBox HorizontalAlignment="Stretch"
-                                          ItemsSource="{Binding EventLogFilterFieldOptions}"
-                                          SelectedItem="{Binding NewEventLogFilterField}" />
-                                <TextBox Grid.Column="1"
-                                         Watermark="Value (e.g. 7036, MSSQL, 'access denied')"
-                                         Text="{Binding NewEventLogFilterValue}" />
-                                <Button Grid.Column="2"
-                                        Content="Add Rule"
-                                        Command="{Binding AddEventLogFilterRuleCommand}"
-                                        ToolTip.Tip="Add a skip rule from the field + value to the left. Any matching event will be dropped before it reaches LogDB." />
-                            </Grid>
-
-                            <Border Classes="panel" Padding="4">
-                                <ItemsControl ItemsSource="{Binding EventLogFilterRules}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid ColumnDefinitions="Auto,220,*,Auto" ColumnSpacing="8" Margin="4">
-                                                <CheckBox IsChecked="{Binding Enabled}"
-                                                          VerticalAlignment="Center"
-                                                          ToolTip.Tip="Disable this rule without deleting it" />
-                                                <TextBlock Grid.Column="1"
-                                                           Text="{Binding FieldDisplay}"
-                                                           VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="2"
-                                                           Text="{Binding Value}"
-                                                           FontFamily="Consolas"
-                                                           VerticalAlignment="Center"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <Button Grid.Column="3"
-                                                        Content="Remove"
-                                                        Command="{Binding $parent[ItemsControl].DataContext.RemoveEventLogFilterRuleCommand}"
-                                                        CommandParameter="{Binding}"
-                                                        ToolTip.Tip="Delete this skip rule. Use the checkbox to disable it temporarily instead." />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
                             </Border>
+
+                            <Border Classes="panel" Padding="8" IsEnabled="{Binding EventLogConfigEditable}">
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" Text="Skip Rules" />
+                                            <TextBlock Classes="muted" VerticalAlignment="Center"
+                                                       Text="(any matching rule drops the event before it leaves the collector)" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Content="Clear All"
+                                                Command="{Binding ClearEventLogFilterRulesCommand}"
+                                                ToolTip.Tip="Remove every rule below." />
+                                    </Grid>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Classes="muted" VerticalAlignment="Center" Text="Presets:" />
+                                        <Button Content="Security Audit Chatter"
+                                                Command="{Binding ApplyEventLogPresetSecurityAuditCommand}"
+                                                ToolTip.Tip="Drop high-volume Security audit events (4624, 4634, 4647, 4672)." />
+                                        <Button Content="Service State Changes"
+                                                Command="{Binding ApplyEventLogPresetServiceStateCommand}"
+                                                ToolTip.Tip="Drop service start/stop events (7036, 7045)." />
+                                        <Button Content="DCOM Noise"
+                                                Command="{Binding ApplyEventLogPresetDcomCommand}"
+                                                ToolTip.Tip="Drop noisy DCOM events (10016, 10010)." />
+                                    </StackPanel>
+
+                                    <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="6">
+                                        <ComboBox HorizontalAlignment="Stretch"
+                                                  ItemsSource="{Binding EventLogFilterFieldOptions}"
+                                                  SelectedItem="{Binding NewEventLogFilterField}" />
+                                        <TextBox Grid.Column="1"
+                                                 Watermark="Value (e.g. 7036, MSSQL, 'access denied')"
+                                                 Text="{Binding NewEventLogFilterValue}" />
+                                        <Button Grid.Column="2"
+                                                Content="Add Rule"
+                                                Command="{Binding AddEventLogFilterRuleCommand}"
+                                                ToolTip.Tip="Add a skip rule from the field + value to the left. Any matching event will be dropped before it reaches LogDB." />
+                                    </Grid>
+
+                                    <Border Classes="panel" Padding="4">
+                                        <ItemsControl ItemsSource="{Binding EventLogFilterRules}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid ColumnDefinitions="Auto,220,*,Auto" ColumnSpacing="8" Margin="4">
+                                                        <CheckBox IsChecked="{Binding Enabled}"
+                                                                  VerticalAlignment="Center"
+                                                                  ToolTip.Tip="Disable this rule without deleting it" />
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding FieldDisplay}"
+                                                                   VerticalAlignment="Center" />
+                                                        <TextBlock Grid.Column="2"
+                                                                   Text="{Binding Value}"
+                                                                   FontFamily="Consolas"
+                                                                   VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <Button Grid.Column="3"
+                                                                Content="Remove"
+                                                                Command="{Binding $parent[ItemsControl].DataContext.RemoveEventLogFilterRuleCommand}"
+                                                                CommandParameter="{Binding}"
+                                                                ToolTip.Tip="Delete this skip rule. Use the checkbox to disable it temporarily instead." />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="{Binding EventLogValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
                         </StackPanel>
-                    </Border>
+                    </ScrollViewer>
 
-                    <TextBlock Grid.Row="4" Text="{Binding EventLogValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
-
-                    <TextBlock Grid.Row="5" Text="Preview" FontWeight="SemiBold" />
-                    <Border Grid.Row="6" Classes="panel">
+                    <TextBlock Grid.Row="2" Text="Preview" FontWeight="SemiBold" />
+                    <Border Grid.Row="3" Classes="panel">
                         <dgrid:DataGrid ItemsSource="{Binding EventLogPreviewRows}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"
@@ -242,7 +251,7 @@
             </TabItem>
 
             <TabItem Header="{Binding IisTabHeader}">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*" RowSpacing="8">
+                <Grid Margin="8" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="8">
                     <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
                         <CheckBox Content="Enabled" IsChecked="{Binding IisEnabled}" IsEnabled="{Binding IisConfigEditable}" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
@@ -300,145 +309,151 @@
                         </Button>
                     </Grid>
 
-                    <Grid Grid.Row="1" ColumnDefinitions="2*,1*" ColumnSpacing="10" IsEnabled="{Binding IisConfigEditable}">
-                        <Border Classes="panel" Padding="8">
-                            <StackPanel Spacing="6">
-                                <TextBlock FontWeight="SemiBold" Text="Log Directories" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBox Width="430" Watermark="C:\inetpub\logs\LogFiles" Text="{Binding NewIisDirectory}" />
-                                    <Button Content="Add"
-                                            Command="{Binding AddIisDirectoryCommand}"
-                                            ToolTip.Tip="Add the path on the left to the list of IIS log directories the collector should watch." />
-                                    <Button Content="Pick Folder"
-                                            Click="OnPickFolderClick"
-                                            ToolTip.Tip="Open a folder picker to choose an IIS log directory and add it to the list." />
-                                    <Button Content="Remove Selected"
-                                            Command="{Binding RemoveIisDirectoryCommand}"
-                                            ToolTip.Tip="Remove the selected directory from the watch list." />
-                                </StackPanel>
-                                <ListBox Height="140"
-                                         ItemsSource="{Binding IisDirectories}"
-                                         SelectedItem="{Binding SelectedIisDirectory}">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Text="{Binding Value}" />
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </StackPanel>
-                        </Border>
-
-                        <Border Grid.Column="1" Classes="panel" Padding="8">
-                            <StackPanel Spacing="6">
-                                <TextBlock FontWeight="SemiBold" Text="Quick Filters" />
-                                <TextBlock Text="Site Name" />
-                                <TextBox Text="{Binding IisSiteName}" />
-                                <CheckBox Content="Include 4xx" IsChecked="{Binding IisInclude4xx}" />
-                                <CheckBox Content="Include 5xx" IsChecked="{Binding IisInclude5xx}" />
-                                <CheckBox Content="Exclude Static Files (.css, .js, .png, ...)" IsChecked="{Binding IisExcludeStaticFiles}" />
-
-                                <TextBlock FontWeight="SemiBold" Text="Server name override" Margin="0,8,0,0" />
-                                <TextBox Watermark="(use global Server name)"
-                                         Text="{Binding IisServerNameOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         ToolTip.Tip="Optional Server name applied to every IIS row from this collector. Replaces Server:ServerName for the IIS module only — EventLog / Metrics / Heartbeat still use the global server name. Leave blank to inherit from the Destination page." />
-                                <TextBlock Classes="muted"
-                                           FontSize="11"
-                                           TextWrapping="Wrap"
-                                           Text="Used as the server identifier on every IIS row." />
-                            </StackPanel>
-                        </Border>
-                    </Grid>
-
-                    <Border Grid.Row="2" Classes="panel" Padding="8" IsEnabled="{Binding IisConfigEditable}">
+                    <!-- Config scrolls; toolbar and the fixed-height Preview grid
+                         stay pinned so the grid can never overflow the page. -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="8">
-                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" Text="Skip Rules" />
-                                    <TextBlock Classes="muted" VerticalAlignment="Center"
-                                               Text="(any matching rule drops the entry before it leaves the collector)" />
+                            <Grid ColumnDefinitions="2*,1*" ColumnSpacing="10" IsEnabled="{Binding IisConfigEditable}">
+                                <Border Classes="panel" Padding="8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock FontWeight="SemiBold" Text="Log Directories" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBox Width="430" Watermark="C:\inetpub\logs\LogFiles" Text="{Binding NewIisDirectory}" />
+                                            <Button Content="Add"
+                                                    Command="{Binding AddIisDirectoryCommand}"
+                                                    ToolTip.Tip="Add the path on the left to the list of IIS log directories the collector should watch." />
+                                            <Button Content="Pick Folder"
+                                                    Click="OnPickFolderClick"
+                                                    ToolTip.Tip="Open a folder picker to choose an IIS log directory and add it to the list." />
+                                            <Button Content="Remove Selected"
+                                                    Command="{Binding RemoveIisDirectoryCommand}"
+                                                    ToolTip.Tip="Remove the selected directory from the watch list." />
+                                        </StackPanel>
+                                        <ListBox Height="140"
+                                                 ItemsSource="{Binding IisDirectories}"
+                                                 SelectedItem="{Binding SelectedIisDirectory}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Value}" />
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Grid.Column="1" Classes="panel" Padding="8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock FontWeight="SemiBold" Text="Quick Filters" />
+                                        <TextBlock Text="Site Name" />
+                                        <TextBox Text="{Binding IisSiteName}" />
+                                        <CheckBox Content="Include 4xx" IsChecked="{Binding IisInclude4xx}" />
+                                        <CheckBox Content="Include 5xx" IsChecked="{Binding IisInclude5xx}" />
+                                        <CheckBox Content="Exclude Static Files (.css, .js, .png, ...)" IsChecked="{Binding IisExcludeStaticFiles}" />
+
+                                        <TextBlock FontWeight="SemiBold" Text="Server name override" Margin="0,8,0,0" />
+                                        <TextBox Watermark="(use global Server name)"
+                                                 Text="{Binding IisServerNameOverride, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip.Tip="Optional Server name applied to every IIS row from this collector. Replaces Server:ServerName for the IIS module only — EventLog / Metrics / Heartbeat still use the global server name. Leave blank to inherit from the Destination page." />
+                                        <TextBlock Classes="muted"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Text="Used as the server identifier on every IIS row." />
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+
+                            <Border Classes="panel" Padding="8" IsEnabled="{Binding IisConfigEditable}">
+                                <StackPanel Spacing="8">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock FontWeight="SemiBold" VerticalAlignment="Center" Text="Skip Rules" />
+                                            <TextBlock Classes="muted" VerticalAlignment="Center"
+                                                       Text="(any matching rule drops the entry before it leaves the collector)" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Content="Clear All"
+                                                Command="{Binding ClearIisFilterRulesCommand}"
+                                                ToolTip.Tip="Remove every rule below. Quick Filters above are not affected." />
+                                    </Grid>
+
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Classes="muted" VerticalAlignment="Center" Text="Presets:" />
+                                        <Button Content="Health/Probe Endpoints"
+                                                Command="{Binding ApplyPresetHealthCommand}"
+                                                ToolTip.Tip="Add path prefixes /health, /healthz, /ready, /live, /ping, /metrics" />
+                                        <Button Content="OPTIONS Preflight"
+                                                Command="{Binding ApplyPresetOptionsPreflightCommand}"
+                                                ToolTip.Tip="Skip CORS preflight requests (HTTP method = OPTIONS)" />
+                                        <Button Content="Common Bots"
+                                                Command="{Binding ApplyPresetBotsCommand}"
+                                                ToolTip.Tip="Skip Googlebot, bingbot, and User-Agents containing 'bot', 'crawl', 'spider'" />
+                                        <Button Content="OAuth Callbacks"
+                                                Command="{Binding ApplyPresetOAuthCallbacksCommand}"
+                                                ToolTip.Tip="Add common OAuth/OIDC callback paths" />
+                                        <Button Content="Drop &gt; 30s (Likely Hung)"
+                                                Command="{Binding ApplyPresetVerySlowCommand}"
+                                                ToolTip.Tip="Skip requests that took longer than 30000 ms — almost always timeouts" />
+                                    </StackPanel>
+
+                                    <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="6">
+                                        <ComboBox HorizontalAlignment="Stretch"
+                                                  ItemsSource="{Binding IisFilterFieldOptions}"
+                                                  SelectedItem="{Binding NewIisFilterField}" />
+                                        <TextBox Grid.Column="1"
+                                                 Watermark="Value (e.g. /api/internal, .map, 304, OPTIONS, *bot*, 10.0.)"
+                                                 Text="{Binding NewIisFilterValue}" />
+                                        <Button Grid.Column="2"
+                                                Content="Add Rule"
+                                                Command="{Binding AddIisFilterRuleCommand}"
+                                                ToolTip.Tip="Add a skip rule from the field + value to the left. Any matching IIS entry will be dropped before it reaches LogDB." />
+                                    </Grid>
+
+                                    <Border Classes="panel" Padding="4">
+                                        <ItemsControl ItemsSource="{Binding IisFilterRules}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid ColumnDefinitions="Auto,220,*,Auto" ColumnSpacing="8" Margin="4">
+                                                        <CheckBox IsChecked="{Binding Enabled}"
+                                                                  VerticalAlignment="Center"
+                                                                  ToolTip.Tip="Disable this rule without deleting it" />
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding FieldDisplay}"
+                                                                   VerticalAlignment="Center" />
+                                                        <TextBlock Grid.Column="2"
+                                                                   Text="{Binding Value}"
+                                                                   FontFamily="Consolas"
+                                                                   VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis" />
+                                                        <Button Grid.Column="3"
+                                                                Content="Remove"
+                                                                Command="{Binding $parent[ItemsControl].DataContext.RemoveIisFilterRuleCommand}"
+                                                                CommandParameter="{Binding}"
+                                                                ToolTip.Tip="Delete this skip rule. Use the checkbox to disable it temporarily instead." />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Border>
                                 </StackPanel>
-                                <Button Grid.Column="1"
-                                        Content="Clear All"
-                                        Command="{Binding ClearIisFilterRulesCommand}"
-                                        ToolTip.Tip="Remove every rule below. Quick Filters above are not affected." />
-                            </Grid>
-
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Classes="muted" VerticalAlignment="Center" Text="Presets:" />
-                                <Button Content="Health/Probe Endpoints"
-                                        Command="{Binding ApplyPresetHealthCommand}"
-                                        ToolTip.Tip="Add path prefixes /health, /healthz, /ready, /live, /ping, /metrics" />
-                                <Button Content="OPTIONS Preflight"
-                                        Command="{Binding ApplyPresetOptionsPreflightCommand}"
-                                        ToolTip.Tip="Skip CORS preflight requests (HTTP method = OPTIONS)" />
-                                <Button Content="Common Bots"
-                                        Command="{Binding ApplyPresetBotsCommand}"
-                                        ToolTip.Tip="Skip Googlebot, bingbot, and User-Agents containing 'bot', 'crawl', 'spider'" />
-                                <Button Content="OAuth Callbacks"
-                                        Command="{Binding ApplyPresetOAuthCallbacksCommand}"
-                                        ToolTip.Tip="Add common OAuth/OIDC callback paths" />
-                                <Button Content="Drop &gt; 30s (Likely Hung)"
-                                        Command="{Binding ApplyPresetVerySlowCommand}"
-                                        ToolTip.Tip="Skip requests that took longer than 30000 ms — almost always timeouts" />
-                            </StackPanel>
-
-                            <Grid ColumnDefinitions="220,*,Auto" ColumnSpacing="6">
-                                <ComboBox HorizontalAlignment="Stretch"
-                                          ItemsSource="{Binding IisFilterFieldOptions}"
-                                          SelectedItem="{Binding NewIisFilterField}" />
-                                <TextBox Grid.Column="1"
-                                         Watermark="Value (e.g. /api/internal, .map, 304, OPTIONS, *bot*, 10.0.)"
-                                         Text="{Binding NewIisFilterValue}" />
-                                <Button Grid.Column="2"
-                                        Content="Add Rule"
-                                        Command="{Binding AddIisFilterRuleCommand}"
-                                        ToolTip.Tip="Add a skip rule from the field + value to the left. Any matching IIS entry will be dropped before it reaches LogDB." />
-                            </Grid>
-
-                            <Border Classes="panel" Padding="4">
-                                <ItemsControl ItemsSource="{Binding IisFilterRules}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid ColumnDefinitions="Auto,220,*,Auto" ColumnSpacing="8" Margin="4">
-                                                <CheckBox IsChecked="{Binding Enabled}"
-                                                          VerticalAlignment="Center"
-                                                          ToolTip.Tip="Disable this rule without deleting it" />
-                                                <TextBlock Grid.Column="1"
-                                                           Text="{Binding FieldDisplay}"
-                                                           VerticalAlignment="Center" />
-                                                <TextBlock Grid.Column="2"
-                                                           Text="{Binding Value}"
-                                                           FontFamily="Consolas"
-                                                           VerticalAlignment="Center"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <Button Grid.Column="3"
-                                                        Content="Remove"
-                                                        Command="{Binding $parent[ItemsControl].DataContext.RemoveIisFilterRuleCommand}"
-                                                        CommandParameter="{Binding}"
-                                                        ToolTip.Tip="Delete this skip rule. Use the checkbox to disable it temporarily instead." />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
                             </Border>
+
+                            <Border Classes="panel" Padding="8" IsEnabled="{Binding IisConfigEditable}">
+                                <StackPanel Spacing="6">
+                                    <CheckBox Content="Resume from last position" IsChecked="{Binding IisResumeFromLast}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding !IisResumeFromLast}">
+                                        <TextBlock VerticalAlignment="Center" Text="Start date (UTC)" />
+                                        <CalendarDatePicker SelectedDate="{Binding IisInitialStartDate}" Width="220" Watermark="Pick a date..." />
+                                        <TextBlock VerticalAlignment="Center" Classes="muted" Text="Clear date for full history." />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="{Binding IisValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
                         </StackPanel>
-                    </Border>
+                    </ScrollViewer>
 
-                    <Border Grid.Row="3" Classes="panel" Padding="8" IsEnabled="{Binding IisConfigEditable}">
-                        <StackPanel Spacing="6">
-                            <CheckBox Content="Resume from last position" IsChecked="{Binding IisResumeFromLast}" />
-                            <StackPanel Orientation="Horizontal" Spacing="8" IsEnabled="{Binding !IisResumeFromLast}">
-                                <TextBlock VerticalAlignment="Center" Text="Start date (UTC)" />
-                                <CalendarDatePicker SelectedDate="{Binding IisInitialStartDate}" Width="220" Watermark="Pick a date..." />
-                                <TextBlock VerticalAlignment="Center" Classes="muted" Text="Clear date for full history." />
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <TextBlock Grid.Row="4" Text="{Binding IisValidationMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
-
-                    <TextBlock Grid.Row="5" Text="Preview" FontWeight="SemiBold" />
-                    <Border Grid.Row="6" Classes="panel">
+                    <TextBlock Grid.Row="2" Text="Preview" FontWeight="SemiBold" />
+                    <Border Grid.Row="3" Classes="panel">
                         <dgrid:DataGrid ItemsSource="{Binding IisPreviewRows}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"
@@ -457,7 +472,7 @@
             </TabItem>
 
             <TabItem Header="{Binding MetricsTabHeader}">
-                <Grid Margin="8" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="8">
+                <Grid Margin="8" RowDefinitions="Auto,*,Auto" RowSpacing="8">
                     <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8">
                         <CheckBox Content="Enabled" IsChecked="{Binding MetricsEnabled}" IsEnabled="{Binding MetricsConfigEditable}" VerticalAlignment="Center" />
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="Poll (s)" />
@@ -510,56 +525,62 @@
                         </Button>
                     </Grid>
 
-                    <Grid Grid.Row="1" ColumnDefinitions="1.2*,2*" ColumnSpacing="10" IsEnabled="{Binding MetricsConfigEditable}">
-                        <Border Classes="panel" Padding="8">
-                            <StackPanel Spacing="6">
-                                <TextBlock FontWeight="SemiBold" Text="Categories" />
-                                <CheckBox Content="CPU" IsChecked="{Binding MetricsCpu}" />
-                                <CheckBox Content="Memory" IsChecked="{Binding MetricsMemory}" />
-                                <CheckBox Content="Disk" IsChecked="{Binding MetricsDisk}" />
-                                <CheckBox Content="Network" IsChecked="{Binding MetricsNetwork}" />
+                    <!-- Config scrolls; toolbar and the fixed-height Preview grid
+                         stay pinned so the grid can never overflow the page. -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="8">
+                            <Grid ColumnDefinitions="1.2*,2*" ColumnSpacing="10" IsEnabled="{Binding MetricsConfigEditable}">
+                                <Border Classes="panel" Padding="8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock FontWeight="SemiBold" Text="Categories" />
+                                        <CheckBox Content="CPU" IsChecked="{Binding MetricsCpu}" />
+                                        <CheckBox Content="Memory" IsChecked="{Binding MetricsMemory}" />
+                                        <CheckBox Content="Disk" IsChecked="{Binding MetricsDisk}" />
+                                        <CheckBox Content="Network" IsChecked="{Binding MetricsNetwork}" />
 
-                                <TextBlock FontWeight="SemiBold" Text="Server name override" Margin="0,8,0,0" />
-                                <TextBox Watermark="(use global Server name)"
-                                         Text="{Binding MetricsServerNameOverride}"
-                                         ToolTip.Tip="Optional Server name applied to every metric row from this collector. Replaces Server:ServerName for the WindowsTracker module only — EventLog / IIS still use the global server name. Leave blank to inherit from the Destination page." />
-                                <TextBlock Classes="muted"
-                                           FontSize="11"
-                                           TextWrapping="Wrap"
-                                           Text="Used as the server identifier on every metric." />
-                            </StackPanel>
-                        </Border>
+                                        <TextBlock FontWeight="SemiBold" Text="Server name override" Margin="0,8,0,0" />
+                                        <TextBox Watermark="(use global Server name)"
+                                                 Text="{Binding MetricsServerNameOverride}"
+                                                 ToolTip.Tip="Optional Server name applied to every metric row from this collector. Replaces Server:ServerName for the WindowsTracker module only — EventLog / IIS still use the global server name. Leave blank to inherit from the Destination page." />
+                                        <TextBlock Classes="muted"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap"
+                                                   Text="Used as the server identifier on every metric." />
+                                    </StackPanel>
+                                </Border>
 
-                        <Border Grid.Column="1" Classes="panel" Padding="8">
-                            <StackPanel Spacing="6">
-                                <TextBlock FontWeight="SemiBold" Text="Tags" />
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <TextBox Width="180" Watermark="Key" Text="{Binding NewTagKey}" />
-                                    <TextBox Width="220" Watermark="Value" Text="{Binding NewTagValue}" />
-                                    <Button Content="Add/Update"
-                                            Command="{Binding AddTagCommand}"
-                                            ToolTip.Tip="Add the key=value pair to every metric sample, or update the value if the key already exists." />
-                                    <Button Content="Remove Selected"
-                                            Command="{Binding RemoveTagCommand}"
-                                            ToolTip.Tip="Remove the selected tag from the list." />
-                                </StackPanel>
-                                <ListBox Height="120" ItemsSource="{Binding MetricTags}" SelectedItem="{Binding SelectedTag}">
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid ColumnDefinitions="180,*">
-                                                <TextBlock Text="{Binding Key}" />
-                                                <TextBlock Grid.Column="1" Text="{Binding Value}" />
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                            </StackPanel>
-                        </Border>
-                    </Grid>
+                                <Border Grid.Column="1" Classes="panel" Padding="8">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock FontWeight="SemiBold" Text="Tags" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBox Width="180" Watermark="Key" Text="{Binding NewTagKey}" />
+                                            <TextBox Width="220" Watermark="Value" Text="{Binding NewTagValue}" />
+                                            <Button Content="Add/Update"
+                                                    Command="{Binding AddTagCommand}"
+                                                    ToolTip.Tip="Add the key=value pair to every metric sample, or update the value if the key already exists." />
+                                            <Button Content="Remove Selected"
+                                                    Command="{Binding RemoveTagCommand}"
+                                                    ToolTip.Tip="Remove the selected tag from the list." />
+                                        </StackPanel>
+                                        <ListBox Height="120" ItemsSource="{Binding MetricTags}" SelectedItem="{Binding SelectedTag}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid ColumnDefinitions="180,*">
+                                                        <TextBlock Text="{Binding Key}" />
+                                                        <TextBlock Grid.Column="1" Text="{Binding Value}" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
 
-                    <TextBlock Grid.Row="2" Text="{Binding MetricsPreviewMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+                            <TextBlock Text="{Binding MetricsPreviewMessage}" Foreground="{DynamicResource SecondaryTextBrushTheme}" />
+                        </StackPanel>
+                    </ScrollViewer>
 
-                    <Border Grid.Row="3" Classes="panel">
+                    <Border Grid.Row="2" Classes="panel">
                         <dgrid:DataGrid ItemsSource="{Binding MetricsPreviewRows}"
                                         AutoGenerateColumns="False"
                                         IsReadOnly="True"

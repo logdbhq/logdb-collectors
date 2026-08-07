@@ -252,9 +252,17 @@ public sealed class ControlChannelClient
         CollectorInstanceMode mode,
         string filter,
         int max = 500,
+        string? source = null,
+        string? kind = null,
         CancellationToken cancellationToken = default)
     {
-        var payload = JsonSerializer.Serialize(new BlockedIpQueryDto { Filter = filter, Max = max }, JsonOptions);
+        var payload = JsonSerializer.Serialize(new BlockedIpQueryDto
+        {
+            Filter = filter,
+            Max = max,
+            Source = source ?? string.Empty,
+            Kind = string.IsNullOrWhiteSpace(kind) ? BlockedIpKinds.All : kind
+        }, JsonOptions);
         var response = await SendAsync(
             mode,
             ControlCommands.GetFirewallBlockedIps,

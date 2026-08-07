@@ -8,6 +8,8 @@ namespace com.logdb.windows.collector.ui.Views.Pages;
 
 public partial class DiagnosticsPageView : UserControl
 {
+    private const string ConsoleGridKey = "diagnostics.console";
+
     private bool _columnWidthsApplied;
 
     public DiagnosticsPageView()
@@ -73,45 +75,55 @@ public partial class DiagnosticsPageView : UserControl
         PersistOnlineConsoleColumnWidths();
     }
 
+    /// <summary>
+    /// Widths are persisted positionally through the shared grid store, which
+    /// only restores when the saved count still matches the grid. The previous
+    /// scheme mapped four named fields onto columns 0-3 and had already drifted
+    /// (an "Event Time" column was inserted at index 1), so Level's width was
+    /// being applied to Event Time, Category's to Level, and so on. Adding the
+    /// Collection column would have skewed it further.
+    /// </summary>
     private void ApplyOnlineConsoleColumnWidths()
     {
-        if (OnlineConsoleDataGrid.Columns.Count < 4)
+        var saved = WindowPlacementStore.LoadGridColumnWidths(ConsoleGridKey);
+        if (saved == null || saved.Length != OnlineConsoleDataGrid.Columns.Count)
         {
             return;
         }
 
-        var saved = WindowPlacementStore.LoadDiagnosticsOnlineColumns();
-        if (saved == null)
+        for (var i = 0; i < OnlineConsoleDataGrid.Columns.Count; i++)
         {
-            return;
+            if (saved[i] > 16)
+            {
+                OnlineConsoleDataGrid.Columns[i].Width = new DataGridLength(saved[i], DataGridLengthUnitType.Pixel);
+            }
         }
-
-        SetColumnWidth(OnlineConsoleDataGrid.Columns[0], saved.Time, 170);
-        SetColumnWidth(OnlineConsoleDataGrid.Columns[1], saved.Level, 90);
-        SetColumnWidth(OnlineConsoleDataGrid.Columns[2], saved.Category, 90);
-        SetColumnWidth(OnlineConsoleDataGrid.Columns[3], saved.Message, 640);
     }
 
     private void PersistOnlineConsoleColumnWidths()
     {
-        if (OnlineConsoleDataGrid.Columns.Count < 4)
+        if (OnlineConsoleDataGrid.Columns.Count == 0)
         {
             return;
         }
 
-        var columns = new WindowPlacementStore.DiagnosticsOnlineColumnsDto
+        var widths = new double[OnlineConsoleDataGrid.Columns.Count];
+        for (var i = 0; i < widths.Length; i++)
         {
-            Time = GetColumnWidth(OnlineConsoleDataGrid.Columns[0], 170),
-            Level = GetColumnWidth(OnlineConsoleDataGrid.Columns[1], 90),
-            Category = GetColumnWidth(OnlineConsoleDataGrid.Columns[2], 90),
-            Message = GetColumnWidth(OnlineConsoleDataGrid.Columns[3], 640),
-            UpdatedAtUtc = DateTime.UtcNow
-        };
+            widths[i] = GetColumnWidth(OnlineConsoleDataGrid.Columns[i]);
+        }
 
-        WindowPlacementStore.SaveDiagnosticsOnlineColumns(columns);
+        // All zeros means the grid was never measured — don't overwrite a good
+        // saved layout with garbage.
+        if (widths.All(w => w <= 0))
+        {
+            return;
+        }
+
+        WindowPlacementStore.SaveGridColumnWidths(ConsoleGridKey, widths);
     }
 
-    private static double GetColumnWidth(DataGridColumn column, double fallback)
+    private static double GetColumnWidth(DataGridColumn column)
     {
         var actualWidthProperty = column.GetType().GetProperty("ActualWidth");
         if (actualWidthProperty?.GetValue(column) is double actualWidth
@@ -127,12 +139,6 @@ public partial class DiagnosticsPageView : UserControl
             return Math.Round(width.Value, 2);
         }
 
-        return fallback;
-    }
-
-    private static void SetColumnWidth(DataGridColumn column, double requestedWidth, double fallback)
-    {
-        var width = requestedWidth > 16 ? requestedWidth : fallback;
-        column.Width = new DataGridLength(width, DataGridLengthUnitType.Pixel);
+        return 0;
     }
 }

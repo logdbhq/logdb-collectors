@@ -53,6 +53,33 @@ public sealed class BlockedIpQueryDto
 
     /// <summary>Cap on returned entries (server clamps to 1–2000).</summary>
     public int Max { get; set; } = 500;
+
+    /// <summary>Exact source (feed display name) to restrict to; empty = any.</summary>
+    public string Source { get; set; } = string.Empty;
+
+    /// <summary>One of <see cref="BlockedIpKinds"/>. Filtering happens on the
+    /// service side so Matched/Total stay accurate above the display cap.</summary>
+    public string Kind { get; set; } = BlockedIpKinds.All;
+}
+
+public static class BlockedIpKinds
+{
+    public const string All = "all";
+
+    /// <summary>Everything except the Guard subscription — the public threat feeds.</summary>
+    public const string Public = "public";
+
+    /// <summary>Only the LogDB Guard custom blocklist.</summary>
+    public const string Guard = "guard";
+}
+
+/// <summary>One source in the index, with how many IPs it currently accounts
+/// for — used to populate the source picker without a second round trip.</summary>
+public sealed class BlockedIpSourceDto
+{
+    public string Source { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public bool IsGuard { get; set; }
 }
 
 public sealed class BlockedIpListResponseDto
@@ -65,6 +92,10 @@ public sealed class BlockedIpListResponseDto
 
     /// <summary>Newest-blocked first.</summary>
     public List<BlockedIpEntryDto> Entries { get; set; } = new();
+
+    /// <summary>Every source in the index (not just the filtered subset), so the
+    /// picker keeps its full option list while a narrow filter is applied.</summary>
+    public List<BlockedIpSourceDto> Sources { get; set; } = new();
 }
 
 public sealed class DeleteFirewallRuleRequestDto

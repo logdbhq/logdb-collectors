@@ -14,6 +14,7 @@ public sealed class OnlineDiagnosticRowViewModel
     private static readonly IBrush IisBrush = new SolidColorBrush(Color.Parse("#4FC3F7"));
     private static readonly IBrush MetricsBrush = new SolidColorBrush(Color.Parse("#FFB74D"));
     private static readonly IBrush HeartbeatBrush = new SolidColorBrush(Color.Parse("#BA68C8"));
+    private static readonly IBrush FirewallBrush = new SolidColorBrush(Color.Parse("#E57373"));
 
     private static readonly IBrush SentTagBrush = new SolidColorBrush(Color.Parse("#2E7D32"));
     private static readonly IBrush NotSentTagBrush = new SolidColorBrush(Color.Parse("#616161"));
@@ -22,6 +23,16 @@ public sealed class OnlineDiagnosticRowViewModel
     public string EventTimeLocal { get; set; } = string.Empty;
     public string Level { get; set; } = string.Empty;
     public string Module { get; set; } = string.Empty;
+
+    /// <summary>Raw ILogger category the line came from. Not shown in the grid —
+    /// <see cref="Module"/> is the readable roll-up of it — but kept on the row so
+    /// the detail pane can name the exact type that logged.</summary>
+    public string Category { get; set; } = string.Empty;
+
+    /// <summary>LogDB collection the record went to; empty for lines that
+    /// aren't about a specific record (scan summaries, banners, errors).</summary>
+    public string Collection { get; set; } = string.Empty;
+
     public string Message { get; set; } = string.Empty;
     public IBrush? RowForeground { get; set; }
     public AsyncRelayCommand? CopyCommand { get; set; }
@@ -86,6 +97,10 @@ public sealed class OnlineDiagnosticRowViewModel
             sb.Append("Event Time: ").AppendLine(EventTimeLocal);
         sb.Append("Level:      ").AppendLine(Level);
         sb.Append("Module:     ").AppendLine(Module);
+        if (!string.IsNullOrEmpty(Category))
+            sb.Append("Source:     ").AppendLine(Category);
+        if (!string.IsNullOrEmpty(Collection))
+            sb.Append("Collection: ").AppendLine(Collection);
         if (HasSendTag)
             sb.Append("Status:     ").AppendLine(SendTag);
         sb.AppendLine();
@@ -93,6 +108,13 @@ public sealed class OnlineDiagnosticRowViewModel
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Maps an ILogger category (a full type name) to the data-source module the
+    /// line belongs to. Everything that isn't one of the collector's modules is
+    /// bucketed into a coarse "Collector"/"System" label rather than the raw class
+    /// name — the Module column is a data-source filter, not a stack trace. The
+    /// untouched category stays on the row and is shown in the detail pane.
+    /// </summary>
     public static (string Module, IBrush? Brush) ResolveModule(string category)
     {
         if (category.Contains(".eventviewer.", StringComparison.OrdinalIgnoreCase))
@@ -103,9 +125,18 @@ public sealed class OnlineDiagnosticRowViewModel
             return ("Metrics", MetricsBrush);
         if (category.Contains("Heartbeat", StringComparison.OrdinalIgnoreCase))
             return ("Heartbeat", HeartbeatBrush);
+        // Covers both the standalone exporter (LogDB.Windows.Firewall.*) and the
+        // collector-side blocklist services (…collector.Services.Firewall.*).
+        if (category.Contains("Firewall", StringComparison.OrdinalIgnoreCase))
+            return ("Firewall", FirewallBrush);
 
-        var shortName = category.Contains('.') ? category[(category.LastIndexOf('.') + 1)..] : category;
-        return (shortName, null);
+        // The collector's own host, control channel, spooler and status registry.
+        if (category.StartsWith("com.logdb.windows.collector", StringComparison.OrdinalIgnoreCase))
+            return ("Collector", null);
+
+        // Framework and SDK plumbing: Microsoft.Extensions.*, System.Net.Http.*,
+        // Grpc.Net.Client.*, LogDB.Client.* transport retries.
+        return ("System", null);
     }
 }
 
@@ -152,7 +183,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
     private readonly List<OnlineDiagnosticRowViewModel> _allOnlineRows = new();
     private static readonly HashSet<string> KnownModules = new(StringComparer.OrdinalIgnoreCase)
     {
-        "EventLog", "IIS", "Metrics", "Heartbeat"
+        "EventLog", "IIS", "Metrics", "Heartbeat", "Firewall"
     };
 
     public const string OnlineModuleFilterAll = "(All)";
@@ -185,6 +216,7 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
             new("IIS", OnFilterSelectionChanged),
             new("Metrics", OnFilterSelectionChanged),
             new("Heartbeat", OnFilterSelectionChanged),
+            new("Firewall", OnFilterSelectionChanged),
             new(OnlineModuleFilterOther, OnFilterSelectionChanged)
         };
 
@@ -414,6 +446,8 @@ public sealed class DiagnosticsPageViewModel : PageViewModelBase
                             : string.Empty,
                         Level = line.Level,
                         Module = module,
+                        Category = line.Category,
+                        Collection = line.Collection,
                         Message = line.Message,
                         RowForeground = brush
                     };
