@@ -23,6 +23,20 @@ public sealed class FirewallRuleInfoDto
     /// <summary>True for rules created before group tagging — matched by
     /// display-name prefix instead of the "LogDB Collector" group.</summary>
     public bool Legacy { get; set; }
+
+    /// <summary>
+    /// True for LogDB-branded rules on this host that the collector did NOT
+    /// create and does not maintain — most often the "LogDB.Guard - Blocked IPs"
+    /// rule left behind by the desktop app's firewall-export script, or a
+    /// "LogDB.IPAnalyzer - …" rule. They are reported so the operator can see
+    /// every LogDB rule actually enforcing on the box; without this they were
+    /// invisible here while still blocking traffic, which made the collector's
+    /// rule list look like the whole picture when it wasn't.
+    ///
+    /// The collector never writes, refreshes or deletes these — <see
+    /// cref="Id"/> is informational and DeleteFirewallRule rejects it.
+    /// </summary>
+    public bool Unmanaged { get; set; }
 }
 
 /// <summary>Live RemoteAddress list of one managed rule, read from the OS
@@ -43,7 +57,35 @@ public sealed class BlockedIpEntryDto
 {
     public string Ip { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
+
+    /// <summary>When this IP was blocked. Authoritative (Guard's own added_at)
+    /// when <see cref="BlockedAtApproximate"/> is false; see that field.</summary>
     public DateTime BlockedAtUtc { get; set; }
+
+    /// <summary>
+    /// True when <see cref="BlockedAtUtc"/> is merely when this collector first
+    /// observed the IP, not when it was actually blocked — the only thing we can
+    /// know for a public feed (they ship no per-entry dates) or for an IP that
+    /// was already in a rule when the index first ran.
+    ///
+    /// False means the timestamp came from the Guard backend and is the real
+    /// block time. The UI must distinguish the two: presenting a first-observed
+    /// time as the block time is how "blocked 3 minutes ago" ends up shown for
+    /// an IP blocked last month.
+    /// </summary>
+    public bool BlockedAtApproximate { get; set; }
+
+    /// <summary>
+    /// Operator's free-text reason, for Guard-sourced IPs only — public feeds
+    /// have none. Display/audit text: unsanitized and unbounded server-side, so
+    /// it is whitespace-collapsed and capped before it is stored here, and must
+    /// never be parsed for logic.
+    /// </summary>
+    public string Reason { get; set; } = string.Empty;
+
+    /// <summary>Who added the block (Guard-sourced IPs only), e.g. an operator
+    /// email or "User". Empty for public feeds.</summary>
+    public string AddedBy { get; set; } = string.Empty;
 }
 
 public sealed class BlockedIpQueryDto

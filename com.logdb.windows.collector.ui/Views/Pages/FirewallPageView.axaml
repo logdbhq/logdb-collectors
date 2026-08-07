@@ -2,6 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:dgrid="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.DataGrid"
              xmlns:vmPages="using:com.logdb.windows.collector.ui.ViewModels.Pages"
+             x:DataType="vmPages:FirewallPageViewModel"
+             x:CompileBindings="True"
              x:Class="com.logdb.windows.collector.ui.Views.Pages.FirewallPageView">
     <Grid x:Name="FirewallTabLayout">
         <Grid.ColumnDefinitions>
@@ -18,7 +20,7 @@
                 <StackPanel Spacing="10">
                     <StackPanel Spacing="2">
                         <TextBlock Text="Firewall Sync" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="Pulls public IP-reputation feeds (FireHOL, Tor exits, IPsum, …) on a schedule and turns them into inbound Windows Firewall block rules."
+                        <TextBlock Text="Turns blocklists into inbound Windows Firewall block rules on a schedule. Two independent sources: public IP-reputation feeds (FireHOL, Tor exits, IPsum, …), which are ON by default, and your own LogDB Guard blocklist, which is OFF by default. Enabling firewall sync alone applies the public feeds and none of your own blocks."
                                    Classes="muted"
                                    TextWrapping="Wrap" />
                     </StackPanel>
@@ -49,8 +51,8 @@
 
                     <Border Classes="card" Padding="8" Margin="0,6,0,0">
                         <StackPanel Spacing="6">
-                            <TextBlock Text="LogDB Guard (custom blocklist)" FontWeight="SemiBold" />
-                            <TextBlock Text="Subscribe to the IPs your LogDB Guard instance is blocking (CrowdSec decisions, operator-added entries) and apply them as one extra feed."
+                            <TextBlock Text="LogDB Guard (custom blocklist) — your own blocks" FontWeight="SemiBold" />
+                            <TextBlock Text="Subscribe to the IPs your LogDB Guard instance is blocking (CrowdSec decisions, entries you added from the desktop app) and apply them as one extra feed. This is OFF by default — until you enable it, an IP you block in the desktop app is never applied to this host."
                                        Classes="muted"
                                        TextWrapping="Wrap" />
                             <CheckBox Content="Enable Guard subscription"
@@ -74,12 +76,12 @@
                     <Border Classes="card" Padding="8" Margin="0,6,0,0">
                         <StackPanel Spacing="6">
                             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                                <TextBlock Text="Public blocklist feeds" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="Public blocklist feeds — third-party lists" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 <Button Grid.Column="1" Content="Add Feed" Command="{Binding AddBlocklistFeedCommand}" />
                                 <Button Grid.Column="2" Content="Remove Selected"
                                         Command="{Binding RemoveSelectedBlocklistFeedCommand}" />
                             </Grid>
-                            <TextBlock Text="Each row becomes a Windows Firewall rule named '{Prefix} - {Display Name}'. Toggle Enabled to disable a feed without losing the URL. MinScore filters scored feeds like IPsum (0 = no filter)."
+                            <TextBlock Text="Curated by third parties, not by you — together these block tens of thousands of addresses, including cloud-provider ranges. Each row becomes a Windows Firewall rule named '{Prefix} - {Display Name}'. Toggle On to disable a feed without losing the URL. MinScore filters scored feeds like IPsum (0 = no filter). Set a Whitelist Path above to protect your own management addresses."
                                        Classes="muted"
                                        TextWrapping="Wrap"
                                        FontSize="11" />
@@ -118,24 +120,70 @@
             </Border>
         </Expander>
 
+        <!-- Enforcement panel. The two blocklist sources are independent and
+             their defaults point opposite ways (public feeds ship on, the
+             Guard subscription ships off), so each gets its own ON/OFF line
+             rather than a single combined count. -->
         <Border Grid.Row="1" Classes="panel">
-            <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
-                <TextBlock Text="Configuration" Classes="muted" />
-                <TextBlock Grid.Column="1" Text="{Binding FirewallTabSummary}" />
-                <TextBlock Grid.Row="1" Text="Runtime" Classes="muted" />
-                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding FirewallTabRuntime}" />
-            </Grid>
+            <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                    <TextBlock Text="Configuration" Classes="muted" />
+                    <TextBlock Grid.Column="1" Text="{Binding FirewallTabSummary}" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="1" Text="Runtime" Classes="muted" />
+                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding FirewallTabRuntime}" TextWrapping="Wrap" />
+                </Grid>
+
+                <Separator />
+
+                <TextBlock Text="What this collector is blocking" FontWeight="SemiBold" />
+
+                <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="6" ColumnSpacing="8">
+                    <TextBlock Text="Public threat feeds" Classes="muted" VerticalAlignment="Top" />
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding PublicFeedsHeadline}"
+                               TextWrapping="Wrap"
+                               Classes.stateOn="{Binding PublicFeedsOn}"
+                               Classes.stateOff="{Binding !PublicFeedsOn}" />
+
+                    <TextBlock Grid.Row="1" Text="Your Guard blocklist" Classes="muted" VerticalAlignment="Top" />
+                    <TextBlock Grid.Row="1" Grid.Column="1"
+                               Text="{Binding GuardHeadline}"
+                               TextWrapping="Wrap"
+                               Classes.stateOn="{Binding GuardOn}"
+                               Classes.stateOff="{Binding !GuardOn}" />
+                </Grid>
+
+                <ItemsControl ItemsSource="{Binding EnforcementNotices}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vmPages:FirewallNoticeRow">
+                            <Grid ColumnDefinitions="18,*" ColumnSpacing="6" Margin="0,3,0,0">
+                                <TextBlock Text="{Binding Icon}"
+                                           VerticalAlignment="Top"
+                                           Classes.warn="{Binding IsWarning}"
+                                           Classes.muted="{Binding !IsWarning}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Text}"
+                                           TextWrapping="Wrap"
+                                           FontSize="12"
+                                           Classes.warn="{Binding IsWarning}"
+                                           Classes.muted="{Binding !IsWarning}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
         </Border>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8">
             <Button Content="Refresh Active Rules"
                     Command="{Binding RefreshFirewallRulesCommand}"
-                    ToolTip.Tip="Re-read the collector-managed block rules currently applied to the OS firewall." />
+                    ToolTip.Tip="Re-read the LogDB block rules currently applied to the OS firewall — those this collector manages, plus any other LogDB rules present on the host." />
             <Button Content="Blocked IPs"
                     Command="{Binding OpenFirewallBlockedIpsCommand}"
-                    ToolTip.Tip="Browse every IP/CIDR currently blocked, with the date it was first blocked and the feed that supplied it." />
+                    ToolTip.Tip="Browse every IP/CIDR this collector has blocked, with the date it was first blocked and the feed that supplied it. Rules written by the desktop app's firewall export are not included — they appear in the Active Rules grid as 'not managed here'." />
             <TextBlock VerticalAlignment="Center"
                        Classes="muted"
+                       TextWrapping="Wrap"
                        Text="{Binding FirewallRulesSummary}" />
         </StackPanel>
 
@@ -173,9 +221,10 @@
                             <DataTemplate>
                                 <Button Content="{Binding DeleteButtonText}"
                                         Command="{Binding DeleteCommand}"
+                                        IsEnabled="{Binding CanDelete}"
                                         HorizontalAlignment="Center"
                                         VerticalAlignment="Center"
-                                        ToolTip.Tip="Remove this rule from the OS firewall (click twice to confirm). Guard-sourced rules also have their IPs removed from the LogDB backend; public-feed rules re-appear on the next sync." />
+                                        ToolTip.Tip="Remove this rule from the OS firewall (click twice to confirm). Guard-sourced rules also have their IPs removed from the LogDB backend; public-feed rules re-appear on the next sync. Disabled for LogDB rules this collector does not manage." />
                             </DataTemplate>
                         </dgrid:DataGridTemplateColumn.CellTemplate>
                     </dgrid:DataGridTemplateColumn>
@@ -303,18 +352,20 @@
             </Grid>
         </Border>
 
-        <!-- Blocked IPs drawer: every currently blocked IP/CIDR with
-             its first-blocked date and source feed, from the
-             collector-maintained index (the OS firewall itself has
-             no per-address dates). Shares the column/splitter/width
-             with the other drawers; mutually exclusive with them. -->
+        <!-- Blocked IPs drawer: every IP/CIDR this collector currently
+             blocks, with when it was blocked, why, and by whom. The date
+             is Guard's own added_at where available and a first-observed
+             time otherwise (the OS firewall stores no per-address dates
+             and public feeds ship none); "why"/"added by" exist only for
+             Guard-sourced entries. Shares the column/splitter/width with
+             the other drawers; mutually exclusive with them. -->
         <Border x:Name="FirewallBlockedDrawer"
                 Grid.Column="2"
                 Classes="detail-panel"
                 IsVisible="{Binding FirewallBlockedVisible}"
                 VerticalAlignment="Top"
                 Margin="0,8,8,8">
-            <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="6">
+            <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*" RowSpacing="6">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
                     <TextBlock Text="Blocked IPs" FontWeight="Bold" VerticalAlignment="Center" />
                     <Button Grid.Column="1" Content="✕" Command="{Binding CloseFirewallBlockedCommand}" ToolTip.Tip="Close" />
@@ -325,23 +376,39 @@
                           SelectedItem="{Binding SelectedBlockedSource, Mode=TwoWay}"
                           ToolTip.Tip="Restrict to the LogDB Guard custom blocklist, to all public threat feeds, or to one specific feed." />
                 <TextBox Grid.Row="2" Text="{Binding FirewallBlockedFilter, Mode=TwoWay}"
-                         Watermark="Filter — IP/CIDR fragment, e.g. 45.155." />
+                         Watermark="Filter — IP, feed, reason or who blocked it" />
                 <TextBlock Grid.Row="3" Classes="muted" TextWrapping="Wrap"
                            Text="{Binding FirewallBlockedCountText}" />
-                <dgrid:DataGrid Grid.Row="4"
+                <TextBlock Grid.Row="4" Classes="muted" TextWrapping="Wrap" FontSize="11"
+                           Text="'Why' and 'Added by' come from the LogDB Guard backend, so they are filled in only for IPs you blocked yourself — public threat feeds publish no per-entry reason. A '~' before the date means it is when this collector first saw the IP, not when it was blocked." />
+                <dgrid:DataGrid Grid.Row="5"
                                 ItemsSource="{Binding FirewallBlockedRows}"
                                 AutoGenerateColumns="False"
                                 IsReadOnly="True"
-                                CanUserSortColumns="False"
+                                CanUserSortColumns="True"
                                 CanUserResizeColumns="True"
                                 HeadersVisibility="Column"
                                 GridLinesVisibility="Horizontal"
-                                FontFamily="Consolas,Menlo,monospace"
                                 MinHeight="160">
                     <dgrid:DataGrid.Columns>
-                        <dgrid:DataGridTextColumn Header="IP / CIDR" Binding="{Binding Ip}" Width="*" MinWidth="120" />
-                        <dgrid:DataGridTextColumn Header="Blocked" Binding="{Binding BlockedAt}" Width="130" />
-                        <dgrid:DataGridTextColumn Header="Feed" Binding="{Binding Source}" Width="*" MinWidth="90" />
+                        <dgrid:DataGridTextColumn Header="IP / CIDR" Binding="{Binding Ip}" Width="Auto" MinWidth="120"
+                                                  FontFamily="Consolas,Menlo,monospace" />
+                        <!-- "~" marks a first-observed time rather than a real
+                             block time; the tooltip explains which it is. -->
+                        <dgrid:DataGridTemplateColumn Header="Blocked" Width="Auto" SortMemberPath="BlockedAtUtc">
+                            <dgrid:DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate DataType="vmPages:BlockedIpRow">
+                                    <TextBlock Text="{Binding BlockedAt}"
+                                               ToolTip.Tip="{Binding BlockedAtTooltip}"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0"
+                                               FontFamily="Consolas,Menlo,monospace" />
+                                </DataTemplate>
+                            </dgrid:DataGridTemplateColumn.CellTemplate>
+                        </dgrid:DataGridTemplateColumn>
+                        <dgrid:DataGridTextColumn Header="Why" Binding="{Binding Reason}" Width="*" MinWidth="140" />
+                        <dgrid:DataGridTextColumn Header="Added by" Binding="{Binding AddedBy}" Width="Auto" MinWidth="90" />
+                        <dgrid:DataGridTextColumn Header="Feed" Binding="{Binding Source}" Width="Auto" MinWidth="90" />
                     </dgrid:DataGrid.Columns>
                 </dgrid:DataGrid>
             </Grid>

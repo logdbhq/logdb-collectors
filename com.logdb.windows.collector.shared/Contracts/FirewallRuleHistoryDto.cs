@@ -55,4 +55,12 @@ public static class FirewallHistoryActions
     public const string SyncCompleted = "sync-completed";
     public const string SyncFailed = "sync-failed";
     public const string RemoveAll = "remove-all";
+
+    /// <summary>A feed could not be fetched, so its existing rules were held
+    /// unchanged rather than removed. Recorded on entry to and exit from the
+    /// degraded state, not every poll, so a long outage costs two entries.</summary>
+    public const string FeedUnavailable = "feed-unavailable";
+
+    /// <summary>A previously unavailable feed fetched successfully again.</summary>
+    public const string FeedRecovered = "feed-recovered";
 }

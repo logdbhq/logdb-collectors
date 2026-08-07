@@ -142,6 +142,22 @@
             <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrushTheme}" />
         </Style>
 
+        <!-- Enforcement-state text: a condition the operator should act on
+             (warn) versus one that is simply on (stateOn) or off (stateOff). -->
+        <Style Selector="TextBlock.warn">
+            <Setter Property="Foreground" Value="{DynamicResource WarningTextBrushTheme}" />
+        </Style>
+
+        <Style Selector="TextBlock.stateOn">
+            <Setter Property="Foreground" Value="{DynamicResource ThemeSuccess}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
+        <Style Selector="TextBlock.stateOff">
+            <Setter Property="Foreground" Value="{DynamicResource ThemeError}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+
         <Style Selector="TextBlock.navSection">
             <Setter Property="FontSize" Value="11" />
             <Setter Property="FontWeight" Value="SemiBold" />

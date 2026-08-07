@@ -10,8 +10,14 @@ namespace com.logdb.windows.collector.Services.Firewall;
 /// <summary>
 /// Subscribes to the LogDB Guard custom blocklist over gRPC and turns each
 /// poll into a set of IPs the firewall engine can apply alongside the
-/// public feeds. Empty / unreachable / unauthenticated = empty set, never
-/// throws upward — the public-feed sync must still proceed.
+/// public feeds. Never throws upward — the public-feed sync must still
+/// proceed — but unreachable / unauthenticated / disabled are each reported
+/// distinctly via <see cref="GuardFetchResult"/> rather than collapsing into
+/// an empty set. Through 1.5.3 they did collapse, and the sync engine read
+/// that as "Guard blocks nothing now", deleted the Guard rule and emptied the
+/// blocked-IP index — an expired API key or a 30-second backend blip silently
+/// unblocked the entire custom blocklist while the module still reported a
+/// successful sync.
 ///
 /// Wire shape mirrors LogDB.Windows.Firewall/Services/CustomBlocklistClient.cs
 /// so the unified collector and the standalone service are interchangeable
@@ -39,26 +45,77 @@ public sealed class GuardBlocklistClient : IDisposable
     /// free text written (or template-generated) in the desktop Guard app /
     /// FloodGuard console — unsanitized and unbounded server-side, so treat it
     /// as display/audit text only: never parse it, cap it before rendering.</summary>
-    public sealed record GuardBlockedIpInfo(string Reason, string AddedBy);
+    public sealed record GuardBlockedIpInfo(string Reason, string AddedBy, DateTime? AddedAtUtc);
 
-    public async Task<Dictionary<string, GuardBlockedIpInfo>> FetchAsync(
+    /// <summary>
+    /// Turns the wire's <c>added_at</c> into a real timestamp. The field is an
+    /// int64 whose unit the proto doesn't state, so both seconds and
+    /// milliseconds are accepted and told apart by magnitude — a seconds value
+    /// large enough to be confused for milliseconds would be the year 5138.
+    /// 0 / negative / out-of-range means "backend didn't set it", which is
+    /// reported as null rather than 1970.
+    /// </summary>
+    public static DateTime? ParseAddedAt(long addedAt)
+    {
+        if (addedAt <= 0) return null;
+
+        const long millisecondThreshold = 100_000_000_000L; // ~year 5138 in seconds
+        try
+        {
+            var offset = addedAt >= millisecondThreshold
+                ? DateTimeOffset.FromUnixTimeMilliseconds(addedAt)
+                : DateTimeOffset.FromUnixTimeSeconds(addedAt);
+            return offset.UtcDateTime;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Outcome of one Guard poll. <see cref="Success"/> false means the
+    /// blocklist could not be read at all, so <see cref="Entries"/> carries no
+    /// information about what should be blocked — callers must hold their
+    /// existing state rather than treat it as an empty blocklist.
+    /// <see cref="Disabled"/> separates "the operator turned the subscription
+    /// off" (a legitimate reason to drop the Guard rules) from a failure.</summary>
+    public sealed record GuardFetchResult(
+        bool Success,
+        Dictionary<string, GuardBlockedIpInfo> Entries,
+        string Error,
+        bool Disabled = false)
+    {
+        private static Dictionary<string, GuardBlockedIpInfo> Empty() =>
+            new(StringComparer.OrdinalIgnoreCase);
+
+        public static GuardFetchResult Ok(Dictionary<string, GuardBlockedIpInfo> entries) =>
+            new(true, entries, string.Empty);
+
+        /// <summary>Subscription is off — an empty set that genuinely means
+        /// "block nothing from Guard".</summary>
+        public static GuardFetchResult Off() => new(true, Empty(), string.Empty, Disabled: true);
+
+        public static GuardFetchResult Failed(string error) => new(false, Empty(), error);
+    }
+
+    public async Task<GuardFetchResult> FetchAsync(
         LogDbConfigDto logDbConfig,
         CustomBlocklistConfigDto guardConfig,
         CancellationToken cancellationToken = default)
     {
         var ips = new Dictionary<string, GuardBlockedIpInfo>(StringComparer.OrdinalIgnoreCase);
-        if (!guardConfig.Enabled) return ips;
+        if (!guardConfig.Enabled) return GuardFetchResult.Off();
         if (string.IsNullOrWhiteSpace(logDbConfig.ApiKey))
         {
             _logger.LogWarning("Guard blocklist is enabled but LogDB:ApiKey is empty — skipping.");
-            return ips;
+            return GuardFetchResult.Failed("LogDB:ApiKey is empty — cannot authenticate against the Guard backend.");
         }
 
         var endpoint = await ResolveEndpointAsync(logDbConfig, guardConfig, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(endpoint))
         {
             _logger.LogWarning("Guard endpoint could not be resolved (GuardUrl empty and discovery failed).");
-            return ips;
+            return GuardFetchResult.Failed("Guard endpoint could not be resolved (GuardUrl empty and discovery failed).");
         }
 
         try
@@ -81,21 +138,31 @@ public sealed class GuardBlocklistClient : IDisposable
             foreach (var entry in response.BlockedIps)
             {
                 if (!string.IsNullOrWhiteSpace(entry.IpAddress))
-                    ips[entry.IpAddress] = new GuardBlockedIpInfo(entry.Reason ?? string.Empty, entry.AddedBy ?? string.Empty);
+                    ips[entry.IpAddress] = new GuardBlockedIpInfo(
+                        entry.Reason ?? string.Empty,
+                        entry.AddedBy ?? string.Empty,
+                        ParseAddedAt(entry.AddedAt));
             }
 
             _logger.LogInformation("Guard blocklist: loaded {Count} IPs from {Endpoint}", ips.Count, endpoint);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Service shutdown — not a Guard failure.
+            throw;
+        }
         catch (RpcException ex)
         {
             _logger.LogError("Guard blocklist gRPC error: Status={Status}, Detail={Detail}", ex.StatusCode, ex.Status.Detail);
+            return GuardFetchResult.Failed($"Guard backend unreachable: {ex.StatusCode} {ex.Status.Detail}".Trim());
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Guard blocklist fetch failed");
+            return GuardFetchResult.Failed($"Guard blocklist fetch failed: {ex.Message}");
         }
 
-        return ips;
+        return GuardFetchResult.Ok(ips);
     }
 
     /// <summary>

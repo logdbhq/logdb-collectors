@@ -45,6 +45,12 @@ public sealed class FirewallSyncEngine
     private readonly FirewallBlockedIpIndex _blockedIndex;
     private readonly ILogger<FirewallSyncEngine> _logger;
 
+    /// <summary>Feeds currently in the degraded state, so the history file gets
+    /// one entry when a feed goes down and one when it comes back — not one per
+    /// poll cycle for the whole outage. Engine is a singleton, so this survives
+    /// across cycles.</summary>
+    private readonly HashSet<string> _degradedReported = new(StringComparer.OrdinalIgnoreCase);
+
     public FirewallSyncEngine(
         PublicBlocklistFetcher fetcher,
         FirewallWhitelistService whitelist,
@@ -100,14 +106,37 @@ public sealed class FirewallSyncEngine
         var activeDisplayNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var activeSetsBySource = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
+        // Feeds whose fetch failed this cycle. Their existing rules are held as
+        // they are: an unreachable feed tells us nothing about what should stop
+        // being blocked, and treating "I couldn't ask" as "block nothing" is how
+        // a 30-second upstream outage used to unblock a whole feed. They stay in
+        // activeDisplayNames so the orphan prune spares them, and out of
+        // activeSetsBySource so the index reconcile spares them too.
+        var degradedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Why / by whom / when, per Guard IP — the only source that supplies it.
+        // Carried to the index so the Blocked IPs view can answer "why is this
+        // blocked and since when" instead of just listing addresses.
+        var provenance = new Dictionary<string, BlockedIpProvenance>(StringComparer.OrdinalIgnoreCase);
+
         try
         {
             foreach (var (feedId, feed) in enabledFeeds)
             {
-                var ips = await _fetcher.FetchAsync(feedId, feed.Url, feed.MinScore, cancellationToken).ConfigureAwait(false);
-                var whitelisted = FirewallWhitelistService.Apply(ips, whitelist);
-
                 var displayName = string.IsNullOrWhiteSpace(feed.DisplayName) ? feedId : feed.DisplayName;
+                var fetch = await _fetcher.FetchAsync(feedId, feed.Url, feed.MinScore, cancellationToken).ConfigureAwait(false);
+
+                if (!fetch.Success)
+                {
+                    var heldRules = await HoldFeedAsync(config, feedId, displayName, fetch.Error,
+                        perFeed, activeDisplayNames, degradedSources, cancellationToken).ConfigureAwait(false);
+                    totalActiveRules += heldRules;
+                    continue;
+                }
+
+                var ips = fetch.Ips;
+                MarkFeedRecovered(config, displayName, ips.Count);
+                var whitelisted = FirewallWhitelistService.Apply(ips, whitelist);
                 var (ruleCount, changes) = await SyncFeedAsync(config, displayName, ips, cancellationToken).ConfigureAwait(false);
 
                 perFeed.Add(new FirewallFeedSyncSummary(feedId, displayName, ips.Count, ruleCount, whitelisted));
@@ -123,18 +152,38 @@ public sealed class FirewallSyncEngine
                 var customDisplayName = string.IsNullOrWhiteSpace(config.CustomBlocklist.DisplayName)
                     ? "LogDB Guard"
                     : config.CustomBlocklist.DisplayName;
-                var guardEntries = await _guardClient.FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken).ConfigureAwait(false);
-                var guardIps = guardEntries.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var whitelisted = FirewallWhitelistService.Apply(guardIps, whitelist);
-                var (ruleCount, changes) = await SyncFeedAsync(config, customDisplayName, guardIps, cancellationToken,
-                    BuildGuardAnnotations(guardEntries)).ConfigureAwait(false);
+                var guardFetch = await _guardClient.FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken).ConfigureAwait(false);
 
-                perFeed.Add(new FirewallFeedSyncSummary("custom_guard", customDisplayName, guardIps.Count, ruleCount, whitelisted));
-                activeDisplayNames.Add(customDisplayName);
-                activeSetsBySource[customDisplayName] = guardIps.Select(NormalizeAddress).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                totalActiveRules += ruleCount;
-                totalIps += guardIps.Count;
-                totalChanges += changes;
+                if (!guardFetch.Success)
+                {
+                    totalActiveRules += await HoldFeedAsync(config, "custom_guard", customDisplayName, guardFetch.Error,
+                        perFeed, activeDisplayNames, degradedSources, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    var guardEntries = guardFetch.Entries;
+                    var guardIps = guardEntries.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    MarkFeedRecovered(config, customDisplayName, guardIps.Count);
+
+                    foreach (var (guardIp, info) in guardEntries)
+                    {
+                        // Key on the normalized form: the index stores addresses
+                        // normalized, so raw keys would never match on lookup.
+                        provenance[NormalizeAddress(guardIp)] =
+                            new BlockedIpProvenance(info.Reason, info.AddedBy, info.AddedAtUtc);
+                    }
+
+                    var whitelisted = FirewallWhitelistService.Apply(guardIps, whitelist);
+                    var (ruleCount, changes) = await SyncFeedAsync(config, customDisplayName, guardIps, cancellationToken,
+                        BuildGuardAnnotations(guardEntries)).ConfigureAwait(false);
+
+                    perFeed.Add(new FirewallFeedSyncSummary("custom_guard", customDisplayName, guardIps.Count, ruleCount, whitelisted));
+                    activeDisplayNames.Add(customDisplayName);
+                    activeSetsBySource[customDisplayName] = guardIps.Select(NormalizeAddress).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    totalActiveRules += ruleCount;
+                    totalIps += guardIps.Count;
+                    totalChanges += changes;
+                }
             }
 
             // Drop any rule whose source isn't in the active set anymore (a feed
@@ -180,7 +229,8 @@ public sealed class FirewallSyncEngine
         // index either. Index errors are logged inside and never break a sync.
         if (!config.DryRun)
         {
-            var (indexAdded, indexRemoved) = _blockedIndex.Reconcile(activeSetsBySource, DateTime.UtcNow);
+            var (indexAdded, indexRemoved) = _blockedIndex.Reconcile(
+                activeSetsBySource, degradedSources, DateTime.UtcNow, provenance);
             if (indexAdded > 0 || indexRemoved > 0)
             {
                 _logger.LogInformation("Blocked-IP index: +{Added} / −{Removed}", indexAdded, indexRemoved);
@@ -188,10 +238,77 @@ public sealed class FirewallSyncEngine
         }
 
         _logger.LogInformation(
-            "Firewall sync done: {Feeds} feeds, {Ips} unique IPs, {Rules} rules active",
-            perFeed.Count, totalIps, totalActiveRules);
+            "Firewall sync done: {Feeds} feeds, {Ips} unique IPs, {Rules} rules active, {Degraded} feed(s) degraded",
+            perFeed.Count, totalIps, totalActiveRules, degradedSources.Count);
 
         return FirewallSyncSummary.Synced(totalIps, totalActiveRules, perFeed);
+    }
+
+    /// <summary>
+    /// Handles a feed whose fetch failed: leaves its rules exactly as they are,
+    /// registers it as degraded, and reports how many of its rules are being
+    /// held so the summary can say "still blocking, just not refreshed" rather
+    /// than silently omitting the feed. Returns the held rule count.
+    /// </summary>
+    private async Task<int> HoldFeedAsync(
+        FirewallConfigDto config,
+        string feedId,
+        string displayName,
+        string error,
+        List<FirewallFeedSyncSummary> perFeed,
+        HashSet<string> activeDisplayNames,
+        HashSet<string> degradedSources,
+        CancellationToken cancellationToken)
+    {
+        var baseRuleName = $"{config.RuleNamePrefix} - {displayName}";
+        var heldRules = (await GetManagedRuleNamesAsync(baseRuleName, cancellationToken).ConfigureAwait(false)).Count;
+
+        // Spare it from the orphan prune and from the index reconcile.
+        activeDisplayNames.Add(displayName);
+        degradedSources.Add(displayName);
+
+        perFeed.Add(new FirewallFeedSyncSummary(feedId, displayName, IpsLoaded: 0, heldRules, WhitelistedSkipped: 0, Error: error));
+
+        _logger.LogWarning(
+            "Feed '{DisplayName}' could not be refreshed ({Error}) — holding {Rules} existing rule(s); nothing was unblocked",
+            displayName, error, heldRules);
+
+        // Edge-triggered: one entry when the feed goes down, not one per poll.
+        if (_degradedReported.Add(displayName))
+        {
+            _history.Record(new FirewallRuleHistoryEntryDto
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Action = FirewallHistoryActions.FeedUnavailable,
+                RuleName = baseRuleName,
+                Source = displayName,
+                IpCount = 0,
+                Success = false,
+                DryRun = config.DryRun,
+                Message = $"Fetch failed — {heldRules} existing rule(s) held, nothing unblocked. {error}"
+            });
+        }
+
+        return heldRules;
+    }
+
+    /// <summary>Clears a feed's degraded flag after a successful fetch, and
+    /// records the recovery when it had actually been reported as down.</summary>
+    private void MarkFeedRecovered(FirewallConfigDto config, string displayName, int ipsLoaded)
+    {
+        if (!_degradedReported.Remove(displayName)) return;
+
+        _logger.LogInformation("Feed '{DisplayName}' recovered — {Ips} IPs fetched", displayName, ipsLoaded);
+        _history.Record(new FirewallRuleHistoryEntryDto
+        {
+            TimestampUtc = DateTime.UtcNow,
+            Action = FirewallHistoryActions.FeedRecovered,
+            Source = displayName,
+            IpCount = ipsLoaded,
+            Success = true,
+            DryRun = config.DryRun,
+            Message = $"Feed reachable again — {ipsLoaded} IPs fetched, rules refreshed."
+        });
     }
 
     public async Task<(bool Success, string Message)> RemoveAllAsync(
@@ -232,9 +349,17 @@ public sealed class FirewallSyncEngine
     }
 
     /// <summary>
-    /// Reads the collector-managed rules back from the live OS firewall —
-    /// group-tagged rules plus legacy display-name-prefix matches — so the UI
-    /// shows what is actually applied, not what we think we applied.
+    /// Reads back every LogDB rule live from the OS firewall — the ones this
+    /// collector manages (group-tagged, plus legacy display-name-prefix
+    /// matches) and, flagged <see cref="FirewallRuleInfoDto.Unmanaged"/>, any
+    /// other "LogDB*" rule present on the host.
+    ///
+    /// The unmanaged half matters because the desktop app's firewall-export
+    /// script writes rules like "LogDB.Guard - Blocked IPs" that block traffic
+    /// on this same host but are refreshed only when someone re-runs the
+    /// script. Listing only our own rules made those invisible here, so an
+    /// operator comparing this list against the app's blocklist would conclude
+    /// sync was broken when in fact two independent mechanisms were in play.
     /// </summary>
     public async Task<IReadOnlyList<FirewallRuleInfoDto>> ListRulesAsync(
         FirewallConfigDto config,
@@ -242,11 +367,12 @@ public sealed class FirewallSyncEngine
     {
         var prefix = string.IsNullOrWhiteSpace(config.RuleNamePrefix) ? "LogDB Firewall" : config.RuleNamePrefix;
         var command =
-            $"$rules = Get-NetFirewallRule | Where-Object {{ $_.Group -eq '{ManagedRuleGroup}' -or $_.DisplayName -like '{EscapePs(prefix)}*' }}; " +
+            $"$rules = Get-NetFirewallRule | Where-Object {{ $_.Group -eq '{ManagedRuleGroup}' -or $_.DisplayName -like '{EscapePs(prefix)}*' -or $_.DisplayName -like 'LogDB*' }}; " +
             "$out = foreach ($r in $rules) { " +
             "$af = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $r; " +
             "$ips = @($af.RemoteAddress | Where-Object { $_ -and $_ -ne 'Any' -and $_ -ne 'LocalSubnet' }); " +
-            $"[pscustomobject]@{{ id = $r.Name; displayName = $r.DisplayName; direction = [string]$r.Direction; enabled = ([string]$r.Enabled -eq 'True'); ipCount = $ips.Count; legacy = ($r.Group -ne '{ManagedRuleGroup}') }} }}; " +
+            $"$managed = ($r.Group -eq '{ManagedRuleGroup}') -or ($r.DisplayName -like '{EscapePs(prefix)}*'); " +
+            $"[pscustomobject]@{{ id = $r.Name; displayName = $r.DisplayName; direction = [string]$r.Direction; enabled = ([string]$r.Enabled -eq 'True'); ipCount = $ips.Count; legacy = ($managed -and $r.Group -ne '{ManagedRuleGroup}'); unmanaged = (-not $managed) }} }}; " +
             "ConvertTo-Json -InputObject @($out) -Compress";
 
         var output = await RunPowerShellWithOutputAsync(command, cancellationToken).ConfigureAwait(false);
@@ -265,7 +391,14 @@ public sealed class FirewallSyncEngine
 
         if (rules == null) return Array.Empty<FirewallRuleInfoDto>();
         foreach (var rule in rules)
-            rule.Source = ExtractSourceFromDisplayName(rule.DisplayName, config.RuleNamePrefix);
+        {
+            // An unmanaged rule's display name follows whatever convention its
+            // writer chose, so the feed-name extraction would invent a bogus
+            // source. Report the rule name itself instead.
+            rule.Source = rule.Unmanaged
+                ? rule.DisplayName
+                : ExtractSourceFromDisplayName(rule.DisplayName, config.RuleNamePrefix);
+        }
         return rules;
     }
 
@@ -291,17 +424,19 @@ public sealed class FirewallSyncEngine
         var lookup =
             $"$r = Get-NetFirewallRule -Name '{EscapePs(request.RuleId)}' -ErrorAction SilentlyContinue; " +
             "if ($r) { $af = Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $r; " +
-            "ConvertTo-Json -InputObject ([pscustomobject]@{ displayName = $r.DisplayName; ips = @($af.RemoteAddress | Where-Object { $_ -and $_ -ne 'Any' -and $_ -ne 'LocalSubnet' }) }) -Compress }";
+            "ConvertTo-Json -InputObject ([pscustomobject]@{ displayName = $r.DisplayName; group = [string]$r.Group; ips = @($af.RemoteAddress | Where-Object { $_ -and $_ -ne 'Any' -and $_ -ne 'LocalSubnet' }) }) -Compress }";
         var output = await RunPowerShellWithOutputAsync(lookup, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(output))
             return (false, $"No firewall rule found with id '{request.RuleId}'.");
 
         string displayName;
+        string group;
         List<string> ips;
         try
         {
             var details = JsonSerializer.Deserialize<RuleDeletionDetails>(output.Trim(), RuleJsonOptions);
             displayName = details?.DisplayName ?? request.RuleId;
+            group = details?.Group ?? string.Empty;
             // Normalized so backend removal matches Guard's stored form and the
             // history entry shows CIDR rather than dotted netmasks.
             ips = (details?.Ips ?? new List<string>()).Select(NormalizeAddress).ToList();
@@ -309,8 +444,22 @@ public sealed class FirewallSyncEngine
         catch (JsonException)
         {
             displayName = request.RuleId;
+            group = string.Empty;
             ips = new List<string>();
         }
+
+        // ListRulesAsync now also reports LogDB rules written by something else
+        // (the desktop app's export script). Those are visible so the operator
+        // knows they exist — but deleting them here would silently undo another
+        // tool's enforcement, and the next sync would not re-create them.
+        var rulePrefix = string.IsNullOrWhiteSpace(config.RuleNamePrefix) ? "LogDB Firewall" : config.RuleNamePrefix;
+        var isManaged = string.Equals(group, ManagedRuleGroup, StringComparison.OrdinalIgnoreCase)
+            || displayName.StartsWith(rulePrefix, StringComparison.OrdinalIgnoreCase);
+        if (!isManaged)
+            return (false,
+                $"'{displayName}' is not managed by this collector — it was created outside it " +
+                "(most likely by the LogDB desktop app's firewall-export script). Remove it with " +
+                $"Remove-NetFirewallRule -Name '{request.RuleId}' if that is what you want.");
 
         var source = ExtractSourceFromDisplayName(displayName, config.RuleNamePrefix);
         var guardDisplayName = string.IsNullOrWhiteSpace(config.CustomBlocklist.DisplayName)
@@ -324,10 +473,10 @@ public sealed class FirewallSyncEngine
         IReadOnlyDictionary<string, string>? annotations = null;
         if (isGuardRule)
         {
-            var guardEntries = await _guardClient
+            var guardFetch = await _guardClient
                 .FetchAsync(logDbConfig, config.CustomBlocklist, cancellationToken)
                 .ConfigureAwait(false);
-            if (guardEntries.Count > 0) annotations = BuildGuardAnnotations(guardEntries);
+            if (guardFetch.Entries.Count > 0) annotations = BuildGuardAnnotations(guardFetch.Entries);
         }
 
         string? backendNote = null;
@@ -404,6 +553,7 @@ public sealed class FirewallSyncEngine
     private sealed class RuleDeletionDetails
     {
         public string? DisplayName { get; set; }
+        public string? Group { get; set; }
         public List<string>? Ips { get; set; }
     }
 
@@ -851,20 +1001,47 @@ public sealed record FirewallSyncSummary(
     /// </summary>
     public bool IsIdle { get; init; }
 
+    /// <summary>Feeds that could not be fetched this cycle. Their rules are
+    /// still applied — just not refreshed — so the cycle is neither a success
+    /// nor a failure, and callers must report it as neither.</summary>
+    public IReadOnlyList<FirewallFeedSyncSummary> DegradedFeeds =>
+        PerFeed.Where(f => f.Degraded).ToList();
+
+    public bool IsDegraded => PerFeed.Any(f => f.Degraded);
+
     public static FirewallSyncSummary Failed(string message) =>
         new(false, message, 0, 0, Array.Empty<FirewallFeedSyncSummary>());
 
     public static FirewallSyncSummary Idle(string message) =>
         new(true, message, 0, 0, Array.Empty<FirewallFeedSyncSummary>()) { IsIdle = true };
 
-    public static FirewallSyncSummary Synced(int totalIps, int totalRules, IReadOnlyList<FirewallFeedSyncSummary> perFeed) =>
-        new(true, $"Synced {perFeed.Count} feed(s), {totalIps} IPs across {totalRules} rule(s).",
-            totalIps, totalRules, perFeed);
+    public static FirewallSyncSummary Synced(int totalIps, int totalRules, IReadOnlyList<FirewallFeedSyncSummary> perFeed)
+    {
+        var degraded = perFeed.Where(f => f.Degraded).ToList();
+        var message = degraded.Count == 0
+            ? $"Synced {perFeed.Count} feed(s), {totalIps} IPs across {totalRules} rule(s)."
+            // Name the feeds and say explicitly that nothing was unblocked — the
+            // whole point is that this state is not mistaken for a clean sync.
+            : $"Synced {perFeed.Count - degraded.Count} of {perFeed.Count} feed(s), {totalIps} IPs across {totalRules} rule(s). "
+              + $"Could not refresh: {string.Join(", ", degraded.Select(f => $"{f.DisplayName} ({f.Error})"))}. "
+              + "Existing rules for those feeds are still applied — nothing was unblocked.";
+
+        return new FirewallSyncSummary(true, message, totalIps, totalRules, perFeed);
+    }
 }
 
+/// <param name="RuleChunks">Rules active for this feed. For a degraded feed
+/// these are rules held unchanged from the last good cycle, not rules just
+/// written.</param>
+/// <param name="Error">Empty when the feed synced normally; the fetch failure
+/// reason otherwise.</param>
 public sealed record FirewallFeedSyncSummary(
     string FeedId,
     string DisplayName,
     int IpsLoaded,
     int RuleChunks,
-    int WhitelistedSkipped);
+    int WhitelistedSkipped,
+    string Error = "")
+{
+    public bool Degraded => !string.IsNullOrEmpty(Error);
+}

@@ -1,7 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Matches the collector so its firewall services can be referenced and
+         unit-tested directly, not just driven through the named-pipe fixture. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -26,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\com.logdb.windows.collector.shared\com.logdb.windows.collector.shared.csproj" />
+    <ProjectReference Include="..\com.logdb.windows.collector\com.logdb.windows.collector.csproj" />
   </ItemGroup>
 
 </Project>

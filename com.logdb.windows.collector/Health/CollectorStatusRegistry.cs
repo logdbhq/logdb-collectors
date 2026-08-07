@@ -116,6 +116,53 @@ public sealed class CollectorStatusRegistry
     }
 
     /// <summary>
+    /// The module did its work, but part of it could not be completed and the
+    /// operator needs to know — e.g. a firewall feed that could not be fetched,
+    /// leaving its existing rules applied but not refreshed.
+    ///
+    /// Distinct from <see cref="MarkError"/> (the cycle failed) and from
+    /// <see cref="MarkRunning"/> (all good): the state is surfaced, the reason
+    /// is retained, and the failure history records it — but the module still
+    /// counts as having succeeded, because it did, so this neither inflates
+    /// FailedCount nor stops the heartbeat.
+    /// </summary>
+    public void MarkDegraded(string moduleName, string reason)
+    {
+        var module = _modules.GetOrAdd(moduleName, name => new ModuleStatusDto { Name = name });
+
+        // The state has to be re-asserted every cycle so a later MarkRunning
+        // doesn't leave a stale "Degraded" behind — but the failure history is
+        // edge-triggered, or a feed that stays down all week would evict every
+        // other failure from the capped ring buffer.
+        var isNewReason = !string.Equals(module.LastError, reason, StringComparison.Ordinal)
+            || !string.Equals(module.State, "Degraded", StringComparison.Ordinal);
+
+        module.State = "Degraded";
+        module.LastError = reason;
+        module.LastSuccessTimeUtc = DateTime.UtcNow;
+        module.UpdatedAtUtc = DateTime.UtcNow;
+
+        if (!isNewReason) return;
+
+        lock (_failureGate)
+        {
+            _failures.AddLast(new CollectorFailureDto
+            {
+                TimestampUtc = DateTime.UtcNow,
+                Module = moduleName,
+                Error = reason
+            });
+
+            while (_failures.Count > MaxFailureHistory)
+            {
+                _failures.RemoveFirst();
+            }
+
+            PersistFailuresLocked();
+        }
+    }
+
+    /// <summary>
     /// Returns the most recent failures, newest first, capped at
     /// <paramref name="max"/> entries.
     /// </summary>

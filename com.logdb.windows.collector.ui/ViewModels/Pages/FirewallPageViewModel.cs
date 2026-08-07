@@ -14,9 +14,34 @@ public sealed record BlockedSourceOption(string Label, string Source, string Kin
     public override string ToString() => Label;
 }
 
-/// <summary>One row of the Blocked IPs drawer grid. <see cref="BlockedAt"/> is
-/// already converted to local time and formatted for display.</summary>
-public sealed record BlockedIpRow(string Ip, string BlockedAt, string Source);
+/// <summary>
+/// One row of the Blocked IPs drawer grid. <see cref="BlockedAt"/> is already
+/// converted to local time and formatted; it carries a "~" prefix when the
+/// service could only give a first-observed time rather than the real block
+/// time, and <see cref="BlockedAtTooltip"/> spells that out in words.
+/// <see cref="Reason"/> / <see cref="AddedBy"/> are populated for Guard-sourced
+/// IPs only — public threat feeds ship no per-entry provenance at all.
+/// </summary>
+/// <param name="BlockedAtUtc">Sort key for the Blocked column. The displayed
+/// string carries a "~" prefix for approximate times, which would sort every
+/// approximate row into one clump ahead of the rest; sorting on the raw instant
+/// keeps the column chronological regardless.</param>
+public sealed record BlockedIpRow(
+    string Ip,
+    string BlockedAt,
+    string BlockedAtTooltip,
+    string Source,
+    string Reason,
+    string AddedBy,
+    DateTime BlockedAtUtc);
+
+/// <summary>
+/// One line in the enforcement panel. <see cref="IsWarning"/> drives the
+/// colour — warnings are states that will surprise the operator later
+/// (third-party feeds enforcing with no whitelist, the operator's own
+/// blocklist switched off), notices are merely informational.
+/// </summary>
+public sealed record FirewallNoticeRow(string Icon, string Text, bool IsWarning);
 
 public sealed class DataSourceFirewallHistoryRow
 {
@@ -64,6 +89,15 @@ public sealed class DataSourceFirewallRuleRow : ObservableObject
     public int IpCount { get; init; }
     public AsyncRelayCommand DeleteCommand { get; }
     public AsyncRelayCommand ViewIpsCommand { get; }
+
+    /// <summary>A LogDB rule on this host that the collector did not create —
+    /// shown so the operator can see everything enforcing under the LogDB name,
+    /// but not deletable from here: the collector doesn't own it and couldn't
+    /// re-create it.</summary>
+    public bool IsUnmanaged { get; init; }
+
+    /// <summary>Drives the Delete button — false for unmanaged rules.</summary>
+    public bool CanDelete => !IsUnmanaged;
 
     /// <summary>"Delete" normally; "Confirm?" for the 3-second confirmation
     /// window after the first click.</summary>
@@ -132,6 +166,19 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     private string _firewallTabSummary = "Firewall: not loaded.";
     private string _firewallTabRuntime = "Runtime: unavailable.";
     private string _firewallRulesSummary = "Active rules: not loaded.";
+    private string _publicFeedsHeadline = string.Empty;
+    private string _guardHeadline = string.Empty;
+    private bool _publicFeedsOn;
+    private bool _guardOn;
+
+    /// <summary>True when the config carried no publicBlocklists section at all,
+    /// so both this UI and the service fall back to the four stock feeds. The
+    /// operator never chose them, which is worth saying out loud.</summary>
+    private bool _feedsAreStockDefaults;
+
+    /// <summary>LogDB rules on the host that this collector does not manage,
+    /// from the last Active Rules refresh. Feeds the enforcement panel.</summary>
+    private int _unmanagedRuleCount;
     private bool _firewallIpsPanelVisible;
     private string _firewallIpsTitle = string.Empty;
     private string _firewallIpsFilter = string.Empty;
@@ -184,6 +231,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         FirewallDetailRemovedIps = new ObservableCollection<string>();
         FirewallBlockedRows = new ObservableCollection<BlockedIpRow>();
         BlocklistFeeds = new ObservableCollection<BlocklistFeedRowViewModel>();
+        EnforcementNotices = new ObservableCollection<FirewallNoticeRow>();
 
         RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
         RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
@@ -206,6 +254,10 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     public ObservableCollection<string> FirewallDetailRemovedIps { get; }
     public ObservableCollection<BlockedIpRow> FirewallBlockedRows { get; }
     public ObservableCollection<BlocklistFeedRowViewModel> BlocklistFeeds { get; }
+
+    /// <summary>Warnings and notices about what this collector is actually
+    /// enforcing right now — see <see cref="RebuildEnforcementNotices"/>.</summary>
+    public ObservableCollection<FirewallNoticeRow> EnforcementNotices { get; }
 
     public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
     public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
@@ -236,6 +288,34 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     {
         get => _firewallRulesSummary;
         set => SetProperty(ref _firewallRulesSummary, value);
+    }
+
+    /// <summary>"ON — 4 feed(s): …" / "OFF — …" for the third-party feeds.</summary>
+    public string PublicFeedsHeadline
+    {
+        get => _publicFeedsHeadline;
+        private set => SetProperty(ref _publicFeedsHeadline, value);
+    }
+
+    /// <summary>The same for the operator's own Guard blocklist. Kept as a
+    /// separate line from the public feeds precisely because the two are
+    /// independent and default in opposite directions.</summary>
+    public string GuardHeadline
+    {
+        get => _guardHeadline;
+        private set => SetProperty(ref _guardHeadline, value);
+    }
+
+    public bool PublicFeedsOn
+    {
+        get => _publicFeedsOn;
+        private set => SetProperty(ref _publicFeedsOn, value);
+    }
+
+    public bool GuardOn
+    {
+        get => _guardOn;
+        private set => SetProperty(ref _guardOn, value);
     }
 
     public bool FirewallIpsPanelVisible
@@ -408,7 +488,10 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     public bool FirewallEnabled
     {
         get => _firewallEnabled;
-        set => SetProperty(ref _firewallEnabled, value);
+        set
+        {
+            if (SetProperty(ref _firewallEnabled, value)) RebuildEnforcementNotices();
+        }
     }
 
     public int FirewallPollIntervalSeconds
@@ -426,13 +509,19 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     public bool FirewallDryRun
     {
         get => _firewallDryRun;
-        set => SetProperty(ref _firewallDryRun, value);
+        set
+        {
+            if (SetProperty(ref _firewallDryRun, value)) RebuildEnforcementNotices();
+        }
     }
 
     public string FirewallWhitelistPath
     {
         get => _firewallWhitelistPath;
-        set => SetProperty(ref _firewallWhitelistPath, value);
+        set
+        {
+            if (SetProperty(ref _firewallWhitelistPath, value)) RebuildEnforcementNotices();
+        }
     }
 
     public string FirewallBlocklistSummary
@@ -444,7 +533,10 @@ public sealed class FirewallPageViewModel : PageViewModelBase
     public bool FirewallCustomEnabled
     {
         get => _firewallCustomEnabled;
-        set => SetProperty(ref _firewallCustomEnabled, value);
+        set
+        {
+            if (SetProperty(ref _firewallCustomEnabled, value)) RebuildEnforcementNotices();
+        }
     }
 
     public string FirewallCustomDisplayName
@@ -522,6 +614,92 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         FirewallHint = FirewallEnabled
             ? "Firewall sync is active. Blocked IPs from LogDB will be applied as inbound block rules."
             : "Enable firewall sync to automatically block malicious IPs detected by LogDB Guard.";
+
+        RebuildEnforcementNotices();
+    }
+
+    /// <summary>
+    /// Rebuilds the "what is actually being enforced" panel.
+    ///
+    /// This exists because the two blocklist sources are independent and their
+    /// defaults point opposite ways: the four public threat feeds ship enabled,
+    /// the operator's own Guard subscription ships disabled. Someone who blocks
+    /// an IP in the desktop app and then enables "firewall sync" gets tens of
+    /// thousands of third-party IPs blocked and none of their own — and the old
+    /// UI stated only a combined feed count, so nothing said so.
+    /// </summary>
+    private void RebuildEnforcementNotices()
+    {
+        var enabledFeeds = BlocklistFeeds.Where(f => f.Enabled).ToList();
+        PublicFeedsOn = enabledFeeds.Count > 0;
+        GuardOn = FirewallCustomEnabled;
+
+        var feedNames = string.Join(", ", enabledFeeds
+            .Select(f => string.IsNullOrWhiteSpace(f.DisplayName) ? f.FeedId : f.DisplayName));
+
+        PublicFeedsHeadline = PublicFeedsOn
+            ? $"ON — {enabledFeeds.Count} third-party feed(s): {feedNames}"
+            : "OFF — no public threat feeds enabled.";
+
+        GuardHeadline = GuardOn
+            ? $"ON — subscribed to '{FirewallCustomDisplayName}'."
+            : "OFF — IPs you block in the LogDB desktop app are NOT applied by this collector.";
+
+        EnforcementNotices.Clear();
+
+        if (!FirewallEnabled)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("○",
+                "Firewall sync is disabled — this collector is not applying any block rules. "
+                + "Everything below describes what would be applied once you enable it.", false));
+            return;
+        }
+
+        // The headline asymmetry, stated plainly.
+        if (PublicFeedsOn && !GuardOn)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("⚠",
+                "This collector is enforcing third-party threat feeds but none of your own blocks. "
+                + "The Guard subscription is off, so IPs you block in the LogDB desktop app never reach this host. "
+                + "Enable 'Guard subscription' in Configuration if that is what you expected it to do.", true));
+        }
+
+        // Lockout risk. Worth a warning on its own: it is silent until it isn't.
+        if (PublicFeedsOn && string.IsNullOrWhiteSpace(FirewallWhitelistPath))
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("⚠",
+                "No whitelist file is set. Public feeds are reputation-scored and do list cloud-provider "
+                + "addresses — if one covers your RDP, VPN or monitoring source, this host will block you out "
+                + "and the rule will be re-applied every sync. Set 'Whitelist Path' before relying on public feeds.", true));
+        }
+
+        if (_feedsAreStockDefaults)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("⚠",
+                "Your saved config contains no public-feed section, so the collector falls back to its four stock "
+                + "feeds (FireHOL Level 1 & 2, Tor exits, IPsum ≥ 3). These are shown below but were never chosen by "
+                + "you — click 'Apply Firewall Config' to write them in explicitly, or disable the ones you don't want.", true));
+        }
+
+        if (FirewallDryRun)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("○",
+                "Dry run is on — rules are logged but never applied, and the Blocked IPs list stays empty.", false));
+        }
+
+        if (_unmanagedRuleCount > 0)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("○",
+                $"{_unmanagedRuleCount} other LogDB rule(s) are blocking on this host but are not managed here — "
+                + "they come from the desktop app's firewall-export script and only change when it is re-run. "
+                + "They are listed under Active Rules as 'not managed here'.", false));
+        }
+
+        if (EnforcementNotices.Count == 0)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("✓",
+                "Both sources are configured and a whitelist is set.", false));
+        }
     }
 
     private async Task OpenFirewallBlockedIpsAsync()
@@ -585,20 +763,48 @@ public sealed class FirewallPageViewModel : PageViewModelBase
 
             foreach (var entry in result.Entries)
             {
+                var local = entry.BlockedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
                 FirewallBlockedRows.Add(new BlockedIpRow(
                     entry.Ip,
-                    entry.BlockedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
-                    entry.Source));
+                    entry.BlockedAtApproximate ? "~" + local : local,
+                    entry.BlockedAtApproximate
+                        ? $"Approximate: {local} is when this collector first saw the IP in a rule, not when it "
+                          + "was blocked. Public threat feeds carry no per-entry dates, and IPs already applied "
+                          + "before the index existed have no earlier record."
+                        : $"{local} — the block time reported by the LogDB Guard backend.",
+                    entry.Source,
+                    entry.Reason,
+                    entry.AddedBy,
+                    entry.BlockedAtUtc));
             }
 
-            FirewallBlockedCountText = result.Matched > result.Entries.Count
+            FirewallBlockedCountText = (result.Matched > result.Entries.Count
                 ? $"showing first {result.Entries.Count} of {result.Matched} matched ({result.Total} blocked in total) — refine the filter"
-                : $"{result.Matched} shown · {result.Total} blocked in total";
+                : $"{result.Matched} shown · {result.Total} blocked in total")
+                + DescribeMissingGuardSource(result);
         }
         catch (Exception ex)
         {
             _statusCallback($"Blocked IPs refresh failed: {ex.Message}", false);
         }
+    }
+
+    /// <summary>
+    /// Explains an absent Guard section rather than leaving the operator to read
+    /// an empty list as "the IP I blocked didn't sync". The index only ever
+    /// contains what this collector applied, so a Guard subscription that is
+    /// switched off produces exactly the same empty view as one that is broken —
+    /// and the difference is the whole answer.
+    /// </summary>
+    private string DescribeMissingGuardSource(BlockedIpListResponseDto result)
+    {
+        if (result.Sources.Any(s => s.IsGuard)) return string.Empty;
+
+        return FirewallCustomEnabled
+            ? $"  ⚠ No IPs from '{FirewallCustomDisplayName}' are indexed yet — the subscription is enabled but has not "
+              + "completed a sync. Check the module status and the collector log for a Guard fetch error."
+            : "  ⚠ The LogDB Guard subscription is off, so IPs you block in the desktop app are not applied by this "
+              + "collector and never appear here. Enable it above under 'LogDB Guard (custom blocklist)'.";
     }
 
     /// <summary>
@@ -842,7 +1048,11 @@ public sealed class FirewallPageViewModel : PageViewModelBase
                 return;
             }
 
-            foreach (var rule in rules.OrderBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase))
+            // Managed first, then the foreign LogDB rules — the operator's own
+            // rules are the ones they act on; the rest is context.
+            foreach (var rule in rules
+                         .OrderBy(r => r.Unmanaged)
+                         .ThenBy(r => r.DisplayName, StringComparer.OrdinalIgnoreCase))
             {
                 FirewallRuleRows.Add(new DataSourceFirewallRuleRow(DeleteFirewallRuleAsync, ViewFirewallRuleIpsAsync)
                 {
@@ -851,14 +1061,41 @@ public sealed class FirewallPageViewModel : PageViewModelBase
                     Source = rule.Source,
                     Direction = rule.Direction,
                     IpCount = rule.IpCount,
-                    Status = (rule.Enabled ? "Enabled" : "Disabled") + (rule.Legacy ? " (legacy)" : "")
+                    IsUnmanaged = rule.Unmanaged,
+                    Status = rule.Unmanaged
+                        ? (rule.Enabled ? "Enabled" : "Disabled") + " · not managed here"
+                        : (rule.Enabled ? "Enabled" : "Disabled") + (rule.Legacy ? " (legacy)" : "")
                 });
             }
 
-            var totalIps = rules.Sum(r => r.IpCount);
-            FirewallRulesSummary = rules.Count == 0
-                ? "Active rules: none applied to the OS firewall."
-                : $"Active rules: {rules.Count} rule(s) blocking {totalIps:N0} IPs/CIDRs, read live from the OS firewall.";
+            var managed = rules.Where(r => !r.Unmanaged).ToList();
+            var unmanaged = rules.Where(r => r.Unmanaged).ToList();
+            var totalIps = managed.Sum(r => r.IpCount);
+
+            if (_unmanagedRuleCount != unmanaged.Count)
+            {
+                _unmanagedRuleCount = unmanaged.Count;
+                RebuildEnforcementNotices();
+            }
+
+            var summary = managed.Count == 0
+                ? "Active rules: none applied by this collector."
+                : $"Active rules: {managed.Count} rule(s) blocking {totalIps:N0} IPs/CIDRs, read live from the OS firewall.";
+
+            // Spelling this out is the whole point: an operator who blocked an IP
+            // in the desktop app and then went looking for it here needs to know
+            // these rules exist and that the collector neither wrote nor refreshes
+            // them, rather than concluding sync is broken.
+            if (unmanaged.Count > 0)
+            {
+                summary += $"  ⚠ {unmanaged.Count} other LogDB rule(s) on this host "
+                           + $"({string.Join(", ", unmanaged.Take(3).Select(r => r.DisplayName))}"
+                           + (unmanaged.Count > 3 ? ", …" : "")
+                           + $") block {unmanaged.Sum(r => r.IpCount):N0} more IPs but are not managed by this collector — "
+                           + "they come from the desktop app's firewall export and only change when that script is re-run.";
+            }
+
+            FirewallRulesSummary = summary;
         }
         catch (Exception ex)
         {
@@ -1162,29 +1399,51 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         await RefreshAsync();
     }
 
+    private void BlocklistFeedRowChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(BlocklistFeedRowViewModel.Enabled)
+            or nameof(BlocklistFeedRowViewModel.DisplayName))
+        {
+            RebuildEnforcementNotices();
+        }
+    }
+
     private void LoadBlocklistFeedsFromConfig(Dictionary<string, PublicBlocklistFeedDto> source)
     {
         // Empty = feeds never configured; show the stock defaults the service
         // will actually sync with (see FirewallDefaults), so what the operator
         // sees matches what runs — and saving persists them into the config.
-        if (source.Count == 0)
+        // The flag is what lets the enforcement panel say these were never
+        // actually chosen, rather than showing them as if they had been.
+        _feedsAreStockDefaults = source.Count == 0;
+        if (_feedsAreStockDefaults)
         {
             source = FirewallDefaults.CreatePublicBlocklists();
+        }
+
+        foreach (var existing in BlocklistFeeds)
+        {
+            existing.PropertyChanged -= BlocklistFeedRowChanged;
         }
 
         BlocklistFeeds.Clear();
         foreach (var (feedId, feed) in source.OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase))
         {
-            BlocklistFeeds.Add(new BlocklistFeedRowViewModel
+            var row = new BlocklistFeedRowViewModel
             {
                 FeedId = feedId,
                 DisplayName = feed.DisplayName,
                 Url = feed.Url,
                 Enabled = feed.Enabled,
                 MinScore = feed.MinScore
-            });
+            };
+            // Toggling a feed's On box has to move the headline immediately —
+            // the panel is only trustworthy if it tracks the grid.
+            row.PropertyChanged += BlocklistFeedRowChanged;
+            BlocklistFeeds.Add(row);
         }
         SelectedBlocklistFeed = null;
+        RebuildEnforcementNotices();
     }
 
     private Dictionary<string, PublicBlocklistFeedDto> WriteBlocklistFeedsToConfig()
@@ -1219,15 +1478,19 @@ public sealed class FirewallPageViewModel : PageViewModelBase
             Enabled = false,
             MinScore = 0
         };
+        row.PropertyChanged += BlocklistFeedRowChanged;
         BlocklistFeeds.Add(row);
         SelectedBlocklistFeed = row;
+        RebuildEnforcementNotices();
     }
 
     private void RemoveSelectedBlocklistFeed()
     {
         if (_selectedBlocklistFeed == null) return;
+        _selectedBlocklistFeed.PropertyChanged -= BlocklistFeedRowChanged;
         BlocklistFeeds.Remove(_selectedBlocklistFeed);
         SelectedBlocklistFeed = null;
+        RebuildEnforcementNotices();
     }
 
     private bool EnsureAdmin(string action)

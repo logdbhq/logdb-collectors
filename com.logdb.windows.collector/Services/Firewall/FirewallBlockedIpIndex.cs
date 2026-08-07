@@ -15,6 +15,10 @@ namespace com.logdb.windows.collector.Services.Firewall;
 /// array in %ProgramData%\LogDB\collector\firewall-blocked-ips.json; failures
 /// are logged and swallowed, never allowed to break a sync.
 /// </summary>
+/// <summary>Per-IP provenance the Guard backend supplies and public feeds
+/// cannot: why it was blocked, by whom, and the real block time.</summary>
+public sealed record BlockedIpProvenance(string Reason, string AddedBy, DateTime? AddedAtUtc);
+
 public sealed class FirewallBlockedIpIndex
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -39,11 +43,25 @@ public sealed class FirewallBlockedIpIndex
         _logger = logger;
     }
 
-    /// <summary>Aligns the index with the active per-feed IP sets of a completed
-    /// sync cycle. Returns (added, removed) for logging.</summary>
+    /// <summary>
+    /// Aligns the index with the active per-feed IP sets of a completed sync
+    /// cycle. Returns (added, removed) for logging.
+    ///
+    /// <paramref name="retainedSources"/> names feeds whose fetch failed this
+    /// cycle: their rules were left untouched in the firewall, so their index
+    /// entries must survive too. Without this the index would report those IPs
+    /// as no longer blocked while the OS is still blocking them — the index
+    /// would be lying in the safe direction, which is the worse one, because
+    /// the operator would go re-block IPs that are already blocked.
+    ///
+    /// A source that is in neither collection was deliberately disabled or
+    /// removed, and its entries are pruned as before.
+    /// </summary>
     public (int Added, int Removed) Reconcile(
         IReadOnlyDictionary<string, HashSet<string>> activeSetsBySource,
-        DateTime nowUtc)
+        IReadOnlySet<string> retainedSources,
+        DateTime nowUtc,
+        IReadOnlyDictionary<string, BlockedIpProvenance>? provenance = null)
     {
         lock (_gate)
         {
@@ -51,6 +69,7 @@ public sealed class FirewallBlockedIpIndex
             {
                 var entries = LoadLocked();
                 var added = 0;
+                var changed = false;
 
                 var activeIps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (source, ips) in activeSetsBySource)
@@ -58,21 +77,35 @@ public sealed class FirewallBlockedIpIndex
                     foreach (var ip in ips)
                     {
                         activeIps.Add(ip);
-                        if (!entries.ContainsKey(ip))
+
+                        BlockedIpProvenance? known = null;
+                        if (provenance != null && provenance.TryGetValue(ip, out var found)) known = found;
+
+                        if (!entries.TryGetValue(ip, out var entry))
                         {
-                            entries[ip] = new BlockedIpEntryDto { Ip = ip, Source = source, BlockedAtUtc = nowUtc };
+                            entries[ip] = NewEntry(ip, source, nowUtc, known);
                             added++;
+                            continue;
                         }
+
+                        // Refresh provenance on every cycle, so an index written
+                        // before these fields existed — or an entry whose reason
+                        // was edited in Guard — heals instead of staying blank
+                        // forever.
+                        changed |= ApplyProvenance(entry, known);
                     }
                 }
 
-                var stale = entries.Keys.Where(ip => !activeIps.Contains(ip)).ToList();
+                var stale = entries
+                    .Where(kvp => !activeIps.Contains(kvp.Key) && !retainedSources.Contains(kvp.Value.Source))
+                    .Select(kvp => kvp.Key)
+                    .ToList();
                 foreach (var ip in stale)
                 {
                     entries.Remove(ip);
                 }
 
-                if (added > 0 || stale.Count > 0)
+                if (added > 0 || stale.Count > 0 || changed)
                 {
                     SaveLocked(entries);
                 }
@@ -144,9 +177,14 @@ public sealed class FirewallBlockedIpIndex
                 var trimmedFilter = filter?.Trim() ?? string.Empty;
                 if (trimmedFilter.Length > 0)
                 {
+                    // Reason and added-by are searchable too: "why is this
+                    // blocked" and "what else did I block for brute force" are
+                    // the same question from opposite ends.
                     matched = matched.Where(e =>
                         e.Ip.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase) ||
-                        e.Source.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase));
+                        e.Source.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase) ||
+                        e.Reason.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase) ||
+                        e.AddedBy.Contains(trimmedFilter, StringComparison.OrdinalIgnoreCase));
                 }
 
                 var matchedList = matched.ToList();
@@ -169,6 +207,77 @@ public sealed class FirewallBlockedIpIndex
                 return new BlockedIpListResponseDto();
             }
         }
+    }
+
+    /// <summary>
+    /// Builds a fresh entry, preferring the Guard backend's own block time over
+    /// "now". Falling back to the cycle time is exact only for a genuinely new
+    /// block; for anything else it is a first-observed time, and the entry says
+    /// so via <see cref="BlockedIpEntryDto.BlockedAtApproximate"/> so the UI
+    /// never presents it as fact.
+    /// </summary>
+    private static BlockedIpEntryDto NewEntry(
+        string ip,
+        string source,
+        DateTime nowUtc,
+        BlockedIpProvenance? known)
+    {
+        var entry = new BlockedIpEntryDto
+        {
+            Ip = ip,
+            Source = source,
+            BlockedAtUtc = known?.AddedAtUtc ?? nowUtc,
+            BlockedAtApproximate = known?.AddedAtUtc is null
+        };
+        ApplyProvenance(entry, known);
+        return entry;
+    }
+
+    /// <summary>
+    /// Copies reason / added-by / real block time onto an entry. Returns whether
+    /// anything actually changed, so a steady state doesn't rewrite the file
+    /// every poll. Never downgrades: absent provenance leaves what is already
+    /// stored alone, because a Guard fetch that failed this cycle must not blank
+    /// out the reasons recorded last cycle.
+    /// </summary>
+    private static bool ApplyProvenance(BlockedIpEntryDto entry, BlockedIpProvenance? known)
+    {
+        if (known is null) return false;
+
+        var changed = false;
+
+        var reason = CompactText(known.Reason, 200);
+        if (reason.Length > 0 && !string.Equals(entry.Reason, reason, StringComparison.Ordinal))
+        {
+            entry.Reason = reason;
+            changed = true;
+        }
+
+        var addedBy = CompactText(known.AddedBy, 80);
+        if (addedBy.Length > 0 && !string.Equals(entry.AddedBy, addedBy, StringComparison.Ordinal))
+        {
+            entry.AddedBy = addedBy;
+            changed = true;
+        }
+
+        // An authoritative timestamp always wins over a first-observed guess.
+        if (known.AddedAtUtc is { } exact && (entry.BlockedAtApproximate || entry.BlockedAtUtc != exact))
+        {
+            entry.BlockedAtUtc = exact;
+            entry.BlockedAtApproximate = false;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    /// <summary>The reason is unsanitized and unbounded server-side; collapse
+    /// whitespace and cap it before it reaches the index or any UI.</summary>
+    private static string CompactText(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var compact = System.Text.RegularExpressions.Regex.Replace(value, @"\s+", " ").Trim();
+        return compact.Length <= maxLength ? compact : compact[..maxLength] + "…";
     }
 
     private Dictionary<string, BlockedIpEntryDto> LoadLocked()

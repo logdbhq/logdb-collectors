@@ -72,6 +72,17 @@ public sealed class FirewallRuleModule : BackgroundService
                     _statusRegistry.MarkStopped(moduleName, "Idle");
                     LogStatusChange(LogLevel.Information, summary.Message);
                 }
+                else if (summary.IsDegraded)
+                {
+                    // One or more feeds could not be refreshed. The rules they
+                    // already wrote are still enforcing, so the module is alive
+                    // and heartbeating — but it must not read as a clean sync,
+                    // because the blocklist on this host is now older than it
+                    // looks and the operator is the one who has to decide
+                    // whether that matters.
+                    _statusRegistry.MarkDegraded(moduleName, summary.Message);
+                    LogStatusChange(LogLevel.Warning, $"Firewall sync degraded: {summary.Message}");
+                }
                 else if (summary.Success)
                 {
                     _statusRegistry.MarkRunning(moduleName);
