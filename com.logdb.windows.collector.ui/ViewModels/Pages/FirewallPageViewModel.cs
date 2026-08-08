@@ -244,6 +244,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
 
         RefreshFirewallHistoryCommand = new AsyncRelayCommand(RefreshFirewallHistoryAsync);
         OpenFirewallConfigurationCommand = new RelayCommand(() => ConfigurationExpanded = true);
+        EnableFirewallNowCommand = new AsyncRelayCommand(EnableFirewallNowAsync);
         RefreshFirewallRulesCommand = new AsyncRelayCommand(RefreshFirewallRulesAsync);
         CloseFirewallIpsCommand = new RelayCommand(() => FirewallIpsPanelVisible = false);
         CloseFirewallDetailCommand = new RelayCommand(() => FirewallDetailVisible = false);
@@ -271,6 +272,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
 
     public AsyncRelayCommand RefreshFirewallHistoryCommand { get; }
     public RelayCommand OpenFirewallConfigurationCommand { get; }
+    public AsyncRelayCommand EnableFirewallNowCommand { get; }
     public AsyncRelayCommand RefreshFirewallRulesCommand { get; }
     public RelayCommand CloseFirewallIpsCommand { get; }
     public RelayCommand CloseFirewallDetailCommand { get; }
@@ -337,6 +339,14 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         get => _configurationExpanded;
         set => SetProperty(ref _configurationExpanded, value);
     }
+
+    /// <summary>
+    /// Shows the one-click "turn it on" call to action. Firewall sync ships off
+    /// on purpose — nothing should start writing Block rules to a host without
+    /// a decision — but "off by default" must not mean "hard to switch on", so
+    /// the off state gets a primary action rather than only a checkbox.
+    /// </summary>
+    public bool ShowEnableFirewallPrompt => !FirewallEnabled;
 
     /// <summary>True when the toggles have been changed but not yet saved to
     /// the service — the headline describes the edited state, so this is what
@@ -690,6 +700,7 @@ public sealed class FirewallPageViewModel : PageViewModelBase
             : "OFF — IPs you block in the LogDB desktop app are NOT applied by this collector.";
 
         NotifyPropertyChanged(nameof(HasUnsavedFirewallChanges));
+        NotifyPropertyChanged(nameof(ShowEnableFirewallPrompt));
 
         EnforcementNotices.Clear();
 
@@ -705,9 +716,19 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         if (!FirewallEnabled)
         {
             EnforcementNotices.Add(new FirewallNoticeRow("○",
-                "Firewall sync is disabled — this collector is not applying any block rules. "
-                + "Everything below describes what would be applied once you enable it.", false));
+                "Firewall sync is off — this collector is not applying any block rules. "
+                + "Everything above describes what would be applied once you turn it on.", false));
             return;
+        }
+
+        // Saving the setting always works; applying rules needs elevation. Say
+        // so here, or turning it on appears to do nothing.
+        if (!IsAdministrator)
+        {
+            EnforcementNotices.Add(new FirewallNoticeRow("⚠",
+                "Firewall sync is on, but this app is not running as Administrator — the collector service "
+                + "needs elevation to write firewall rules. Restart it elevated, or check the module status "
+                + "for 'Elevation required'.", true));
         }
 
         // The headline asymmetry, stated plainly.
@@ -1400,6 +1421,18 @@ public sealed class FirewallPageViewModel : PageViewModelBase
         }
 
         return compact[..400] + "...";
+    }
+
+    /// <summary>
+    /// Turns firewall sync on and saves in one action. Two steps (tick a box,
+    /// find the save button) is the difference between a feature people use and
+    /// one they don't — and the checkbox alone left the panel telling the
+    /// operator they were unprotected without offering the fix.
+    /// </summary>
+    private async Task EnableFirewallNowAsync()
+    {
+        FirewallEnabled = true;
+        await SaveFirewallConfigAsync();
     }
 
     private async Task SaveFirewallConfigAsync()

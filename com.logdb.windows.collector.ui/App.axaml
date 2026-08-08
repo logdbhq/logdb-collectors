@@ -256,6 +256,25 @@
             <Setter Property="Background" Value="Transparent" />
         </Style>
 
+        <!-- The one obvious action on a page. Accent-filled so it reads as the
+             thing to click, not one option among several. -->
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="{DynamicResource AccentBrushTheme}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrushTheme}" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="16,9" />
+        </Style>
+
+        <Style Selector="Button.primary:pointerover">
+            <Setter Property="Background" Value="{DynamicResource AccentBrushTheme}" />
+            <Setter Property="Opacity" Value="0.88" />
+        </Style>
+
+        <Style Selector="Button.primary:disabled">
+            <Setter Property="Opacity" Value="0.45" />
+        </Style>
+
         <Style Selector="Button.nav-button">
             <Setter Property="Padding" Value="0" />
             <Setter Property="Width" Value="42" />

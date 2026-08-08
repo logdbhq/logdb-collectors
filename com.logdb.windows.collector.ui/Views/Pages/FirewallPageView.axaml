@@ -155,6 +155,29 @@
                                Classes.stateOff="{Binding !GuardOn}" />
                 </Grid>
 
+                <!-- Firewall sync ships off, so the off state gets a single
+                     obvious action rather than a checkbox the operator has to
+                     find and then remember to save. -->
+                <Border IsVisible="{Binding ShowEnableFirewallPrompt}"
+                        Classes="card"
+                        Padding="12"
+                        Margin="0,2,0,0">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel Spacing="2" VerticalAlignment="Center">
+                            <TextBlock Text="Not blocking anything yet" FontWeight="SemiBold" />
+                            <TextBlock Classes="muted" TextWrapping="Wrap" FontSize="12"
+                                       Text="Turn on firewall sync to start applying both the public threat feeds and your own Guard blocklist as inbound block rules on this host." />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Classes="primary"
+                                Content="Turn on firewall sync"
+                                Command="{Binding EnableFirewallNowCommand}"
+                                IsEnabled="{Binding CanSaveFirewallConfig}"
+                                VerticalAlignment="Center"
+                                ToolTip.Tip="Enables firewall sync and saves it to the collector in one step. Rules are applied on the next sync cycle." />
+                    </Grid>
+                </Border>
+
                 <!-- The switches live here, next to the state they change.
                      They edit UI state only; "Save & Apply" is what reaches
                      the service, and until it is pressed the panel says so. -->
